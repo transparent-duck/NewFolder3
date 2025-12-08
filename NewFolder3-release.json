@@ -1,0 +1,22 @@
+[
+  {
+    "Author": "John Smith",
+    "Name": "NewFolder3",
+    "Punchline": "John Smith's good stuff.",
+    "Description": "可能是一個深宮插件",
+    "Tags": [
+    ],
+    "InternalName": "NewFolder3",
+    "RepoUrl": "https://github.com/transparent-duck/NewFolder3",
+    "DownloadCount": 1,
+    "LastUpdate": 1710602700,
+    "DownloadLinkInstall": "https://github.com/transparent-duck/NewFolder3/raw/refs/heads/main/NewFolder3.zip",
+    "DownloadLinkUpdate": "https://github.com/transparent-duck/NewFolder3/raw/refs/heads/main/NewFolder3.zip",
+    "AssemblyVersion": "7.3.5.4",
+    "ApplicableVersion": "any",
+    "DalamudApiLevel": "12",
+    "IconUrl": "https://bkimg.cdn.bcebos.com/pic/7dd98d1001e93901fae12fab71ec54e737d19640"
+  }
+
+]
+
