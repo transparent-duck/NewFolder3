@@ -12,6 +12,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
 	{
 		private readonly INavigator _navigator;
 		private readonly Func<bool> _isPathRunning;
+		private readonly Func<bool> _isPathfindInProgress;
 		private readonly Func<DateTime> _clock;
 		private readonly Action<string> _logInfo;
 		private readonly Action<string> _logWarning;
@@ -33,10 +34,13 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
 			Func<bool>? isPathRunning = null,
 			Func<DateTime>? clock = null,
 			Action<string>? logInfo = null,
-			Action<string>? logWarning = null)
+			Action<string>? logWarning = null,
+			Func<bool>? isPathfindInProgress = null)
 		{
 			_navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
 			_isPathRunning = isPathRunning ?? DeepDungeon.Fsd.Dalamud.moveHelper.VNav.Path.IsRunning;
+			_isPathfindInProgress = isPathfindInProgress ??
+				DeepDungeon.Fsd.Dalamud.moveHelper.VNav.SimpleMove.PathfindInProgress;
 			_clock = clock ?? (() => DateTime.Now);
 			_logInfo = logInfo ?? (message => Service.Log.Info(message));
 			_logWarning = logWarning ?? (message => Service.Log.Warning(message));
@@ -99,11 +103,15 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
 			{
 				_nextNavCheck = now.AddSeconds(retryIntervalSeconds);
 
-				bool isNavigating = _isPathRunning();
+				// Skip reissue while path following is active OR async pathfinding is
+				// still pending (post-repath race: IsRunning=false, PathfindInProgress=true).
+				// A real attempted PathfindAndMoveTo that returns false remains Failed.
+				bool pathFollowing = _isPathRunning();
+				bool pathfindPending = _isPathfindInProgress();
 
-				if (!isNavigating)
+				if (!pathFollowing && !pathfindPending)
 				{
-					// VNav not navigating - (re)issue navigation
+					// VNav not navigating and not mid-pathfind - (re)issue navigation
 					if (_initialDispatchIssued)
 						_navigationIssueCount++;
 					_initialDispatchIssued = true;

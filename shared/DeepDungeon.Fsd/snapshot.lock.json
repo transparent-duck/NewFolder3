@@ -465,7 +465,7 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Navigation/NavigationHelper.cs",
-      "sha256": "d9cfcc49f82d9918c0769adff5cae946764bd5a1988c42aa167db851900383e4"
+      "sha256": "f19996fef9e2efa90240befcd2a560c4a128e9fc04e616a032c38baff8a9b942"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Navigation/NavigatorVNavAdapter.cs",
@@ -521,7 +521,7 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Search/RoomSearchContext.cs",
-      "sha256": "6b9c5523c7c6fb84bf4051b68025d3a8f1a7ea631567715c9db4a6001a499209"
+      "sha256": "bcc3800d15d477645e5a4e5691e32b3371a83cb065b8b57edfbc839208b9d9bc"
     },
     {
       "path": "Dalamud/FsdApplication.cs",
@@ -553,7 +553,7 @@
     },
     {
       "path": "Dalamud/Navigation/VNav.cs",
-      "sha256": "0a494cb7ebd02c769f87609040b9ad78aa771226d18ae857a920c66781929d97"
+      "sha256": "77298cc299c2c95abb1ff58ee3b4136f7a4ab8fc30d0f1ba94aa50976918fb9f"
     },
     {
       "path": "Dalamud/Properties/AssemblyInfo.cs",

@@ -878,7 +878,13 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 
 		internal const float TrapMarkerTriggerRadius = 1.7f;
 		private const float ProbeArrivalSafetyMargin = 0.01f;
-		private const float MinimumProbeArrivalRadius = 0.1f;
+		/// <summary>
+		/// Minimum shared-probe arrival radius after ProbeArrivalSafetyMargin.
+		/// Matches vnavmesh FollowPath's default waypoint Tolerance (0.25f);
+		/// SimpleMove.PathfindAndMoveTo uses range=0, so that tolerance governs
+		/// final-waypoint advancement. Smaller midpoints are not reliably reachable.
+		/// </summary>
+		private const float MinimumSharedProbeArrivalRadius = 0.25f;
 
 		/// <summary>
 		/// Replaces the first deterministic overlapping pair of trap probes with
@@ -980,7 +986,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 				(first.Position.Z + second.Position.Z) * 0.5f);
 			float arrivalRadius =
 				TrapMarkerTriggerRadius - distance * 0.5f - ProbeArrivalSafetyMargin;
-			if (arrivalRadius < MinimumProbeArrivalRadius)
+			if (arrivalRadius < MinimumSharedProbeArrivalRadius)
 				return false;
 
 			shared = new RoomWaypoint(

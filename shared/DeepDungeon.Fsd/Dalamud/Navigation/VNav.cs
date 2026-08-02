@@ -104,6 +104,30 @@ namespace DeepDungeon.Fsd.Dalamud.moveHelper
 
         public static class SimpleMove
         {
+            /// <summary>
+            /// True while an async SimpleMove pathfind is in progress (path following
+            /// may not have started yet). Calls vnavmesh.SimpleMove.PathfindInProgress.
+            /// </summary>
+            public static bool PathfindInProgress()
+            {
+                try
+                {
+                    var ipc = Service.PluginInterface.GetIpcSubscriber<bool>("vnavmesh.SimpleMove.PathfindInProgress");
+                    if (ipc?.HasFunction != true)
+                    {
+                        // Try legacy vnav namespace
+                        var ipc2 = Service.PluginInterface.GetIpcSubscriber<bool>("vnav.SimpleMove.PathfindInProgress");
+                        if (ipc2?.HasFunction != true) return false;
+                        return ipc2.InvokeFunc();
+                    }
+                    return ipc.InvokeFunc();
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
             // Calls: vnavmesh.SimpleMove.PathfindAndMoveTo(Vector3 dest, bool fly)
             public static bool PathfindAndMoveTo(Vector3 dest, bool fly = false)
             {
