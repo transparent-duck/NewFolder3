@@ -26,6 +26,7 @@ namespace DeepDungeon.Fsd.Dalamud
         private readonly IFloorEvidenceObserver? _floorEvidenceObserver;
         private readonly IRunTelemetryObserver? _runTelemetryObserver;
         private readonly FsdStartAuthorizationCallback? _tryAuthorizeFsdStart;
+        private readonly Func<string?>? _fsdStartDenialNoticeProvider;
         private readonly NativeDeepDungeonLogMessageSource _logMessageSource;
         
 		private RunHost? _ddHost = null;
@@ -85,7 +86,8 @@ namespace DeepDungeon.Fsd.Dalamud
             DetailedMapHostOptions detailedMapHostOptions,
             IFloorEvidenceObserver? floorEvidenceObserver,
             IRunTelemetryObserver? runTelemetryObserver,
-            FsdStartAuthorizationCallback? tryAuthorizeFsdStart = null)
+            FsdStartAuthorizationCallback? tryAuthorizeFsdStart = null,
+            Func<string?>? fsdStartDenialNoticeProvider = null)
         {
             _configuration = configuration;
             _executionLease = executionLease;
@@ -98,6 +100,7 @@ namespace DeepDungeon.Fsd.Dalamud
             _floorEvidenceObserver = floorEvidenceObserver;
             _runTelemetryObserver = runTelemetryObserver;
             _tryAuthorizeFsdStart = tryAuthorizeFsdStart;
+            _fsdStartDenialNoticeProvider = fsdStartDenialNoticeProvider;
             _logMessageSource = new NativeDeepDungeonLogMessageSource(Service.GameInteropProvider);
         }
 

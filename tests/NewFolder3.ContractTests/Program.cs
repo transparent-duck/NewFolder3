@@ -54,17 +54,12 @@ internal static class Program
         var gate = new NewFolder3AllowAllAccessGate();
         Assert(
             gate.Current.IsAllowed &&
-            string.IsNullOrEmpty(gate.DenialInstruction) &&
             gate.TryAuthorizeFsdStart(out string error) &&
             error.Length == 0,
             "Public access gate must allow FSD start authorization.");
         Assert(
-            NewFolder3FsdPageAccess.CanShowFsdPage(gate.Current),
-            "Public allow-all decisions must show the FSD page.");
-        Assert(
-            !NewFolder3FsdPageAccess.CanShowFsdPage(
-                NewFolder3AccessDecision.Denied("contract-denied")),
-            "Denied decisions must hide the FSD page.");
+            string.IsNullOrEmpty(gate.FsdStartDenialNotice),
+            "Public allow-all start-denial notice must be empty.");
     }
 
     private static void TestDetailedMapHostOptionsNoService()

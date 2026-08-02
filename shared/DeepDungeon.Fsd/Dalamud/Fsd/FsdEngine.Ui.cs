@@ -360,6 +360,13 @@ namespace DeepDungeon.Fsd.Dalamud
 					ImGui.Unindent();
 				}
 
+				if (_fsdStartDenialNoticeProvider is not null)
+				{
+					var startDenialNotice = _fsdStartDenialNoticeProvider();
+					if (!string.IsNullOrEmpty(startDenialNotice))
+						ImGui.TextColored(new Vector4(1f, 0.55f, 0.55f, 1f), startDenialNotice);
+				}
+
 				// Runtime/default options (always visible)
 				try
 				{
