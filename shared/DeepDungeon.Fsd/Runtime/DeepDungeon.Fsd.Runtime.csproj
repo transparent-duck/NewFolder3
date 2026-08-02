@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>preview</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Platforms>x64</Platforms>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <IsPackable>true</IsPackable>
+    <PackageId>DeepDungeon.Fsd.Runtime</PackageId>
+    <Version>2.0.0</Version>
+    <Authors>DeepDungeon.Fsd</Authors>
+    <Description>Host-neutral Deep Dungeon FSD lifecycle, settings, identity, and execution ownership.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Core\DeepDungeon.Fsd.Core.csproj" />
+  </ItemGroup>
+</Project>

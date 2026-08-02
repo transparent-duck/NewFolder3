@@ -1,0 +1,53 @@
+.vs/
+bin/
+obj/
+artifacts/
+
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+.idea/
+.vscode/
+
+.wrangler/
+.wrangler-dry-run*/
+node_modules/
+.dotnet/
+NewFolder3.zip
+NewFolder3-release.json
+
+# Local agent/session tooling; never publish.
+.cursor-sdk-store/
+.cheap-cursor/
+
+# Local agent and standalone Markdown description files; never publish.
+AGENTS.md
+*.md
+
+# Private/generated detailed-map inputs and outputs
+bootstrap-evidence/
+catalog-build/
+catalog-input/
+*.pk8
+*.p8
+
+# Proprietary official anti-resell implementation and its private-only tests;
+# never publish this tree. Public checkouts must remain independently usable.
+_private/
+
+# Ephemeral private-ops checkout used by the public catalog workflow; never commit.
+.catalog-ops/
+
+# Official private build overlay staged by manual packaging; never commit.
+# Provides concrete service endpoints and wires the private access gate.
+OfficialBuildProfile.g.cs
+
+# Staged official signing / packaging temp outputs; never commit.
+*.official.staging/
+official-staging/
+catalog-signing.key
+catalog-signing.pub
+*.catalog.sig
+release-manifest.private.json

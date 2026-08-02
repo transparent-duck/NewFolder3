@@ -1,0 +1,14 @@
+{
+  "Author": "John Smith",
+  "Name": "NewFolder3",
+  "Punchline": "可以挖寶.",
+  "Description": "本插件用於深宮寶藏探索，使用前必須安裝 PalacePal。",
+  "Tags": ["deep-dungeon"],
+  "InternalName": "NewFolder3",
+  "AssemblyVersion": "0.1.0",
+  "ApplicableVersion": "any",
+  "DalamudApiLevel": 15,
+  "LoadRequiredState": 0,
+  "LoadSync": false,
+  "CanUnloadAsync": false
+}

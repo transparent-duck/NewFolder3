@@ -1,0 +1,65 @@
+# Public scheduled catalog orchestration only.
+# Catalog builder, service config, candidates, schemas, and packaging live in private ops.
+# NewFolder3.zip is never built or released by this workflow.
+
+name: Daily catalog
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-catalog
+  cancel-in-progress: false
+
+jobs:
+  catalog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out public source
+        # actions/checkout@v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+
+      - name: Check out catalog ops
+        # actions/checkout@v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          repository: ${{ secrets.CATALOG_OPS_REPOSITORY }}
+          ssh-key: ${{ secrets.CATALOG_OPS_DEPLOY_KEY }}
+          path: .catalog-ops
+          persist-credentials: false
+
+      - name: Set up .NET SDK 11.0.100-preview.6.26359.118
+        # actions/setup-dotnet@v5.4.0
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        with:
+          dotnet-version: "11.0.100-preview.6.26359.118"
+
+      - name: Verify runner tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v pwsh
+          pwsh -NoLogo -Command '$PSVersionTable.PSVersion'
+          command -v aws
+          aws --version
+
+      - name: Run private daily catalog
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          CATALOG_SIGNING_KEY_PKCS8_BASE64: ${{ secrets.CATALOG_SIGNING_KEY_PKCS8_BASE64 }}
+          PUBLIC_NEWFOLDER3_ROOT: ${{ github.workspace }}
+          CATALOG_WORK_ROOT: ${{ runner.temp }}/catalog-work
+        run: |
+          set -euo pipefail
+          mkdir -p "${CATALOG_WORK_ROOT}"
+          pwsh -NoLogo -File "${GITHUB_WORKSPACE}/.catalog-ops/scripts/Invoke-DailyCatalog.ps1"
