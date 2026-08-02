@@ -15,9 +15,6 @@ artifacts/
 .wrangler-dry-run*/
 node_modules/
 .dotnet/
-NewFolder3.zip
-NewFolder3-release.json
-
 # Local agent/session tooling; never publish.
 .cursor-sdk-store/
 .cheap-cursor/
