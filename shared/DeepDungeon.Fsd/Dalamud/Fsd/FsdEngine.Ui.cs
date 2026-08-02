@@ -292,13 +292,13 @@ namespace DeepDungeon.Fsd.Dalamud
 					string[] scenarios = _detailedMapHostOptions.SupportsControlledPtSurvey
 						? new[]
 						{
-							"Pilgrim's Traverse 21-30 (better)",
+							"Pilgrim's Traverse 21-30",
 							"Pilgrim's Traverse 31-40",
 							"PT 21-30 controlled capture (reusable save)"
 						}
 						: new[]
 						{
-							"Pilgrim's Traverse 21-30 (better)",
+							"Pilgrim's Traverse 21-30",
 							"Pilgrim's Traverse 31-40"
 						};
 				int idx = Math.Clamp(_fsfScenarioIndex, 0, scenarios.Length - 1);
@@ -373,7 +373,7 @@ namespace DeepDungeon.Fsd.Dalamud
 							 string.Equals(_ddHost?.CurrentScenarioName, "PT 21-30 controlled capture", StringComparison.Ordinal));
 						ImGui.BeginDisabled(controlledCapture);
 						bool banded = provider != null ? provider.Current.BandedEnabled : _configuration.NecromancerAutoBandedFarmEnabled;
-						if (ImGui.Checkbox("Banded (search+open)", ref banded))
+						if (ImGui.Checkbox("Hoard", ref banded))
 						{
 							_configuration.NecromancerAutoBandedFarmEnabled = banded; _configuration.Save();
 							if (provider != null) provider.Update(o => o.BandedEnabled = banded);
@@ -385,7 +385,7 @@ namespace DeepDungeon.Fsd.Dalamud
 							if (provider != null) provider.Update(o => o.OpenGold = og);
 						}
 						bool os = provider != null ? provider.Current.OpenSilver : _configuration.NecromancerAutoOpenSilverChest;
-						if (ImGui.Checkbox("Open Silver (HP>85%)", ref os))
+						if (ImGui.Checkbox("Open Silver", ref os))
 						{
 							_configuration.NecromancerAutoOpenSilverChest = os; _configuration.Save();
 							if (provider != null) provider.Update(o => o.OpenSilver = os);
