@@ -23,7 +23,8 @@ public sealed class FsdApplication : IFsdApplication
         DetailedMapHostOptions detailedMapHostOptions,
         IFloorEvidenceObserver? floorEvidenceObserver = null,
         IRunTelemetryObserver? runTelemetryObserver = null,
-        FsdStartAuthorizationCallback? tryAuthorizeFsdStart = null)
+        FsdStartAuthorizationCallback? tryAuthorizeFsdStart = null,
+        Func<string?>? fsdStartDenialNoticeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(pluginInterface);
         ArgumentNullException.ThrowIfNull(settingsStore);
@@ -56,7 +57,8 @@ public sealed class FsdApplication : IFsdApplication
                 detailedMapHostOptions,
                 floorEvidenceObserver,
                 runTelemetryObserver,
-                tryAuthorizeFsdStart);
+                tryAuthorizeFsdStart,
+                fsdStartDenialNoticeProvider);
             _module = module;
             _module.Initialize();
             Service.Log.Info($"[FSD] Host {hostIdentity}/{hostVersion}; engine {FsdEngineIdentity.InformationalVersion}.");

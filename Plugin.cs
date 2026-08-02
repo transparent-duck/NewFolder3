@@ -80,10 +80,11 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
                     ?? throw new InvalidOperationException("Standalone host version is unavailable."),
                 NewFolder3BuildProfile.CreateDetailedMapHostOptions(),
                 _communityEvidenceCollector,
-                tryAuthorizeFsdStart: _accessGate.TryAuthorizeFsdStart);
+                tryAuthorizeFsdStart: _accessGate.TryAuthorizeFsdStart,
+                fsdStartDenialNoticeProvider: () => _accessGate.FsdStartDenialNotice);
             _application = application;
 
-            _window = new FsdWindow(_application, _accessGate);
+            _window = new FsdWindow(_application);
             _windows.AddWindow(_window);
 
             _commandManager.AddHandler(ProductIdentity.Command, new CommandInfo(OnCommand)
