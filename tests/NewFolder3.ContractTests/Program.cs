@@ -21,6 +21,7 @@ internal static class Program
         passed += Run("community-evidence-upload-contract", TestCommunityEvidenceUploadContract);
         passed += Run("community-usage-scenario-index-mapping", TestCommunityUsageScenarioIndexMapping);
         passed += Run("community-usage-telemetry-contract", TestCommunityUsageTelemetryContract);
+        passed += Run("public-manifest-and-release-feed-roots", TestPublicManifestAndReleaseFeedRoots);
         Console.WriteLine($"NewFolder3 contract tests: {passed} passed");
         return 0;
     }
@@ -30,6 +31,39 @@ internal static class Program
         test();
         Console.WriteLine($"  ok  {name}");
         return 1;
+    }
+
+    private static void TestPublicManifestAndReleaseFeedRoots()
+    {
+        string baseDirectory = AppContext.BaseDirectory;
+        string manifestPath = Path.Combine(baseDirectory, "NewFolder3.json");
+        string releaseFeedPath = Path.Combine(baseDirectory, "NewFolder3-release.json");
+        Assert(
+            File.Exists(manifestPath),
+            "Contract output must include repository NewFolder3.json.");
+        Assert(
+            File.Exists(releaseFeedPath),
+            "Contract output must include repository NewFolder3-release.json.");
+
+        using (JsonDocument manifest = JsonDocument.Parse(File.ReadAllText(manifestPath)))
+        {
+            Assert(
+                manifest.RootElement.ValueKind == JsonValueKind.Object,
+                "NewFolder3.json must have an Object root (plugin manifest).");
+        }
+
+        using (JsonDocument releaseFeed = JsonDocument.Parse(File.ReadAllText(releaseFeedPath)))
+        {
+            Assert(
+                releaseFeed.RootElement.ValueKind == JsonValueKind.Array,
+                "NewFolder3-release.json must have an Array root (repo feed).");
+            Assert(
+                releaseFeed.RootElement.GetArrayLength() == 1,
+                "NewFolder3-release.json must contain exactly one feed entry.");
+            Assert(
+                releaseFeed.RootElement[0].ValueKind == JsonValueKind.Object,
+                "NewFolder3-release.json's sole feed entry must be an Object.");
+        }
     }
 
     private static void TestPublicNoServiceBuildProfile()

@@ -21,4 +21,8 @@
     <ProjectReference Include="..\..\shared\DeepDungeon.Fsd\Dalamud\DeepDungeon.Fsd.Dalamud.csproj" />
     <Reference Include="Dalamud"><HintPath>$(DalamudLibPath)Dalamud.dll</HintPath><Private>True</Private></Reference>
   </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\NewFolder3.json" Link="NewFolder3.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\NewFolder3-release.json" Link="NewFolder3-release.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
