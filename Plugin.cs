@@ -17,6 +17,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
     private readonly WindowSystem _windows = new(ProductIdentity.InternalName);
     private readonly INewFolder3AccessGate _accessGate;
     private readonly CommunityEvidenceCollector? _communityEvidenceCollector;
+    private readonly CommunityUsageTelemetryCollector? _usageTelemetryCollector;
     private readonly FsdApplication _application;
     private readonly FsdWindow _window;
     private bool _disposed;
@@ -35,6 +36,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
 
         FsdApplication? application = null;
         CommunityEvidenceCollector? communityEvidenceCollector = null;
+        CommunityUsageTelemetryCollector? usageTelemetryCollector = null;
         var omenInitialized = false;
         var commandRegistered = false;
         var drawSubscribed = false;
@@ -58,28 +60,52 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
                 pluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
             _configuration.Initialize(pluginInterface);
             _accessGate = NewFolder3BuildProfile.CreateAccessGate(pluginInterface, pluginLog);
+            string hostVersion = typeof(Plugin).Assembly.GetName().Version?.ToString()
+                ?? throw new InvalidOperationException("Standalone host version is unavailable.");
 
             NewFolder3BuildCapabilities capabilities = NewFolder3BuildProfile.Capabilities;
+            string? installationToken = null;
+            if (capabilities.CommunityEvidenceEndpoint != null ||
+                capabilities.UsageTelemetryEndpoint != null)
+            {
+                installationToken =
+                    _configuration.GetOrCreateCommunityEvidenceInstallationToken();
+            }
+
             if (capabilities.CommunityEvidenceEndpoint is { } evidenceEndpoint)
             {
                 communityEvidenceCollector = new CommunityEvidenceCollector(
                     pluginInterface.GetPluginConfigDirectory(),
-                    _configuration.GetOrCreateCommunityEvidenceInstallationToken(),
+                    installationToken
+                        ?? throw new InvalidOperationException(
+                            "Installation token is required for community evidence upload."),
                     evidenceEndpoint,
+                    pluginLog);
+            }
+            if (capabilities.UsageTelemetryEndpoint is { } telemetryEndpoint)
+            {
+                usageTelemetryCollector = new CommunityUsageTelemetryCollector(
+                    pluginInterface.GetPluginConfigDirectory(),
+                    installationToken
+                        ?? throw new InvalidOperationException(
+                            "Installation token is required for usage telemetry."),
+                    hostVersion,
+                    telemetryEndpoint,
                     pluginLog);
             }
 
             _communityEvidenceCollector = communityEvidenceCollector;
+            _usageTelemetryCollector = usageTelemetryCollector;
 
             // FsdApplication injects the shared Dalamud services required by FSD.
             application = new FsdApplication(
                 pluginInterface,
                 _configuration,
                 ProductIdentity.HostIdentity,
-                typeof(Plugin).Assembly.GetName().Version?.ToString()
-                    ?? throw new InvalidOperationException("Standalone host version is unavailable."),
+                hostVersion,
                 NewFolder3BuildProfile.CreateDetailedMapHostOptions(),
                 _communityEvidenceCollector,
+                runTelemetryObserver: _usageTelemetryCollector,
                 tryAuthorizeFsdStart: _accessGate.TryAuthorizeFsdStart,
                 fsdStartDenialNoticeProvider: () => _accessGate.FsdStartDenialNotice);
             _application = application;
@@ -110,6 +136,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
             RollBack(_windows.RemoveAllWindows, rollbackErrors);
             RollBack(() => application?.Dispose(), rollbackErrors);
             RollBack(() => communityEvidenceCollector?.Dispose(), rollbackErrors);
+            RollBack(() => usageTelemetryCollector?.Dispose(), rollbackErrors);
             RollBack(() => { if (omenInitialized) DService.Uninit(); }, rollbackErrors);
 
             if (rollbackErrors.Count == 0)
@@ -139,6 +166,11 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
             _application.IsRunActive,
             _configuration.Fsd.UseDetailedMap,
             _application.ActiveDetailedMapReleaseId);
+        _usageTelemetryCollector?.ObserveRunState(
+            _application.IsRunActive,
+            _configuration.Fsd.UseDetailedMap,
+            CommunityUsageTelemetryScenarios.MapScenarioIndex(
+                _configuration.Fsd.NecromancerFsdScenarioIndex));
     }
 
     private void OnCommand(string command, string arguments) => _window.Toggle();
@@ -155,6 +187,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         _windows.RemoveAllWindows();
         _application.Dispose();
         _communityEvidenceCollector?.Dispose();
+        _usageTelemetryCollector?.Dispose();
         DService.Uninit();
         _disposed = true;
     }

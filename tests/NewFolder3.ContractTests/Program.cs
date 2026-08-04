@@ -1,9 +1,11 @@
 using System.Net;
 using System.Reflection;
+using System.Text.Json;
 using Dalamud.Plugin.Services;
 using DeepDungeon.Fsd.Core;
 using DeepDungeon.Fsd.Dalamud;
 using DeepDungeon.Fsd.Dalamud.GameState;
+using DeepDungeon.Fsd.Dalamud.Runtime;
 
 namespace NewFolder3;
 
@@ -17,6 +19,8 @@ internal static class Program
         passed += Run("detailed-map-host-options-no-service", TestDetailedMapHostOptionsNoService);
         passed += Run("catalog-manager-no-http-when-unavailable", TestCatalogManagerNoHttpWhenUnavailable);
         passed += Run("community-evidence-upload-contract", TestCommunityEvidenceUploadContract);
+        passed += Run("community-usage-scenario-index-mapping", TestCommunityUsageScenarioIndexMapping);
+        passed += Run("community-usage-telemetry-contract", TestCommunityUsageTelemetryContract);
         Console.WriteLine($"NewFolder3 contract tests: {passed} passed");
         return 0;
     }
@@ -34,8 +38,10 @@ internal static class Program
         Assert(
             capabilities.DetailedMapCatalogEndpoint == null &&
             capabilities.CommunityEvidenceEndpoint == null &&
+            capabilities.UsageTelemetryEndpoint == null &&
             !capabilities.HasOnlineCatalogService &&
             !capabilities.HasCommunityEvidenceUpload &&
+            !capabilities.HasUsageTelemetry &&
             !capabilities.ContributesAnonymousEvidence &&
             !capabilities.SupportsControlledPtSurvey &&
             capabilities.CreateAccessGate == null,
@@ -270,6 +276,331 @@ internal static class Program
             }
         };
 
+    private static void TestCommunityUsageScenarioIndexMapping()
+    {
+        Assert(
+            CommunityUsageTelemetryScenarios.MapScenarioIndex(0) ==
+            DetailedMapEvidenceContract.PilgrimsTraverse21To30ScenarioKey,
+            "Scenario index 0 must map to pt-21-30.");
+        Assert(
+            CommunityUsageTelemetryScenarios.MapScenarioIndex(2) ==
+            DetailedMapEvidenceContract.PilgrimsTraverse21To30ScenarioKey,
+            "Controlled-survey scenario index 2 must map to pt-21-30.");
+        Assert(
+            CommunityUsageTelemetryScenarios.MapScenarioIndex(1) ==
+            DetailedMapScenarioCatalog.PilgrimsTraverse31To40.Key,
+            "Scenario index 1 must map to pt-31-40.");
+        Assert(
+            CommunityUsageTelemetryScenarios.MapScenarioIndex(3) ==
+            DetailedMapScenarioCatalog.PilgrimsTraverse31To40.Key,
+            "Legacy scenario index 3 must map to pt-31-40.");
+        Assert(
+            CommunityUsageTelemetryScenarios.MapScenarioIndex(4) == null &&
+            CommunityUsageTelemetryScenarios.MapScenarioIndex(-1) == null,
+            "Unknown scenario indices must map to null without a silent fallback.");
+    }
+
+    private static void TestCommunityUsageTelemetryContract()
+    {
+        string configRoot = Path.Combine(
+            Path.GetTempPath(),
+            $"newfolder3-usage-contract-{Guid.NewGuid():N}");
+        const string installationToken = "0123456789abcdef0123456789abcdef";
+        string pendingDirectory = Path.Combine(configRoot, "UsageTelemetry", "pending");
+        try
+        {
+            Assert(
+                !NewFolder3BuildProfile.Capabilities.HasUsageTelemetry,
+                "Public builds must not configure a usage telemetry endpoint.");
+
+            string? pluginActiveEventId;
+            {
+                var handler = new GatedAcceptedHandler();
+                using var collector = new CommunityUsageTelemetryCollector(
+                    configRoot,
+                    installationToken,
+                    "0.0.0-contract",
+                    new Uri("https://telemetry.invalid/v1/telemetry"),
+                    DispatchProxy.Create<IPluginLog, NoOpDispatchProxy>(),
+                    handler);
+
+                string controlledScenario =
+                    CommunityUsageTelemetryScenarios.MapScenarioIndex(2)
+                    ?? throw new InvalidOperationException("Index 2 must map to a scenario.");
+                Assert(
+                    controlledScenario ==
+                    DetailedMapEvidenceContract.PilgrimsTraverse21To30ScenarioKey,
+                    "Index 2 mapping must remain pt-21-30 for run-start telemetry.");
+
+                collector.ObserveRunState(
+                    isRunActive: true,
+                    detailedMapEnabled: true,
+                    scenarioKey: null);
+                collector.ObserveRunState(
+                    isRunActive: false,
+                    detailedMapEnabled: true,
+                    scenarioKey: null);
+                collector.ObserveRunState(
+                    isRunActive: true,
+                    detailedMapEnabled: true,
+                    controlledScenario);
+                collector.ObserveRunState(
+                    isRunActive: true,
+                    detailedMapEnabled: true,
+                    controlledScenario);
+                collector.ObserveFloorTerminal(
+                    CreateUsageFloorTerminal(
+                        floor: 29,
+                        controlledSurvey: true,
+                        outcome: RunFloorTerminalOutcome.PassageCompleted));
+                collector.ObserveFloorTerminal(
+                    CreateUsageFloorTerminal(
+                        floor: 21,
+                        controlledSurvey: false,
+                        outcome: RunFloorTerminalOutcome.PassageCompleted));
+                collector.ObserveFloorTerminal(
+                    CreateUsageFloorTerminal(
+                        floor: 29,
+                        controlledSurvey: false,
+                        outcome: RunFloorTerminalOutcome.PlayerDeath));
+                collector.ObserveFloorTerminal(
+                    CreateUsageFloorTerminal(
+                        floor: 29,
+                        controlledSurvey: false,
+                        outcome: RunFloorTerminalOutcome.PassageCompleted));
+                collector.ObserveRunState(
+                    isRunActive: false,
+                    detailedMapEnabled: true,
+                    controlledScenario);
+
+                Assert(
+                    handler.WaitUntilRequested(TimeSpan.FromSeconds(2)),
+                    "The usage telemetry worker did not start an upload.");
+                handler.AllowFirstResponse();
+
+                string[] expectedTypes =
+                [
+                    CommunityUsageEventTypes.PluginActive,
+                    CommunityUsageEventTypes.FsdStarted,
+                    CommunityUsageEventTypes.DetailedMapRunStarted,
+                    CommunityUsageEventTypes.FsdCompleted
+                ];
+                Assert(
+                    SpinWait.SpinUntil(
+                        () => ReadUsageEvents(handler)
+                            .Select(value => value.EventType)
+                            .Distinct(StringComparer.Ordinal)
+                            .OrderBy(value => value, StringComparer.Ordinal)
+                            .SequenceEqual(
+                                expectedTypes.OrderBy(value => value, StringComparer.Ordinal),
+                                StringComparer.Ordinal),
+                        TimeSpan.FromSeconds(2)),
+                    "The usage telemetry lifecycle did not upload the expected event set.");
+
+                CommunityUsageEvent[] events = ReadUsageEvents(handler);
+                Assert(
+                    events.Count(value => value.EventType == CommunityUsageEventTypes.FsdStarted) == 1,
+                    "An unchanged active run emitted duplicate fsd_started events.");
+                Assert(
+                    events.Count(value => value.EventType == CommunityUsageEventTypes.FsdCompleted) == 1,
+                    "Controlled-survey, non-final-floor, and non-completion terminals must omit fsd_completed.");
+                CommunityUsageEvent started = events.Single(
+                    value => value.EventType == CommunityUsageEventTypes.FsdStarted);
+                Assert(
+                    started.ScenarioKey ==
+                    DetailedMapEvidenceContract.PilgrimsTraverse21To30ScenarioKey,
+                    "Index-2 run starts must upload pt-21-30 rather than pt-31-40.");
+                Assert(
+                    events.All(value => IsLowerHex(value.EventId, 32)),
+                    "Usage telemetry event IDs must be 32 lowercase hex characters.");
+
+                pluginActiveEventId = events.Single(
+                    value => value.EventType == CommunityUsageEventTypes.PluginActive).EventId;
+
+                for (int index = 0; index < handler.RequestCount; index++)
+                    AssertUsagePayloadAllowlist(handler.GetRequestPayload(index));
+            }
+
+            {
+                var handler = new GatedAcceptedHandler();
+                using var collector = new CommunityUsageTelemetryCollector(
+                    configRoot,
+                    installationToken,
+                    "0.0.0-contract",
+                    new Uri("https://telemetry.invalid/v1/telemetry"),
+                    DispatchProxy.Create<IPluginLog, NoOpDispatchProxy>(),
+                    handler);
+                Assert(
+                    handler.WaitUntilRequested(TimeSpan.FromSeconds(2)),
+                    "A same-day restart did not re-queue plugin_active.");
+                handler.AllowFirstResponse();
+                Assert(
+                    SpinWait.SpinUntil(
+                        () => ReadUsageEvents(handler).Any(
+                            value => value.EventType == CommunityUsageEventTypes.PluginActive),
+                        TimeSpan.FromSeconds(2)),
+                    "A same-day restart did not upload plugin_active.");
+                string restartedPluginActiveId = ReadUsageEvents(handler)
+                    .Single(value => value.EventType == CommunityUsageEventTypes.PluginActive)
+                    .EventId;
+                Assert(
+                    restartedPluginActiveId == pluginActiveEventId,
+                    "Same-day plugin_active event IDs must be deterministic for one installation token.");
+            }
+
+            {
+                var failingHandler = new FixedStatusHandler(HttpStatusCode.InternalServerError);
+                using (var collector = new CommunityUsageTelemetryCollector(
+                    configRoot,
+                    installationToken,
+                    "0.0.0-contract",
+                    new Uri("https://telemetry.invalid/v1/telemetry"),
+                    DispatchProxy.Create<IPluginLog, NoOpDispatchProxy>(),
+                    failingHandler))
+                {
+                    collector.ObserveRunState(
+                        isRunActive: true,
+                        detailedMapEnabled: false,
+                        DetailedMapScenarioCatalog.PilgrimsTraverse31To40.Key);
+                    Assert(
+                        SpinWait.SpinUntil(
+                            () => failingHandler.RequestCount > 0 &&
+                                  Directory.EnumerateFiles(
+                                      pendingDirectory,
+                                      "*.json",
+                                      SearchOption.TopDirectoryOnly).Any(),
+                            TimeSpan.FromSeconds(2)),
+                        "Failed uploads must leave usage telemetry events on the pending spool.");
+                }
+
+                Assert(
+                    Directory.EnumerateFiles(
+                        pendingDirectory,
+                        "*.json",
+                        SearchOption.TopDirectoryOnly).Any(),
+                    "Pending usage telemetry spool must survive collector disposal.");
+
+                var recoveryHandler = new GatedAcceptedHandler();
+                using var recovered = new CommunityUsageTelemetryCollector(
+                    configRoot,
+                    installationToken,
+                    "0.0.0-contract",
+                    new Uri("https://telemetry.invalid/v1/telemetry"),
+                    DispatchProxy.Create<IPluginLog, NoOpDispatchProxy>(),
+                    recoveryHandler);
+                Assert(
+                    recoveryHandler.WaitUntilRequested(TimeSpan.FromSeconds(2)),
+                    "A restarted collector did not resume pending usage telemetry upload.");
+                recoveryHandler.AllowFirstResponse();
+                Assert(
+                    SpinWait.SpinUntil(
+                        () => ReadUsageEvents(recoveryHandler).Any(
+                            value =>
+                                value.EventType == CommunityUsageEventTypes.FsdStarted &&
+                                value.ScenarioKey ==
+                                DetailedMapScenarioCatalog.PilgrimsTraverse31To40.Key) &&
+                          !Directory.EnumerateFiles(
+                              pendingDirectory,
+                              "*.json",
+                              SearchOption.TopDirectoryOnly).Any(),
+                        TimeSpan.FromSeconds(2)),
+                    "Pending usage telemetry events were not uploaded after collector restart.");
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(configRoot))
+                Directory.Delete(configRoot, recursive: true);
+        }
+    }
+
+    private static RunFloorTerminalTelemetry CreateUsageFloorTerminal(
+        byte floor,
+        bool controlledSurvey,
+        RunFloorTerminalOutcome outcome) =>
+        new(
+            ObservedAtUtc: DateTime.UtcNow,
+            StableStartedAtUtc: DateTime.UtcNow,
+            StableMeasurementEndedAtUtc: DateTime.UtcNow,
+            JobId: 30,
+            DungeonId: DetailedMapEvidenceContract.PilgrimsTraverseDungeonId,
+            FloorsetStart: 21,
+            Floor: floor,
+            FloorGeneration: 1,
+            ControlledSurvey: controlledSurvey,
+            NormalMobFloor: true,
+            PassageCommitObserved: outcome == RunFloorTerminalOutcome.PassageCompleted,
+            HoardOrIntelExecutionStarted: false,
+            HoardOpenedThisFloor: false,
+            NavigationIssueCount: 0,
+            UnclassifiedSeconds: 0,
+            StableBaselineSeconds: 1,
+            Outcome: outcome,
+            Reason: outcome == RunFloorTerminalOutcome.PassageCompleted
+                ? "transitioning"
+                : "player-death");
+
+    private static void AssertUsagePayloadAllowlist(byte[] payload)
+    {
+        using JsonDocument document = JsonDocument.Parse(payload);
+        Assert(
+            document.RootElement.ValueKind == JsonValueKind.Object,
+            "Usage telemetry payloads must be JSON objects.");
+        foreach (JsonProperty property in document.RootElement.EnumerateObject())
+        {
+            Assert(
+                property.Name is "schemaVersion" or "events",
+                $"Usage telemetry batch property '{property.Name}' is outside the allowlist.");
+        }
+
+        Assert(
+            document.RootElement.TryGetProperty("events", out JsonElement events) &&
+            events.ValueKind == JsonValueKind.Array,
+            "Usage telemetry payloads must contain an events array.");
+        foreach (JsonElement value in events.EnumerateArray())
+        {
+            Assert(
+                value.ValueKind == JsonValueKind.Object,
+                "Usage telemetry events must be JSON objects.");
+            foreach (JsonProperty property in value.EnumerateObject())
+            {
+                Assert(
+                    property.Name is
+                        "eventId" or
+                        "eventType" or
+                        "occurredDateUtc" or
+                        "clientVersion" or
+                        "scenarioKey",
+                    $"Usage telemetry event property '{property.Name}' is outside the allowlist.");
+            }
+        }
+    }
+
+    private static CommunityUsageEvent[] ReadUsageEvents(GatedAcceptedHandler handler)
+    {
+        var events = new List<CommunityUsageEvent>();
+        int requestCount = handler.RequestCount;
+        for (int index = 0; index < requestCount; index++)
+        {
+            CommunityUsageEventBatch batch =
+                CommunityUsageTelemetryContract.Parse(handler.GetRequestPayload(index));
+            events.AddRange(batch.Events);
+        }
+        return events.ToArray();
+    }
+
+    private static bool IsLowerHex(string value, int expectedLength)
+    {
+        if (value.Length != expectedLength)
+            return false;
+        foreach (char character in value)
+        {
+            if (character is not (>= '0' and <= '9') and not (>= 'a' and <= 'f'))
+                return false;
+        }
+        return true;
+    }
+
     private static FloorEvidenceBundle CreateCurrentRunEvidence() =>
         new()
         {
@@ -347,6 +678,28 @@ internal static class Program
             {
                 RequestMessage = request
             };
+        }
+    }
+
+    private sealed class FixedStatusHandler : HttpMessageHandler
+    {
+        private readonly HttpStatusCode _statusCode;
+        private int _requestCount;
+
+        internal FixedStatusHandler(HttpStatusCode statusCode) =>
+            _statusCode = statusCode;
+
+        internal int RequestCount => Volatile.Read(ref _requestCount);
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _requestCount);
+            return Task.FromResult(new HttpResponseMessage(_statusCode)
+            {
+                RequestMessage = request
+            });
         }
     }
 

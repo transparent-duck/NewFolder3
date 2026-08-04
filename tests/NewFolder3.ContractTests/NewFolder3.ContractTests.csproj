@@ -14,6 +14,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\..\CommunityEvidenceCollector.cs" Link="CommunityEvidenceCollector.cs" />
+    <Compile Include="..\..\CommunityUsageTelemetryCollector.cs" Link="CommunityUsageTelemetryCollector.cs" />
     <Compile Include="..\..\NewFolder3AccessGate.cs" Link="NewFolder3AccessGate.cs" />
     <Compile Include="..\..\NewFolder3BuildProfile.cs" Link="NewFolder3BuildProfile.cs" />
     <ProjectReference Include="..\..\shared\DeepDungeon.Fsd\Core\DeepDungeon.Fsd.Core.csproj" />

@@ -14,6 +14,7 @@ internal sealed class NewFolder3BuildCapabilities
 {
     public Uri? DetailedMapCatalogEndpoint { get; init; }
     public Uri? CommunityEvidenceEndpoint { get; init; }
+    public Uri? UsageTelemetryEndpoint { get; init; }
     public bool ContributesAnonymousEvidence { get; init; }
     public bool DeleteCatalogsWhenDisabled { get; init; }
     public bool SupportsControlledPtSurvey { get; init; }
@@ -21,11 +22,13 @@ internal sealed class NewFolder3BuildCapabilities
 
     public bool HasOnlineCatalogService => DetailedMapCatalogEndpoint != null;
     public bool HasCommunityEvidenceUpload => CommunityEvidenceEndpoint != null;
+    public bool HasUsageTelemetry => UsageTelemetryEndpoint != null;
 
     public static NewFolder3BuildCapabilities PublicNoService { get; } = new()
     {
         DetailedMapCatalogEndpoint = null,
         CommunityEvidenceEndpoint = null,
+        UsageTelemetryEndpoint = null,
         ContributesAnonymousEvidence = false,
         DeleteCatalogsWhenDisabled = false,
         SupportsControlledPtSurvey = false,
