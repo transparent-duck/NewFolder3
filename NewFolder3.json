@@ -1,15 +1,13 @@
-[
-  {
-    "Author": "John Smith",
-    "Name": "NewFolder3",
-    "Punchline": "可以挖寶.",
-    "InternalName": "NewFolder3",
-    "IconUrl": "https://raw.githubusercontent.com/transparent-duck/NewFolder3/refs/heads/main/icon.png",
-    "AssemblyVersion": "0.7.55.7",
-    "ApplicableVersion": "any",
-    "DalamudApiLevel": 15,
-    "LoadRequiredState": 0,
-    "LoadSync": false,
-    "CanUnloadAsync": false
-  }
-]
+{
+  "Author": "John Smith",
+  "Name": "NewFolder3",
+  "Punchline": "可以挖寶.",
+  "InternalName": "NewFolder3",
+  "IconUrl": "https://raw.githubusercontent.com/transparent-duck/NewFolder3/refs/heads/main/icon.png",
+  "AssemblyVersion": "0.7.55.7",
+  "ApplicableVersion": "any",
+  "DalamudApiLevel": 15,
+  "LoadRequiredState": 0,
+  "LoadSync": false,
+  "CanUnloadAsync": false
+}
