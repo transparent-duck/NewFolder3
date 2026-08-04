@@ -1,3 +1,3 @@
 100% AI slop powered by Deepseek.
 
-[庫鏈](https://raw.githubusercontent.com/anmili2022/Phantom/refs/heads/main/repo.json)
+[庫鏈](https://raw.githubusercontent.com/transparent-duck/NewFolder3/refs/heads/main/NewFolder3.json)
