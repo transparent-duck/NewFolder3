@@ -36,14 +36,14 @@ internal unsafe class BgCollisionDebugOverlay
 	public void DrawConfigUi()
 	{
 		ImGui.Spacing();
-		ImGui.TextColored(new Vector4(0.65f, 0.85f, 1f, 1f), "BG collision overlay");
-		ImGui.TextWrapped("Shows analytic BGCollision primitives (box, cylinder, sphere, plane) whose materials satisfy (value & mask) == (collider & mask).");
+		ImGui.TextColored(new Vector4(0.65f, 0.85f, 1f, 1f), "背景碰撞疊加層");
+		ImGui.TextWrapped("顯示材質符合 (值 & 掩碼) == (碰撞體 & 掩碼) 的解析式背景碰撞圖形（盒體、圓柱體、球體和平面）。");
 
-		DrawHexInput("Material value (hex)", ref _materialValueText, ref _materialValue, ref _materialValueInvalid);
-		DrawHexInput("Material mask (hex)", ref _materialMaskText, ref _materialMask, ref _materialMaskInvalid);
+		DrawHexInput("材質值（十六進位）", ref _materialValueText, ref _materialValue, ref _materialValueInvalid);
+		DrawHexInput("材質掩碼（十六進位）", ref _materialMaskText, ref _materialMask, ref _materialMaskInvalid);
 
 		ImGui.SameLine();
-		if (ImGui.SmallButton("Reset##bgcollision"))
+		if (ImGui.SmallButton("重置##bgcollision"))
 			ResetFilter();
 	}
 
@@ -258,7 +258,7 @@ internal unsafe class BgCollisionDebugOverlay
 		if (invalidFlag)
 		{
 			ImGui.SameLine();
-			ImGui.TextColored(new Vector4(1f, 0.5f, 0.4f, 1f), "Invalid hex");
+			ImGui.TextColored(new Vector4(1f, 0.5f, 0.4f, 1f), "無效的十六進位值");
 		}
 	}
 

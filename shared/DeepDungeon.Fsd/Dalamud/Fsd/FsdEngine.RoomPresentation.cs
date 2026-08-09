@@ -101,11 +101,11 @@ namespace DeepDungeon.Fsd.Dalamud
 		private static string GetRoomPresentationStateName(DetailedMapRoomGraphPresentationState state) =>
 			state switch
 			{
-				DetailedMapRoomGraphPresentationState.NoPositions => "No positions",
-				DetailedMapRoomGraphPresentationState.Candidate => "Candidate",
-				DetailedMapRoomGraphPresentationState.Partial => "Partial",
-				DetailedMapRoomGraphPresentationState.Complete => "Complete",
-				DetailedMapRoomGraphPresentationState.Conflict => "Conflict",
+				DetailedMapRoomGraphPresentationState.NoPositions => "無位置",
+				DetailedMapRoomGraphPresentationState.Candidate => "候選",
+				DetailedMapRoomGraphPresentationState.Partial => "部分完成",
+				DetailedMapRoomGraphPresentationState.Complete => "完整",
+				DetailedMapRoomGraphPresentationState.Conflict => "衝突",
 				_ => state.ToString()
 			};
 
@@ -396,8 +396,8 @@ namespace DeepDungeon.Fsd.Dalamud
 					    roomIndex,
 					    out detailedMapPresentation))
 				{
-					ImGui.Text($"Room {roomIndex} · Presentation unavailable");
-					ImGui.TextDisabled("The loaded room is missing its cached presentation.");
+					ImGui.Text($"房間 {roomIndex} · 無法顯示");
+					ImGui.TextDisabled("已載入的房間缺少快取的顯示資料。");
 					return;
 				}
 
@@ -413,7 +413,7 @@ namespace DeepDungeon.Fsd.Dalamud
 			{
 				palaceCandidates = _roomPresentationPalacePalProvider
 					.GetCandidatePositionsForRoom(deepDungeon, roomIndex);
-				source = "PalacePal candidates";
+				source = "PalacePal 候選位置";
 			}
 
 			int candidateCount = detailedMapRoom?.Candidates.Length ?? palaceCandidates?.Count ?? 0;
@@ -421,9 +421,9 @@ namespace DeepDungeon.Fsd.Dalamud
 				(candidateCount > 0
 					? DetailedMapRoomGraphPresentationState.Candidate
 					: DetailedMapRoomGraphPresentationState.NoPositions);
-			ImGui.Text($"Room {roomIndex} · {GetRoomPresentationStateName(state)}");
+			ImGui.Text($"房間 {roomIndex} · {GetRoomPresentationStateName(state)}");
 			ImGui.SameLine();
-			ImGui.TextDisabled("Graph status:");
+			ImGui.TextDisabled("圖狀態:");
 			ImGui.SameLine();
 			float badgeSize = 24f * ImGuiHelpers.GlobalScale;
 			Vector2 badgeTopLeft = ImGui.GetCursorScreenPos();
@@ -443,14 +443,14 @@ namespace DeepDungeon.Fsd.Dalamud
 				out Vector3 roomCenter);
 			if (!hasRoomCenter)
 			{
-				ImGui.TextDisabled("This room has no center binding.");
+				ImGui.TextDisabled("此房間沒有綁定中心點。");
 				if (candidateCount == 0)
-					ImGui.TextDisabled("No candidate positions are available for this room.");
+					ImGui.TextDisabled("此房間沒有可用的候選位置。");
 				return;
 			}
 			if (candidateCount == 0)
 			{
-				ImGui.TextDisabled("No candidate positions are available for this room.");
+				ImGui.TextDisabled("此房間沒有可用的候選位置。");
 				return;
 			}
 
