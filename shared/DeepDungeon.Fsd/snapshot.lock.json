@@ -217,11 +217,11 @@
     },
     {
       "path": "Dalamud/DetailedMapHostOptions.cs",
-      "sha256": "74365d34a65b3e67e6a241676d4024a6929f57bcc2832e3821cb8af69a016190"
+      "sha256": "97a0a494f2f071d8672f47b4ae19fe4d816e0931fa26871ea9e847123d65abdd"
     },
     {
       "path": "Dalamud/Fsd/Debug/BgCollision/BgCollisionDebugOverlay.cs",
-      "sha256": "36491ffa11c9f7465b618e73bb100819f1678db5b99e379c2ade3f035c241b3e"
+      "sha256": "196069cc53d946711e4061e8b8a47ca033123585de0a1a13edda6dd6ab3299a6"
     },
     {
       "path": "Dalamud/Fsd/DeepDungeonHelper.cs",
@@ -245,11 +245,11 @@
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.RoomPresentation.cs",
-      "sha256": "aab0662dd729b9ada5bb501930f72d456328ff03535152dbb7c48495ee203c99"
+      "sha256": "4b4718072f0eb4f5a4e513c14055626bafa66fb08575e1d36484db049c8d91dd"
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Ui.cs",
-      "sha256": "0156c8ba95cec5b656bea363e17ba730f2234d05f9ca114b21bcd6f665bfdda0"
+      "sha256": "261b47111cb1de4802b3b1661fb799f9140b80b731fb7bc25b5f12d329aded2f"
     },
     {
       "path": "Dalamud/Fsd/GameState/DeepDungeonFloorsetTracker.cs",

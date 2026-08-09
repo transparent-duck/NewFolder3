@@ -35,7 +35,7 @@ namespace DeepDungeon.Fsd.Dalamud
             try
             {
                 // Always draw the header so user sees it in module top
-                if (!ImGui.CollapsingHeader("Debug panel", ImGuiTreeNodeFlags.DefaultOpen))
+                if (!ImGui.CollapsingHeader("調試面板", ImGuiTreeNodeFlags.DefaultOpen))
                 {
                     return;
                 }
@@ -124,7 +124,7 @@ namespace DeepDungeon.Fsd.Dalamud
                     for (int i = 0; i < items.Length; i++)
                     {
                         var it = items[i];
-                        string displayName = $"Pomander Slot {i}";
+                        string displayName = $"魔陶器槽位 {i}";
                         if (ddRow != null && i < ddRow.Value.PomanderSlot.Count)
                         {
                             // Try resolve localized name via Item row, if PomanderSlot is an Item row reference in Lumina build
@@ -193,21 +193,21 @@ namespace DeepDungeon.Fsd.Dalamud
                         var dbg = _ddHost?.FloorController.GetDebugSnapshot();
                         if (dbg != null)
                         {
-                            if (ImGui.CollapsingHeader("AutoPilot 調試 (Sequential)", ImGuiTreeNodeFlags.None))
+                            if (ImGui.CollapsingHeader("自動導航調試（順序模式）", ImGuiTreeNodeFlags.None))
                             {
                                 var player = Service.LocalPlayer;
                                 var pos = player?.Position ?? default;
                                 
                                 // State and status
-                                ImGui.Text($"Phase: {dbg.Phase} | Task: {dbg.TaskPhase}");
-                                ImGui.Text($"Status: {dbg.Status}");
-                                ImGui.Text($"Hoard Count: {dbg.HoardCount}/5");
+                                ImGui.Text($"階段: {dbg.Phase} | 任務: {dbg.TaskPhase}");
+                                ImGui.Text($"狀態: {dbg.Status}");
+                                ImGui.Text($"埋藏的寶藏數量: {dbg.HoardCount}/5");
                                 ImGui.Separator();
                                 
                                 // Room path visualization
                                 if (dbg.RoomPath != null && dbg.RoomPath.Count > 0)
                                 {
-                                    ImGui.TextDisabled("Room Visit Order:");
+                                    ImGui.TextDisabled("房間訪問順序:");
                                 ImGui.Indent();
                                     for (int i = 0; i < dbg.RoomPath.Count; i++)
                                     {
@@ -216,23 +216,23 @@ namespace DeepDungeon.Fsd.Dalamud
                                         bool isCurrent = i == dbg.CurrentRoomIdx;
                                         
                                         if (isCompleted)
-                                            ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1f), $"✓ Room {room}");
+                                            ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1f), $"✓ 房間 {room}");
                                         else if (isCurrent)
-                                            ImGui.TextColored(new Vector4(0.6f, 1.0f, 0.6f, 1f), $"→ Room {room} (current)");
+                                            ImGui.TextColored(new Vector4(0.6f, 1.0f, 0.6f, 1f), $"→ 房間 {room}（當前）");
                                         else
-                                            ImGui.Text($"  Room {room}");
+                                            ImGui.Text($"  房間 {room}");
                                     }
                                     ImGui.Unindent();
                                 }
                                 else
                                 {
-                                    ImGui.TextDisabled("(No room path yet)");
+                                    ImGui.TextDisabled("（尚無房間路徑）");
                                 }
                                 
                                 ImGui.Separator();
                                 int completedCount = dbg.CompletedRooms != null ? dbg.CompletedRooms.Count : 0;
                                 int totalRooms = dbg.RoomPath != null ? dbg.RoomPath.Count : 0;
-                                ImGui.Text($"Progress: {completedCount}/{totalRooms} rooms completed");
+                                ImGui.Text($"進度: 已完成 {completedCount}/{totalRooms} 個房間");
                             }
                         }
                     }
@@ -292,20 +292,20 @@ namespace DeepDungeon.Fsd.Dalamud
 					string[] scenarios = _detailedMapHostOptions.SupportsControlledPtSurvey
 						? new[]
 						{
-							"Pilgrim's Traverse 21-30",
-							"Pilgrim's Traverse 31-40",
-							"PT 21-30 controlled capture (reusable save)"
+							"朝聖交錯路 21-30 層",
+							"朝聖交錯路 31-40 層",
+							"朝聖交錯路 21-30 層受控採集（可複用存檔）"
 						}
 						: new[]
 						{
-							"Pilgrim's Traverse 21-30",
-							"Pilgrim's Traverse 31-40"
+							"朝聖交錯路 21-30 層",
+							"朝聖交錯路 31-40 層"
 						};
 				int idx = Math.Clamp(_fsfScenarioIndex, 0, scenarios.Length - 1);
 				ImGui.SetNextItemWidth(260f);
 				bool hostAssistActive = _ddHost?.AssistModeActive == true;
 				ImGui.BeginDisabled(hostAssistActive);
-					if (ImGui.Combo("Scenario##fsf_scn", ref idx, scenarios, scenarios.Length))
+					if (ImGui.Combo("場景##fsf_scn", ref idx, scenarios, scenarios.Length))
 					{
 						_fsfScenarioIndex = idx;
 						_configuration.NecromancerFsdScenarioIndex = idx;
@@ -322,7 +322,7 @@ namespace DeepDungeon.Fsd.Dalamud
 					ImGui.Spacing();
 					ImGui.Indent();
 					ImGui.BeginDisabled(fsdRunning || inDD || _bridgeLeaveDutyContext != null || _bridgeDeleteSaveContext != null || _bridgeDeleteSaveFlow != null);
-					if (ImGui.Button("FSD Start##fsf_start_top"))
+					if (ImGui.Button("啟動 FSD##fsf_start_top"))
 					{
 						try
 						{
@@ -352,7 +352,7 @@ namespace DeepDungeon.Fsd.Dalamud
 					ImGui.EndDisabled();
 					ImGui.SameLine();
 					ImGui.BeginDisabled(!fsdRunning);
-					if (ImGui.Button("Stop##fsf_stop_top"))
+					if (ImGui.Button("停止##fsf_stop_top"))
 					{
 						StopFullSelfDelving();
 					}
@@ -372,7 +372,7 @@ namespace DeepDungeon.Fsd.Dalamud
 				{
 					var provider = _ddHost?.RunOptionsProvider;
 					ImGui.Separator();
-						ImGui.Text("Full Self Farming Options");
+						ImGui.Text("FSD 選項");
 						ImGui.Indent();
 						// Source values: provider if running, otherwise configuration defaults
 						bool controlledCapture = _detailedMapHostOptions.SupportsControlledPtSurvey &&
@@ -380,25 +380,25 @@ namespace DeepDungeon.Fsd.Dalamud
 							 string.Equals(_ddHost?.CurrentScenarioName, "PT 21-30 controlled capture", StringComparison.Ordinal));
 						ImGui.BeginDisabled(controlledCapture);
 						bool banded = provider != null ? provider.Current.BandedEnabled : _configuration.NecromancerAutoBandedFarmEnabled;
-						if (ImGui.Checkbox("Hoard", ref banded))
+						if (ImGui.Checkbox("探索埋藏的寶藏", ref banded))
 						{
 							_configuration.NecromancerAutoBandedFarmEnabled = banded; _configuration.Save();
 							if (provider != null) provider.Update(o => o.BandedEnabled = banded);
 						}
 						bool og = provider != null ? provider.Current.OpenGold : _configuration.NecromancerAutoOpenGoldChest;
-						if (ImGui.Checkbox("Open Gold", ref og))
+						if (ImGui.Checkbox("開啟金寶箱", ref og))
 						{
 							_configuration.NecromancerAutoOpenGoldChest = og; _configuration.Save();
 							if (provider != null) provider.Update(o => o.OpenGold = og);
 						}
 						bool os = provider != null ? provider.Current.OpenSilver : _configuration.NecromancerAutoOpenSilverChest;
-						if (ImGui.Checkbox("Open Silver", ref os))
+						if (ImGui.Checkbox("開啟銀寶箱", ref os))
 						{
 							_configuration.NecromancerAutoOpenSilverChest = os; _configuration.Save();
 							if (provider != null) provider.Update(o => o.OpenSilver = os);
 						}
 						bool ob = provider != null ? provider.Current.OpenBronze : _configuration.NecromancerAutoOpenBronzeChest;
-						if (ImGui.Checkbox("Open Bronze", ref ob))
+						if (ImGui.Checkbox("開啟銅寶箱", ref ob))
 						{
 							_configuration.NecromancerAutoOpenBronzeChest = ob; _configuration.Save();
 							if (provider != null) provider.Update(o => o.OpenBronze = ob);
@@ -407,9 +407,8 @@ namespace DeepDungeon.Fsd.Dalamud
 						ImGui.Separator();
 						ImGui.Text("退出深宮...");
 						// UI indices (modeIdx): 0=完成任務後, 1=獲取1個寶藏後, 2=立即(debug)
-						string[] leaveModes = new[] { "完成任務後", "獲取1個寶藏後", "立即(debug)" };
+						string[] leaveModes = new[] { "完成任務後", "獲得 1 個埋藏的寶藏後", "立即（調試）", "進入首領層時", "N 分鐘後" };
 						int currentModeIdx = provider != null ? LeaveModeUiMapping.ToUiIndex(provider.Current.LeaveMode) : Math.Clamp(_configuration.NecromancerAutoLeaveMode, 0, 4);
-						leaveModes = new[] { "After finish dungeon", "After getting 1 hoard", "Immediate (debug)", "On boss floor entry", "After N minutes" };
 						ImGui.SetNextItemWidth(180f);
 						if (ImGui.Combo("##leaveMode", ref currentModeIdx, leaveModes, leaveModes.Length))
 						{
@@ -420,7 +419,7 @@ namespace DeepDungeon.Fsd.Dalamud
 						if (LeaveModeUiMapping.FromUiIndex(currentModeIdx) == LeaveMode.AfterNMinutes)
 						{
 							int leaveAfterMinutes = provider != null ? provider.Current.LeaveAfterMinutes : _configuration.NecromancerAutoLeaveAfterMinutes;
-							if (ImGui.SliderInt("Leave after minutes##leaveAfterMinutes", ref leaveAfterMinutes, 1, 180))
+							if (ImGui.SliderInt("離開前等待分鐘數##leaveAfterMinutes", ref leaveAfterMinutes, 1, 180))
 							{
 								leaveAfterMinutes = Math.Clamp(leaveAfterMinutes, 1, 180);
 								_configuration.NecromancerAutoLeaveAfterMinutes = leaveAfterMinutes; _configuration.Save();
@@ -442,7 +441,7 @@ namespace DeepDungeon.Fsd.Dalamud
 						if (endMode == 0)
 						{
 							bool infinite = _configuration.NecromancerFsdLoopInfinite;
-							if (ImGui.Checkbox("Infinite Loop##fsf_inf", ref infinite))
+							if (ImGui.Checkbox("無限循環##fsf_inf", ref infinite))
 							{
 								_configuration.NecromancerFsdLoopInfinite = infinite;
 								_configuration.Save();
@@ -452,7 +451,7 @@ namespace DeepDungeon.Fsd.Dalamud
 							ImGui.BeginDisabled(infinite);
 							int loops = Math.Max(1, _configuration.NecromancerFsdLoopCount);
 							ImGui.SetNextItemWidth(90f);
-							if (ImGui.InputInt("Loops##fsf_loops", ref loops))
+							if (ImGui.InputInt("循環次數##fsf_loops", ref loops))
 							{
 								loops = Math.Max(1, loops);
 								_configuration.NecromancerFsdLoopCount = loops;
@@ -492,7 +491,7 @@ namespace DeepDungeon.Fsd.Dalamud
 									_ => 0u
 								};
 
-								string label = "Potsherd";
+								string label = "陶片";
 								if (itemId != 0)
 								{
 									try
@@ -564,10 +563,10 @@ namespace DeepDungeon.Fsd.Dalamud
 											int t2 = _configuration.NecromancerFsdPotdHoard16171Target;
 											int t3 = _configuration.NecromancerFsdPotdHoard16172Target;
 											int t4 = _configuration.NecromancerFsdPotdHoard16173Target;
-											DrawHoardRow(16170u, ref t1, "BuriedTreasureG1");
-											DrawHoardRow(16171u, ref t2, "BuriedTreasureG2");
-											DrawHoardRow(16172u, ref t3, "BuriedTreasureG3");
-											DrawHoardRow(16173u, ref t4, "BuriedTreasureG4");
+											DrawHoardRow(16170u, ref t1, "埋藏的寶藏 G1");
+											DrawHoardRow(16171u, ref t2, "埋藏的寶藏 G2");
+											DrawHoardRow(16172u, ref t3, "埋藏的寶藏 G3");
+											DrawHoardRow(16173u, ref t4, "埋藏的寶藏 G4");
 											_configuration.NecromancerFsdPotdHoard16170Target = t1;
 											_configuration.NecromancerFsdPotdHoard16171Target = t2;
 											_configuration.NecromancerFsdPotdHoard16172Target = t3;
@@ -580,9 +579,9 @@ namespace DeepDungeon.Fsd.Dalamud
 											int t1 = _configuration.NecromancerFsdHoHHoard23223Target;
 											int t2 = _configuration.NecromancerFsdHoHHoard23224Target;
 											int t3 = _configuration.NecromancerFsdHoHHoard23225Target;
-											DrawHoardRow(23223u, ref t1, "BuriedTreasureH1");
-											DrawHoardRow(23224u, ref t2, "BuriedTreasureH2");
-											DrawHoardRow(23225u, ref t3, "BuriedTreasureH3");
+											DrawHoardRow(23223u, ref t1, "埋藏的寶藏 H1");
+											DrawHoardRow(23224u, ref t2, "埋藏的寶藏 H2");
+											DrawHoardRow(23225u, ref t3, "埋藏的寶藏 H3");
 											_configuration.NecromancerFsdHoHHoard23223Target = t1;
 											_configuration.NecromancerFsdHoHHoard23224Target = t2;
 											_configuration.NecromancerFsdHoHHoard23225Target = t3;
@@ -594,9 +593,9 @@ namespace DeepDungeon.Fsd.Dalamud
 											int t1 = _configuration.NecromancerFsdEOHoard38945Target;
 											int t2 = _configuration.NecromancerFsdEOHoard38946Target;
 											int t3 = _configuration.NecromancerFsdEOHoard38947Target;
-											DrawHoardRow(38945u, ref t1, "BuriedTreasureI");
-											DrawHoardRow(38946u, ref t2, "BuriedTreasureII");
-											DrawHoardRow(38947u, ref t3, "BuriedTreasureIII");
+											DrawHoardRow(38945u, ref t1, "埋藏的寶藏 I");
+											DrawHoardRow(38946u, ref t2, "埋藏的寶藏 II");
+											DrawHoardRow(38947u, ref t3, "埋藏的寶藏 III");
 											_configuration.NecromancerFsdEOHoard38945Target = t1;
 											_configuration.NecromancerFsdEOHoard38946Target = t2;
 											_configuration.NecromancerFsdEOHoard38947Target = t3;
@@ -608,9 +607,9 @@ namespace DeepDungeon.Fsd.Dalamud
 											int t1 = _configuration.NecromancerFsdPTHoard47104Target;
 											int t2 = _configuration.NecromancerFsdPTHoard47105Target;
 											int t3 = _configuration.NecromancerFsdPTHoard47106Target;
-											DrawHoardRow(47104u, ref t1, "BuriedTreasureL1");
-											DrawHoardRow(47105u, ref t2, "BuriedTreasureL2");
-											DrawHoardRow(47106u, ref t3, "BuriedTreasureL3");
+											DrawHoardRow(47104u, ref t1, "埋藏的寶藏 L1");
+											DrawHoardRow(47105u, ref t2, "埋藏的寶藏 L2");
+											DrawHoardRow(47106u, ref t3, "埋藏的寶藏 L3");
 											_configuration.NecromancerFsdPTHoard47104Target = t1;
 											_configuration.NecromancerFsdPTHoard47105Target = t2;
 											_configuration.NecromancerFsdPTHoard47106Target = t3;
@@ -628,7 +627,7 @@ namespace DeepDungeon.Fsd.Dalamud
 
 					// Battle assist (Banded chest farming settings)
 					ImGui.Separator();
-					ImGui.Text("Battle assist");
+					ImGui.Text("戰鬥輔助");
 					UiHelpers.DrawGrayTipText("如果你的自動輸出插件不會自動選中或主動攻擊");
 					// Scan radius and stand seconds are hardcoded (30m, ~3s) and not configurable
 					var autoSel = _configuration.NecromancerBandedAutoSelect;
@@ -705,7 +704,7 @@ namespace DeepDungeon.Fsd.Dalamud
 
 			ImGui.Spacing();
 			ImGui.BeginDisabled(!supported || !serviceConfigured);
-			if (ImGui.Checkbox("Use detailed map##fsdDetailedMap", ref enabled))
+			if (ImGui.Checkbox("使用詳細地圖##fsdDetailedMap", ref enabled))
 			{
 				_configuration.UseDetailedMap = enabled;
 				_configuration.Save();
@@ -732,7 +731,7 @@ namespace DeepDungeon.Fsd.Dalamud
 				{
 					ImGui.Spacing();
 					ImGui.TextDisabled(
-						"No detailed-map data version is published for the selected scenario.");
+						"所選場景尚未發佈詳細地圖資料版本。");
 				}
 				ImGui.PopTextWrapPos();
 				ImGui.EndTooltip();
@@ -753,7 +752,7 @@ namespace DeepDungeon.Fsd.Dalamud
 					scenarioKey);
 			ImGui.TextDisabled(
 				status.ReleaseId == null
-					? "數據版本: unavailable"
+					? "資料版本: 不可用"
 					: $"數據版本: {status.ReleaseId}");
 			if (status.CandidateCount > 0)
 			{
@@ -797,33 +796,33 @@ namespace DeepDungeon.Fsd.Dalamud
 		private void DrawDeepDungeonOverlayToggles()
 		{
 			ImGui.Spacing();
-			if (!ImGui.CollapsingHeader("Overlay Controls", ImGuiTreeNodeFlags.DefaultOpen))
+			if (!ImGui.CollapsingHeader("疊加顯示控制", ImGuiTreeNodeFlags.DefaultOpen))
 				return;
 
 			ImGui.Indent();
 			DrawOverlayToggleCheckbox(
-				"Room centers (world)",
+				"房間中心（世界）",
 				_configuration.NecromancerShowRoomCenterOverlay,
 				v => _configuration.NecromancerShowRoomCenterOverlay = v,
-				"Disable green crosses for discovered centers in the 3D world.");
+				"控制是否在 3D 世界中顯示已發現房間中心的綠色十字。");
 
 			DrawOverlayToggleCheckbox(
-				"Traps (world)",
+				"陷阱（世界）",
 				_configuration.NecromancerShowTrapOverlay,
 				v => _configuration.NecromancerShowTrapOverlay = v,
-				"Disable PalacePal trap markers in the world overlay.");
+				"控制是否在世界疊加層中顯示 PalacePal 陷阱標記。");
 
 			DrawOverlayToggleCheckbox(
-				"AutoPilot room path (world)",
+				"自動導航房間路徑（世界）",
 				_configuration.NecromancerShowRoomPathOverlay,
 				v => _configuration.NecromancerShowRoomPathOverlay = v,
-				"Disable Sequential AutoPilot path lines and room indicators.");
+				"控制是否顯示順序自動導航的路徑線和房間指示器。");
 
 			DrawOverlayToggleCheckbox(
-				"BG collision debug (world)",
+				"背景碰撞調試（世界）",
 				_configuration.NecromancerShowBgCollisionOverlay,
 				v => _configuration.NecromancerShowBgCollisionOverlay = v,
-				"Suppress background collision debug primitives even when enabled.");
+				"控制是否顯示背景碰撞調試圖形。");
 
 			ImGui.Unindent();
 		}
@@ -1159,7 +1158,7 @@ namespace DeepDungeon.Fsd.Dalamud
                     drawList.AddRectFilled(tileTopLeft, tileBottomRight, hl, 4f);
 					if (!canNavigate)
                     {
-						ImGui.SetTooltip("No room center available for this floorset/tileset.");
+						ImGui.SetTooltip("當前樓層組或地圖佈局沒有可用的房間中心。");
 					}
 					else if (passage && !hasCenterData)
 					{
@@ -1872,7 +1871,7 @@ namespace DeepDungeon.Fsd.Dalamud
 			}
 			if (snapshot == null)
 			{
-				DrawPlaceholder("Room center generator data unavailable.");
+				DrawPlaceholder("房間中心產生器資料不可用。");
 				return;
 			}
 
@@ -1914,7 +1913,7 @@ namespace DeepDungeon.Fsd.Dalamud
 
 			if (realPoints.Count == 0 && predictedPoints.Count == 0 && !playerAnchor.HasValue)
 			{
-				DrawPlaceholder("No respawn-wall data captured yet.");
+				DrawPlaceholder("尚未採集到重生牆資料。");
 				return;
 			}
 
@@ -2013,22 +2012,22 @@ namespace DeepDungeon.Fsd.Dalamud
 			var lightPrimary = new Vector4(0.92f, 0.96f, 1.0f, 1.0f);
 			var lightSecondary = new Vector4(0.78f, 0.84f, 0.94f, 1.0f);
 			var lightWarning = new Vector4(1.0f, 0.78f, 0.65f, 1.0f);
-			var currentLabel = usingActiveWalls ? "Respawn walls (current layout)" : "Respawn walls (raw)";
+			var currentLabel = usingActiveWalls ? "重生牆（當前佈局）" : "重生牆（原始資料）";
 			ImGui.TextColored(lightPrimary, $"{currentLabel}: {realPoints.Count}");
 			if (usingActiveWalls)
 			{
-				ImGui.TextColored(lightSecondary, $"Source: clustered layer ({activeWalls.Count} points)");
+				ImGui.TextColored(lightSecondary, $"來源: 聚類層（{activeWalls.Count} 個點）");
 			}
 			else if (activeWalls.Count > 0)
 			{
-				ImGui.TextColored(lightWarning, "Active layout unavailable; showing raw walls.");
+				ImGui.TextColored(lightWarning, "當前佈局不可用，正在顯示原始牆體。");
 			}
-			ImGui.TextColored(lightPrimary, $"Predicted centers: {predictedPoints.Count}");
+			ImGui.TextColored(lightPrimary, $"預測中心: {predictedPoints.Count}");
 			if (playerAnchor.HasValue)
 			{
-				ImGui.TextColored(lightPrimary, "Player anchor");
+				ImGui.TextColored(lightPrimary, "玩家錨點");
 			}
-			ImGui.TextColored(lightSecondary, $"Span ~ {width:F1}m x {height:F1}m");
+			ImGui.TextColored(lightSecondary, $"範圍約 {width:F1}m × {height:F1}m");
 
 			if (!string.IsNullOrEmpty(snapshot.Error))
 			{
@@ -2036,18 +2035,18 @@ namespace DeepDungeon.Fsd.Dalamud
 			}
 			else if (predictedPoints.Count == 0)
 			{
-				ImGui.TextColored(lightWarning, "Predicted centers unavailable for this floor.");
+				ImGui.TextColored(lightWarning, "當前樓層沒有可用的預測中心。");
 			}
 
 			if (deepDungeon != null)
 			{
-				ImGui.TextColored(lightSecondary, $"Floor {deepDungeon->Floor} - Layout {deepDungeon->ActiveLayoutIndex}");
+				ImGui.TextColored(lightSecondary, $"樓層 {deepDungeon->Floor} - 佈局 {deepDungeon->ActiveLayoutIndex}");
 			}
 
 			// Layout separation and grid detection debug info
-			ImGui.TextColored(lightSecondary, $"Layout sep: {snapshot.RawRespawnWallCount} walls -> K={snapshot.LayoutSeparationK} -> {snapshot.ActiveLayoutWallCount} active");
-			ImGui.TextColored(lightSecondary, $"Grid: {snapshot.DetectedGridCols}x{snapshot.DetectedGridRows} (K={snapshot.DetectedGridCols},{snapshot.DetectedGridRows})");
-			ImGui.TextColored(lightSecondary, $"Room centers detected: {snapshot.DetectedRoomCenterCount}");
+			ImGui.TextColored(lightSecondary, $"佈局分離: {snapshot.RawRespawnWallCount} 面牆 -> K={snapshot.LayoutSeparationK} -> {snapshot.ActiveLayoutWallCount} 面有效牆");
+			ImGui.TextColored(lightSecondary, $"網格: {snapshot.DetectedGridCols}×{snapshot.DetectedGridRows} (K={snapshot.DetectedGridCols},{snapshot.DetectedGridRows})");
+			ImGui.TextColored(lightSecondary, $"檢測到的房間中心: {snapshot.DetectedRoomCenterCount}");
 		}
 
 		private unsafe void DrawRoomCenterControlsUnderMap(InstanceContentDeepDungeon* deepDungeon, int playerRoom)
@@ -2417,10 +2416,10 @@ namespace DeepDungeon.Fsd.Dalamud
 				var playerPos2 = playerRoomCenter.Value;
 				var playerPos3 = new Vector3(playerPos2.X, yLevel, playerPos2.Y);
 				WorldDrawHelper.DrawWorldCircle(playerPos3, 2.4f, colPlayer);
-				WorldDrawHelper.DrawWorldText(playerPos3 + new Vector3(0f, 0.35f, 0f), colPlayer, $"Player #{snapshot.PlayerRoomIndex}");
+				WorldDrawHelper.DrawWorldText(playerPos3 + new Vector3(0f, 0.35f, 0f), colPlayer, $"玩家 #{snapshot.PlayerRoomIndex}");
 
 				WorldDrawHelper.DrawWorldText(playerPos3 + new Vector3(0f, 0.55f, 0f), snapshot.AlignmentFailed ? colRaw : colFinalActual,
-					snapshot.AlignmentFailed ? "Alignment Failed" : "Alignment OK");
+					snapshot.AlignmentFailed ? "對齊失敗" : "對齊正常");
 
 				if (deepDungeon != null)
 				{
@@ -2538,45 +2537,45 @@ namespace DeepDungeon.Fsd.Dalamud
         {
             return pomanderId switch
             {
-                1 => "Safety",
-                2 => "Sight",
-                3 => "Strength",
-                4 => "Steel",
-                5 => "Affluence",
-                6 => "Flight",
-                7 => "Alteration",
-                8 => "Purity",
-                9 => "Fortune",
-                10 => "Witching",
-                11 => "Serenity",
-                12 => "Rage",
-                13 => "Lust",
-                14 => "Intuition",
-                15 => "Raising",
-                16 => "Resolution",
-                17 => "Frailty",
-                18 => "Concealment",
-                19 => "Petrification",
-                20 => "Protomander of Lethargy",
-                21 => "Protomander of Storms",
-                22 => "Protomander of Dread",
-                23 => "Protomander of Safety",
-                24 => "Protomander of Sight",
-                25 => "Protomander of Strength",
-                26 => "Protomander of Steel",
-                27 => "Protomander of Affluence",
-                28 => "Protomander of Flight",
-                29 => "Protomander of Alteration",
-                30 => "Protomander of Purity",
-                31 => "Protomander of Fortune",
-                32 => "Protomander of Witching",
-                33 => "Protomander of Serenity",
-                34 => "Protomander of Intuition",
-                35 => "Protomander of Raising",
-                36 => "Haste",
-                37 => "Purification",
-                38 => "Devotion",
-                _ => $"Pomander #{pomanderId}"
+				1 => "安全",
+				2 => "視野",
+				3 => "強化自身",
+				4 => "鋼鐵",
+				5 => "寶箱增多",
+				6 => "敵人減少",
+				7 => "敵人變化",
+				8 => "解咒",
+				9 => "運氣",
+				10 => "變形",
+				11 => "解除",
+				12 => "憤怒",
+				13 => "夢魔",
+				14 => "感知寶藏",
+				15 => "重生",
+				16 => "解除石化",
+				17 => "弱化",
+				18 => "隱身",
+				19 => "石化",
+				20 => "遲緩原型魔陶器",
+				21 => "風暴原型魔陶器",
+				22 => "恐懼原型魔陶器",
+				23 => "安全原型魔陶器",
+				24 => "視野原型魔陶器",
+				25 => "強化自身原型魔陶器",
+				26 => "鋼鐵原型魔陶器",
+				27 => "寶箱增多原型魔陶器",
+				28 => "敵人減少原型魔陶器",
+				29 => "敵人變化原型魔陶器",
+				30 => "解咒原型魔陶器",
+				31 => "運氣原型魔陶器",
+				32 => "變形原型魔陶器",
+				33 => "解除原型魔陶器",
+				34 => "感知寶藏原型魔陶器",
+				35 => "重生原型魔陶器",
+				36 => "敏捷",
+				37 => "淨化",
+				38 => "奉獻",
+				_ => $"魔陶器 #{pomanderId}"
             };
         }
 
@@ -2601,7 +2600,7 @@ namespace DeepDungeon.Fsd.Dalamud
 					for (int i = 0; i < count; i++)
 					{
 						uint pomanderRowId = (uint)rowValue.PomanderSlot[i].RowId;
-						string name = $"Pomander Slot {i + 1}";
+						string name = $"魔陶器槽位 {i + 1}";
 						uint icon = 0;
 						try
 						{
@@ -2772,7 +2771,7 @@ namespace DeepDungeon.Fsd.Dalamud
 			var visuals = new PomanderVisual[16];
 			for (int i = 0; i < visuals.Length; i++)
 			{
-				visuals[i] = new PomanderVisual((uint)(i + 1), $"Pomander Slot {i + 1}", 0, true);
+				visuals[i] = new PomanderVisual((uint)(i + 1), $"魔陶器槽位 {i + 1}", 0, true);
 			}
 			return visuals;
 		}

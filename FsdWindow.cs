@@ -35,7 +35,7 @@ internal sealed class FsdWindow : Window
         {
             _application.DrawDeepDungeonFormalPanel();
             ImGui.Separator();
-            ImGui.Text("General assistant");
+            ImGui.Text("通用輔助");
             _application.DrawGeneralAssistantSettings();
             ImGui.EndTabItem();
         }

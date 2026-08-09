@@ -3,7 +3,7 @@ namespace DeepDungeon.Fsd.Dalamud;
 public sealed class DetailedMapHostOptions
 {
     public const string NoOnlineCatalogServiceMessage =
-        "This build has no detailed-map service configured.";
+        "此構建未配置詳細地圖服務。";
 
     public DetailedMapHostOptions(
         Uri? catalogBaseUri,
