@@ -27,8 +27,7 @@ public sealed unsafe class NativeDeepDungeonLogMessageSource : IDisposable
         {
             _updateHook = gameInteropProvider.HookFromAddress<RaptureLogModule.Delegates.Update>(
                 RaptureLogModule.Addresses.Update.Value,
-                UpdateDetour,
-                IGameInteropProvider.HookBackend.MinHook);
+                UpdateDetour);
 
             EnableHook(_updateHook, nameof(RaptureLogModule.Delegates.Update));
         }

@@ -24,6 +24,14 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		private ref DateTime _engagedTargetProgressAt => ref PatrolExecution.EngagedTargetProgressAt;
 		private ref bool _clearingEngageRecentering => ref PatrolExecution.ClearingEngageRecentering;
 		private ref DateTime _clearingEngageRecenteringAt => ref PatrolExecution.ClearingEngageRecenteringAt;
+		private ref ulong _preEngageTargetProgressId => ref PatrolExecution.PreEngageTargetProgressId;
+		private ref uint _preEngageTargetProgressHp => ref PatrolExecution.PreEngageTargetProgressHp;
+		private ref DateTime _preEngageTargetProgressAt => ref PatrolExecution.PreEngageTargetProgressAt;
+		private ref bool _clearingPreEngageAirWallRecovery => ref PatrolExecution.ClearingPreEngageAirWallRecovery;
+		private ref DateTime _clearingPreEngageAirWallRecoveryAt => ref PatrolExecution.ClearingPreEngageAirWallRecoveryAt;
+		private ref int _clearingPreEngageTargetRoom => ref PatrolExecution.ClearingPreEngageTargetRoom;
+
+		private static readonly TimeSpan ClearingPreEngageRecoveryLimit = TimeSpan.FromSeconds(10);
 
 		private unsafe void UpdateClearingMechanics(InstanceContentDeepDungeon* dd)
 		{
@@ -54,6 +62,9 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			if (TryUpdateClearingEngageRecentering(dd, player))
 				return;
 
+			if (TryUpdateClearingPreEngageAirWallRecovery(dd, player))
+				return;
+
 			var target = _chaseHelper.GetClearingTarget(
 				dd,
 				_floorRuntime?.NormalGraph,
@@ -66,11 +77,28 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				RecordChaseTargetEvent("clearing-target-selected", target.Value);
 				_ctx.SetPreferredAggroTarget(target.Value.GameObjectId, target.Value.Position);
 
-				bool engaged =
-					Service.Condition[ConditionFlag.InCombat] ||
-					target.Value.Reason == EnemyChaseTargetReason.Aggro;
+				var currentTarget = CombatTargetingHelpers.GetBattleCharaByGameObjectId(target.Value.GameObjectId);
+				bool targetSpecificAggro =
+					target.Value.Reason == EnemyChaseTargetReason.Aggro ||
+					EnemyChaseHelper.IsAggroedToPlayer(target.Value.GameObjectId);
 				bool casting = Service.Condition[ConditionFlag.Casting];
 				bool withinLiveTargetHoldRange = IsWithinLiveTargetHoldRange(target.Value, player.Position);
+				bool preEngageRecovery =
+					TrackPreEngageTarget(
+						target.Value,
+						currentTarget,
+						targetSpecificAggro,
+						attackAttemptWindow: casting || withinLiveTargetHoldRange,
+						dd);
+				if (preEngageRecovery)
+				{
+					_chaseHelper.CompleteCurrentLeg();
+					_navHelper?.Cancel();
+					if (TryUpdateClearingPreEngageAirWallRecovery(dd, player))
+						return;
+				}
+
+				bool engaged = targetSpecificAggro;
 				if (engaged || casting || withinLiveTargetHoldRange)
 				{
 					_chaseHelper.CompleteCurrentLeg();
@@ -88,12 +116,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 					}
 					else
 					{
-						ResetEngagedTargetProgress();
+						ResetEngagedProgressOnly();
 					}
 				}
 				else
 				{
-					ResetEngagedTargetProgress();
+					ResetEngagedProgressOnly();
 					var state = _navHelper!.Navigate(
 						target.Value.Position,
 						player.Position,
@@ -369,6 +397,194 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			return TryUpdateClearingEngageRecentering(dd, player);
 		}
 
+		private unsafe bool TrackPreEngageTarget(
+			EnemyChaseTarget target,
+			IBattleChara? current,
+			bool targetSpecificAggro,
+			bool attackAttemptWindow,
+			InstanceContentDeepDungeon* dd)
+		{
+			DateTime now = DateTime.UtcNow;
+			var decision = EnemyChaseRecoveryPolicy.Decide(
+				targetAvailable: current != null,
+				targetDead: current == null || current.IsDead || current.CurrentHp == 0,
+				targetSpecificAggro: targetSpecificAggro,
+				targetHpDecreased:
+					current != null &&
+					_preEngageTargetProgressId == target.GameObjectId &&
+					current.CurrentHp < _preEngageTargetProgressHp,
+				attackAttemptWindow: attackAttemptWindow,
+				noProgress: _preEngageTargetProgressId == target.GameObjectId
+					? now - _preEngageTargetProgressAt
+					: TimeSpan.Zero,
+				recoveryActive: _clearingPreEngageAirWallRecovery);
+
+			if (_preEngageTargetProgressId != target.GameObjectId)
+			{
+				_preEngageTargetProgressId = target.GameObjectId;
+				_preEngageTargetProgressHp = current?.CurrentHp ?? 0;
+				_preEngageTargetProgressAt = now;
+				_clearingPreEngageAirWallRecovery = false;
+				_clearingPreEngageAirWallRecoveryAt = DateTime.MinValue;
+				_clearingPreEngageTargetRoom = ResolveTargetRoomIndex(dd, target);
+				return false;
+			}
+
+			if (decision == EnemyChaseRecoveryDecision.TargetProgress)
+			{
+				ResetPreEngageProgressOnly();
+				return false;
+			}
+
+			// A target can remain selected while the player is still traversing the
+			// room graph.  Only the normal attack-attempt window is evidence that the
+			// player is being held by an attack-blocking wall; a long chase alone must
+			// never start room-interior recovery.
+			if (!attackAttemptWindow)
+			{
+				_preEngageTargetProgressAt = now;
+				_clearingPreEngageAirWallRecovery = false;
+				_clearingPreEngageAirWallRecoveryAt = DateTime.MinValue;
+				_clearingPreEngageTargetRoom = ResolveTargetRoomIndex(dd, target);
+				return false;
+			}
+
+			if (decision != EnemyChaseRecoveryDecision.Start)
+				return decision == EnemyChaseRecoveryDecision.Continue;
+
+			_clearingPreEngageAirWallRecovery = true;
+			_clearingPreEngageAirWallRecoveryAt = now;
+			_clearingPreEngageTargetRoom = ResolveTargetRoomIndex(dd, target);
+			RecordReplayEvent("clearing-pre-engage-recovery-started", new
+			{
+				floor = dd->Floor,
+				targetId = target.GameObjectId,
+				reason = "no-target-specific-progress",
+				seconds = (int)(now - _preEngageTargetProgressAt).TotalSeconds,
+				targetRoom = _clearingPreEngageTargetRoom,
+				attackAttemptWindow,
+				x = target.LivePosition.X,
+				y = target.LivePosition.Y,
+				z = target.LivePosition.Z
+			});
+			return true;
+		}
+
+		private unsafe bool TryUpdateClearingPreEngageAirWallRecovery(
+			InstanceContentDeepDungeon* dd,
+			IPlayerCharacter player)
+		{
+			if (!_clearingPreEngageAirWallRecovery)
+				return false;
+
+			ulong targetId = _preEngageTargetProgressId;
+			if (targetId == 0)
+			{
+				ResetPreEngageProgressOnly();
+				return false;
+			}
+
+			var current = CombatTargetingHelpers.GetBattleCharaByGameObjectId(targetId);
+			bool targetSpecificHpProgress =
+				current != null && current.CurrentHp < _preEngageTargetProgressHp;
+			if (current == null || current.IsDead || current.CurrentHp == 0 ||
+				EnemyChaseHelper.IsAggroedToPlayer(targetId) ||
+				targetSpecificHpProgress)
+			{
+				RecordReplayEvent("clearing-pre-engage-recovery-completed", new
+				{
+					floor = dd->Floor,
+					targetId,
+					reason = current == null || current.IsDead || current.CurrentHp == 0
+						? "target-disappeared"
+						: EnemyChaseHelper.IsAggroedToPlayer(targetId)
+							? "target-aggroed"
+							: "target-hp-progress",
+					currentHp = current?.CurrentHp ?? 0,
+					lastProgressHp = _preEngageTargetProgressHp
+				});
+				ResetPreEngageProgressOnly();
+				return false;
+			}
+
+			var now = DateTime.UtcNow;
+			if (now - _clearingPreEngageAirWallRecoveryAt >= ClearingPreEngageRecoveryLimit)
+			{
+				SuppressStalledEngageTarget(
+					dd,
+					targetId,
+					"pre-engage-room-interior-no-progress",
+					current,
+					current.Position,
+					_preEngageTargetProgressAt,
+					_preEngageTargetProgressHp);
+				return true;
+			}
+
+			if (_clearingPreEngageTargetRoom < 0 ||
+				!TryResolveRoomDestination(dd, _clearingPreEngageTargetRoom, out var destination))
+			{
+				SuppressStalledEngageTarget(
+					dd,
+					targetId,
+					"pre-engage-room-center-unavailable",
+					current,
+					current.Position,
+					_preEngageTargetProgressAt,
+					_preEngageTargetProgressHp);
+				return true;
+			}
+
+			var state = _navHelper!.Navigate(destination, player.Position, arrivalRadius: 1.5f);
+			switch (state)
+			{
+				case NavigationState.Moving:
+					_status = "Crossing room interior to engage hostile";
+					return true;
+				case NavigationState.Arrived:
+					_status = "Room interior reached; retrying hostile engage";
+					return true;
+				case NavigationState.StuckRepathing:
+					_status = $"Crossing room interior to engage hostile ({_navHelper.StuckRetryCount}/3)";
+					return true;
+				case NavigationState.StuckGiveUp:
+					SuppressStalledEngageTarget(
+						dd,
+						targetId,
+						"pre-engage-room-center-navigation-stuck",
+						current,
+						current.Position,
+						_preEngageTargetProgressAt,
+						_preEngageTargetProgressHp);
+					return true;
+				case NavigationState.Failed:
+					SuppressStalledEngageTarget(
+						dd,
+						targetId,
+						"pre-engage-room-center-navigation-failed",
+						current,
+						current.Position,
+						_preEngageTargetProgressAt,
+						_preEngageTargetProgressHp);
+					return true;
+				default:
+					return true;
+			}
+		}
+
+		private unsafe int ResolveTargetRoomIndex(
+			InstanceContentDeepDungeon* dd,
+			EnemyChaseTarget target)
+		{
+			if (target.AcquisitionTargetRoomIndex >= 0)
+				return target.AcquisitionTargetRoomIndex;
+
+			IReadOnlyList<int>? rooms = _floorRuntime?.NormalGraph?.ReachableRooms;
+			return rooms == null
+				? -1
+				: RoomGraph.GetRoomIndexForPosition(dd, target.LivePosition, rooms, -1);
+		}
+
 		private unsafe bool TryUpdateClearingEngageRecentering(InstanceContentDeepDungeon* dd, IPlayerCharacter player)
 		{
 			if (!_clearingEngageRecentering)
@@ -452,7 +668,14 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			}
 		}
 
-		private unsafe void SuppressStalledEngageTarget(InstanceContentDeepDungeon* dd, ulong targetId, string reason, IBattleChara current, Vector3 position)
+		private unsafe void SuppressStalledEngageTarget(
+			InstanceContentDeepDungeon* dd,
+			ulong targetId,
+			string reason,
+			IBattleChara current,
+			Vector3 position,
+			DateTime? progressAt = null,
+			uint? progressHp = null)
 		{
 			_chaseHelper.DeprioritizeCurrentTarget();
 			_ctx?.SuppressCombatTarget(targetId, CombatTargetSuppressionDuration);
@@ -463,9 +686,9 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				floor = dd->Floor,
 				targetId,
 				reason,
-				seconds = (int)(DateTime.UtcNow - _engagedTargetProgressAt).TotalSeconds,
+				seconds = (int)(DateTime.UtcNow - (progressAt ?? _engagedTargetProgressAt)).TotalSeconds,
 				currentHp = current.CurrentHp,
-				lastProgressHp = _engagedTargetProgressHp,
+				lastProgressHp = progressHp ?? _engagedTargetProgressHp,
 				x = position.X,
 				y = position.Y,
 				z = position.Z
@@ -476,6 +699,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 		private void ResetEngagedTargetProgress()
 		{
+			ResetEngagedProgressOnly();
+			ResetPreEngageProgressOnly();
+		}
+
+		private void ResetEngagedProgressOnly()
+		{
 			var execution = _floorRuntime?.ActiveExecution;
 			if (execution == null)
 				return;
@@ -484,6 +713,20 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			execution.EngagedTargetProgressAt = DateTime.MinValue;
 			execution.ClearingEngageRecentering = false;
 			execution.ClearingEngageRecenteringAt = DateTime.MinValue;
+		}
+
+		private void ResetPreEngageProgressOnly()
+		{
+			var execution = _floorRuntime?.ActiveExecution;
+			if (execution == null)
+				return;
+
+			execution.PreEngageTargetProgressId = 0;
+			execution.PreEngageTargetProgressHp = 0;
+			execution.PreEngageTargetProgressAt = DateTime.MinValue;
+			execution.ClearingPreEngageAirWallRecovery = false;
+			execution.ClearingPreEngageAirWallRecoveryAt = DateTime.MinValue;
+			execution.ClearingPreEngageTargetRoom = -1;
 		}
 
 		private unsafe bool TryResolveRoomDestination(InstanceContentDeepDungeon* dd, int roomIndex, out Vector3 dest)
@@ -498,6 +741,39 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			}
 
 			return false;
+		}
+	}
+
+	internal enum EnemyChaseRecoveryDecision
+	{
+		None,
+		Start,
+		Continue,
+		TargetProgress
+	}
+
+	internal static class EnemyChaseRecoveryPolicy
+	{
+		private static readonly TimeSpan NoProgressLimit = TimeSpan.FromSeconds(15);
+
+		public static EnemyChaseRecoveryDecision Decide(
+			bool targetAvailable,
+			bool targetDead,
+			bool targetSpecificAggro,
+			bool targetHpDecreased,
+			bool attackAttemptWindow,
+			TimeSpan noProgress,
+			bool recoveryActive)
+		{
+			if (!targetAvailable || targetDead || targetSpecificAggro || targetHpDecreased)
+				return EnemyChaseRecoveryDecision.TargetProgress;
+			if (recoveryActive)
+				return EnemyChaseRecoveryDecision.Continue;
+			if (!attackAttemptWindow)
+				return EnemyChaseRecoveryDecision.None;
+			return noProgress >= NoProgressLimit
+				? EnemyChaseRecoveryDecision.Start
+				: EnemyChaseRecoveryDecision.None;
 		}
 	}
 }

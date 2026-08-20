@@ -703,9 +703,24 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 			usePalacePalFallback = candidatePlan.UsePalacePalFallback;
 		}
 
-		internal static bool IsSightTrapIndicatorBaseId(uint baseId)
+		internal static bool IsSightTrapIndicatorBaseId(uint dungeonId, uint baseId)
 		{
-			return (baseId >= 2007182 && baseId <= 2007186) || baseId == 2009504;
+			// Shared Sight trap indicator BaseIds across Deep Dungeons.
+			if (baseId >= 2007182 && baseId <= 2007185)
+				return true;
+
+			// Dungeon-unique transformation trap indicators. Do not treat the
+			// hoard indicator (2007542) as a trap. EO (dungeon 3) has no
+			// live-captured unique transformation ID yet — do not guess.
+			return dungeonId switch
+			{
+				1 => baseId == 2007186, // Palace of the Dead
+				2 => baseId == 2009504, // Heaven on High
+				// Eureka Orthos: unique transformation ID unknown until live capture.
+				3 => false,
+				4 => baseId == 2014939, // Pilgrim's Traverse
+				_ => false
+			};
 		}
 
 		private static unsafe IReadOnlyList<NativeRoomChestDiagnostic> BuildNativeRoomChestDiagnostics(

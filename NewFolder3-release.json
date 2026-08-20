@@ -6,10 +6,10 @@
     "InternalName": "NewFolder3",
     "RepoUrl": "https://github.com/transparent-duck/NewFolder3",
     "DownloadCount": 1,
-    "LastUpdate": 1786284635,
+    "LastUpdate": 1787252249,
     "DownloadLinkInstall": "https://github.com/transparent-duck/NewFolder3/raw/refs/heads/main/NewFolder3.zip",
     "DownloadLinkUpdate": "https://github.com/transparent-duck/NewFolder3/raw/refs/heads/main/NewFolder3.zip",
-    "AssemblyVersion": "0.7.55.8",
+    "AssemblyVersion": "0.7.55.9",
     "ApplicableVersion": "any",
     "DalamudApiLevel": 15,
     "IconUrl": "https://raw.githubusercontent.com/transparent-duck/NewFolder3/refs/heads/main/icon.png"

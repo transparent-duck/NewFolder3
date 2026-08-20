@@ -80,7 +80,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				_invalidationVersion++;
 		}
 
-		public unsafe FloorObjectEvidenceRefreshResult RefreshIfDue()
+		public unsafe FloorObjectEvidenceRefreshResult RefreshIfDue(uint dungeonId)
 		{
 			if (IsDisposed)
 				return default;
@@ -149,7 +149,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 							obj.SubKind,
 							$"0x{obj.Address.ToInt64():X}"));
 					}
-					if (RoomSearchContext.IsSightTrapIndicatorBaseId(obj.BaseId))
+					if (RoomSearchContext.IsSightTrapIndicatorBaseId(dungeonId, obj.BaseId))
 						sightTrapIndicators.Add(evidence);
 					if (PassageLocator.IsPassageBase(obj.BaseId))
 						passageActors.Add(evidence);

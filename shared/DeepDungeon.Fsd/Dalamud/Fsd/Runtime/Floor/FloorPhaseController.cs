@@ -498,7 +498,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 			var objective = CurrentObjectiveDecision.PrimaryObjective;
 			if (_floorRuntime is { } ordinaryRuntime &&
-			    TryUseNaturalPoisonfruitForPassage(
+			    TryUseNaturalPassageAcceleration(
 				    dd,
 				    ordinaryRuntime,
 				    objective))
@@ -886,7 +886,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 		private unsafe bool RefreshFloorObjectEvidence(InstanceContentDeepDungeon* dd, FloorRuntime runtime)
 		{
-			var refresh = runtime.ObjectEvidence.RefreshIfDue();
+			var refresh = runtime.ObjectEvidence.RefreshIfDue(runtime.DungeonId);
 			if (refresh.Attempted)
 			{
 				ObserveCurrentRoom(dd);
@@ -1001,12 +1001,14 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				: _chatWatchers?.ChatSaysNoHoard == true
 					? IntuitionFloorResolution.Negative
 					: IntuitionFloorResolution.Unresolved;
-			bool exactIndicatorAvailable =
-				snapshot.HoardIndicators.Count > 0 ||
-				_executor?.CachedHoardIndicatorPos.HasValue == true;
-			Vector3? exactIndicatorPosition = snapshot.HoardIndicators.Count > 0
-				? snapshot.HoardIndicators[0].Object.Position
-				: _executor?.CachedHoardIndicatorPos;
+			bool exactHoardEvidenceFromBanded;
+			Vector3? exactIndicatorPosition =
+				TryResolveNaturalExactHoardPosition(
+					dd,
+					runtime,
+					snapshot,
+					out exactHoardEvidenceFromBanded);
+			bool exactIndicatorAvailable = exactIndicatorPosition.HasValue;
 			bool acceptedIncomingEdgeKnown =
 				exactIndicatorPosition.HasValue &&
 				HasAcceptedIncomingEdge(
@@ -1026,7 +1028,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				RevealDispatchedThisFloor: runtime.NaturalRevealDispatched,
 				AuthoritativeRevealConfirmed: runtime.NaturalRevealConfirmed,
 				MazerootSupported: naturalPtStonesSupported,
-				MazerootUsableThisFloor: ptIncenseUsableThisFloor));
+				MazerootUsableThisFloor: ptIncenseUsableThisFloor,
+				BandedHoardEvidenceAvailable: exactHoardEvidenceFromBanded));
 			int selectedResourceStock = decision.ShouldUseMazeroot
 				? mazerootStock
 				: sightStock;
@@ -1059,6 +1062,63 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				selectedResourceStock);
 			if (dispatched)
 				runtime.SightResearchDispatched = true;
+		}
+
+		private unsafe Vector3? TryResolveNaturalExactHoardPosition(
+			InstanceContentDeepDungeon* dd,
+			FloorRuntime runtime,
+			FloorObjectEvidenceSnapshot snapshot,
+			out bool fromBandedChest)
+		{
+			fromBandedChest = false;
+			if (snapshot.HoardIndicators.Count > 0)
+				return snapshot.HoardIndicators[0].Object.Position;
+
+			if (_executor?.CachedHoardIndicatorPos is { } cachedPosition)
+				return cachedPosition;
+
+			if (!BandedChestLocator.TryFindNearestToPlayer(snapshot, out Vector3? bandedPosition) ||
+				!bandedPosition.HasValue ||
+				!IsPalacePalCandidatePosition(dd, runtime, bandedPosition.Value))
+			{
+				return null;
+			}
+
+			fromBandedChest = true;
+			return bandedPosition.Value;
+		}
+
+		private unsafe bool IsPalacePalCandidatePosition(
+			InstanceContentDeepDungeon* dd,
+			FloorRuntime runtime,
+			Vector3 position)
+		{
+			IReadOnlyList<int>? rooms = runtime.NormalGraph?.ReachableRooms;
+			if (rooms == null)
+				return false;
+
+			int roomIndex = RoomGraph.GetRoomIndexForPosition(dd, position, rooms, -1);
+			if (roomIndex < 0)
+				return false;
+
+			IReadOnlyList<Vector3>? candidates =
+				_executor?.GetPalacePalCandidatesForRoom(dd, roomIndex);
+			if (candidates == null)
+				return false;
+
+			var rawPosition = new RawWorldPosition(position.X, position.Y, position.Z);
+			for (int i = 0; i < candidates.Count; i++)
+			{
+				Vector3 candidate = candidates[i];
+				if (RawWorldPosition.CanonicallyEquals(
+					rawPosition,
+					new RawWorldPosition(candidate.X, candidate.Y, candidate.Z)))
+				{
+					return true;
+				}
+			}
+
+			return false;
 		}
 
 		private unsafe bool HasAcceptedIncomingEdge(
@@ -1109,7 +1169,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 						sightStock,
 						mazerootStock,
 						runtime.NaturalRevealDispatched ||
-						runtime.NaturalRevealConfirmed,
+						runtime.NaturalRevealConfirmed ||
+						runtime.NaturalMazerootAttemptedOrAdopted,
 						DungeonCatalog.SupportsNaturalPtStones(
 							runtime.DungeonId)));
 			long previousSightLogSequence =
@@ -1131,6 +1192,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 			runtime.NaturalRevealDispatched = true;
 			runtime.NaturalRevealResource = decision.Resource;
+			if (decision.Resource == SightResearchRevealResource.Mazeroot)
+				runtime.NaturalMazerootAttemptedOrAdopted = true;
 			runtime.NaturalSightLogSequenceAtDispatch =
 				previousSightLogSequence;
 			runtime.NaturalMazerootLogSequenceAtDispatch =
@@ -1183,6 +1246,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		{
 			if (runtime.NaturalRevealDispatched ||
 			    runtime.NaturalRevealConfirmed ||
+			    runtime.NaturalMazerootAttemptedOrAdopted ||
 			    !sightConfirmed)
 			{
 				return;
@@ -1205,6 +1269,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				return;
 
 			runtime.NaturalRevealResource = resource;
+			if (resource == SightResearchRevealResource.Mazeroot)
+				runtime.NaturalMazerootAttemptedOrAdopted = true;
 			runtime.NaturalRevealConfirmed = true;
 			runtime.NaturalRevealConfirmationRefreshSequence =
 				runtime.ObjectEvidence.Current?.RefreshSequence ??
@@ -2025,6 +2091,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 			runtime.NaturalRevealDispatched = true;
 			runtime.NaturalRevealResource = resource;
+			if (resource == SightResearchRevealResource.Mazeroot)
+				runtime.NaturalMazerootAttemptedOrAdopted = true;
 			runtime.NaturalSightLogSequenceAtDispatch =
 				sightLogSequenceBeforeDispatch;
 			runtime.NaturalMazerootLogSequenceAtDispatch =
@@ -2109,7 +2177,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			return decision == ControlledPtDispatchGateAction.Allow;
 		}
 
-		private unsafe bool TryUseNaturalPoisonfruitForPassage(
+		private unsafe bool TryUseNaturalPassageAcceleration(
 			InstanceContentDeepDungeon* dd,
 			FloorRuntime runtime,
 			FloorObjectiveKind primaryObjective)
@@ -2128,25 +2196,24 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				runtime.EvidenceSession?.Bundle.AcquisitionMode ==
 				FloorEvidenceAcquisitionMode.AutomaticCommunitySurvey;
 			int poisonfruitStock = _pomanderManager.GetStoneCount(1);
-			if (poisonfruitStock <= 0 ||
-			    runtime.NaturalPoisonfruitDispatched)
-			{
-				return false;
-			}
-
+			int mazerootStock = _pomanderManager.GetStoneCount(2);
 			bool canDispatch = CanAttemptPomanderUse();
 			bool passageDispatchSafe =
 				canDispatch &&
 				CanDispatchNaturalPassageOpeningStoneSafely(dd);
-			var action = NaturalPoisonfruitAccelerationPolicy.Decide(
-				new NaturalPoisonfruitAccelerationSnapshot(
+			var action = NaturalPassageAccelerationPolicy.Decide(
+				new NaturalPassageAccelerationSnapshot(
 					ControlledSurveyActive: _ctx?.ControlledPtSurvey != null,
 					PrimaryObjective: primaryObjective,
 					ActivePairCapture: activePairCapture,
 					JointScanComplete: runtime.NaturalJointScanComplete,
 					PassageOpen: _ctx?.Duty.PassageOpen == true,
 					PoisonfruitStock: poisonfruitStock,
-					AlreadyDispatched: runtime.NaturalPoisonfruitDispatched,
+					PoisonfruitAttemptedThisFloor:
+						runtime.NaturalPoisonfruitAttempted,
+					MazerootStock: mazerootStock,
+					MazerootAttemptedOrAdopted:
+						runtime.NaturalMazerootAttemptedOrAdopted,
 					CanDispatch: canDispatch,
 					PassageDispatchSafe: passageDispatchSafe,
 					PtStoneSupported:
@@ -2155,13 +2222,24 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 					PtStoneUsableThisFloor:
 						DeepDungeonFloorItemUsePolicy.CanUsePtIncense(
 							dd->DeepDungeonBanId)));
-			if (action != NaturalPoisonfruitAccelerationAction.Dispatch ||
-			    !_pomanderManager.UseStone(1))
+			if (action == NaturalPassageAccelerationAction.DispatchMazeroot)
 			{
-				return false;
+				return TryUseNaturalPassageMazeroot(
+					dd,
+					runtime,
+					"ordinary passage acceleration fallback");
 			}
 
-			runtime.NaturalPoisonfruitDispatched = true;
+			if (action != NaturalPassageAccelerationAction.DispatchPoisonfruit)
+				return false;
+
+			// PomanderManager.UseStone returns true only after it found a matching
+			// slot and invoked the native request.  That is the boundary for
+			// suppressing Mazeroot; it is not an effect-confirmation signal.
+			if (!_pomanderManager.UseStone(1))
+				return false;
+
+			runtime.NaturalPoisonfruitAttempted = true;
 			_pomanderDispatchedThisUpdate = true;
 			_nextPomanderUseAt = DateTime.UtcNow.AddSeconds(3);
 			runtime.ObjectEvidence.Invalidate();
@@ -2175,6 +2253,41 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 					stoneId = 1,
 					reason = "ordinary passage acceleration"
 				});
+			return true;
+		}
+
+		private unsafe bool TryUseNaturalPassageMazeroot(
+			InstanceContentDeepDungeon* dd,
+			FloorRuntime runtime,
+			string reason)
+		{
+			if (_ctx?.ControlledPtSurvey != null ||
+			    runtime.NaturalMazerootAttemptedOrAdopted ||
+			    !DungeonCatalog.SupportsNaturalPtStones(dd->DeepDungeonId) ||
+			    !DeepDungeonFloorItemUsePolicy.CanUsePtIncense(
+				    dd->DeepDungeonBanId) ||
+			    !CanAttemptPomanderUse() ||
+			    _pomanderManager.GetStoneCount(2) <= 0)
+			{
+				return false;
+			}
+			if (!CanDispatchNaturalPassageOpeningStoneSafely(dd))
+			{
+				_status = "Waiting to use passage accelerator safely away from the passage";
+				return false;
+			}
+			if (!_pomanderManager.UseStone(2))
+				return false;
+
+			runtime.NaturalMazerootAttemptedOrAdopted = true;
+			_pomanderDispatchedThisUpdate = true;
+			_nextPomanderUseAt = DateTime.UtcNow.AddSeconds(3);
+			runtime.ObjectEvidence.Invalidate();
+			Service.Log.Info(
+				$"[FloorPhase] Used PT incense 2 ({reason}) on floor {dd->Floor}");
+			RecordReplayEvent(
+				"incense-used",
+				new { floor = dd->Floor, stoneId = 2, reason });
 			return true;
 		}
 
@@ -3572,7 +3685,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			public HashSet<ControlledTrapWitnessKey> NaturalObservedTrapWitnesses { get; } = [];
 			public float NaturalMaximumTrapWitnessDistance { get; set; }
 			public bool NaturalJointScanComplete { get; set; }
-			public bool NaturalPoisonfruitDispatched { get; set; }
+			public bool NaturalPoisonfruitAttempted { get; set; }
+			public bool NaturalMazerootAttemptedOrAdopted { get; set; }
 			public bool ControlledSightDispatched { get; set; }
 			public long ControlledSightLogSequenceAtDispatch { get; set; }
 			public long ControlledMazerootLogSequenceAtDispatch { get; set; }
