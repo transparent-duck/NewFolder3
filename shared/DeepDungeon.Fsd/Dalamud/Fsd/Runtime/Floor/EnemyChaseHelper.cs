@@ -333,7 +333,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			return false;
 		}
 
-		private static unsafe bool IsAggroedToPlayer(ulong targetId)
+		public static unsafe bool IsAggroedToPlayer(ulong targetId)
 		{
 			if (targetId == 0)
 				return false;

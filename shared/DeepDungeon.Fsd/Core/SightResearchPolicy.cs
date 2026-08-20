@@ -34,7 +34,8 @@ public readonly record struct SightResearchSnapshot(
     bool RevealDispatchedThisFloor,
     bool AuthoritativeRevealConfirmed,
     bool MazerootSupported,
-    bool MazerootUsableThisFloor);
+    bool MazerootUsableThisFloor,
+    bool BandedHoardEvidenceAvailable = false);
 
 public readonly record struct SightResearchDecision(
     SightResearchDecisionKind Kind,
@@ -57,7 +58,7 @@ public readonly record struct SightResearchDecision(
 
 public static class SightResearchPolicy
 {
-    public const int PolicyVersion = 2;
+    public const int PolicyVersion = 3;
 
     public static SightResearchDecision Decide(in SightResearchSnapshot snapshot)
     {
@@ -67,10 +68,17 @@ public static class SightResearchPolicy
         if (snapshot.IntuitionResolution == IntuitionFloorResolution.Negative)
             return new SightResearchDecision(SightResearchDecisionKind.Ineligible, "intuition-negative");
 
-        if (snapshot.IntuitionResolution != IntuitionFloorResolution.Positive)
+        // A visible, targetable Banded coffer is an authoritative terminal hoard
+        // observation even when Intuition was not used (or its chat result was
+        // not observed).  PalacePal matching is performed by the caller before
+        // this bit is supplied; this policy must not create a new hoard-position
+        // collection path.
+        if (snapshot.IntuitionResolution != IntuitionFloorResolution.Positive &&
+            !snapshot.BandedHoardEvidenceAvailable)
             return new SightResearchDecision(SightResearchDecisionKind.Pending, "intuition-unresolved");
 
-        if (!snapshot.ExactHoardIndicatorAvailable)
+        if (!snapshot.ExactHoardIndicatorAvailable &&
+            !snapshot.BandedHoardEvidenceAvailable)
             return new SightResearchDecision(SightResearchDecisionKind.Pending, "exact-indicator-unresolved");
 
         if (snapshot.AuthoritativeRevealConfirmed)

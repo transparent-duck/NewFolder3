@@ -68,16 +68,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 				return true;
 			}
 
-			var territoryId = Service.ClientState.TerritoryType;
-			if (!_ctx.Duty.IsTransitioning &&
-			    territoryId != 0 &&
-			    (!DungeonCatalog.TryGetByTerritoryId(territoryId, out var dungeon) ||
-			     dungeon.DungeonId != DungeonCatalog.PilgrimsTraverse.DungeonId))
-			{
-				SetFinished("PT: rest exit complete outside PT territory");
-				return true;
-			}
-
 			var hasYesno = DeepDungeonUi.TryGetSelectYesNo(out var yesno);
 
 			if (hasYesno)

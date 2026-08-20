@@ -62,6 +62,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			public DateTime EngagedTargetProgressAt = DateTime.MinValue;
 			public bool ClearingEngageRecentering;
 			public DateTime ClearingEngageRecenteringAt = DateTime.MinValue;
+			public ulong PreEngageTargetProgressId;
+			public uint PreEngageTargetProgressHp;
+			public DateTime PreEngageTargetProgressAt = DateTime.MinValue;
+			public bool ClearingPreEngageAirWallRecovery;
+			public DateTime ClearingPreEngageAirWallRecoveryAt = DateTime.MinValue;
+			public int ClearingPreEngageTargetRoom = -1;
 
 			public void Dispose()
 			{
