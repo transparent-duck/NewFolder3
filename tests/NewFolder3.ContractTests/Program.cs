@@ -1,5 +1,6 @@
 using System.Net;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using Dalamud.Plugin.Services;
 using DeepDungeon.Fsd.Core;
@@ -21,6 +22,7 @@ internal static class Program
         passed += Run("community-evidence-upload-contract", TestCommunityEvidenceUploadContract);
         passed += Run("community-usage-scenario-index-mapping", TestCommunityUsageScenarioIndexMapping);
         passed += Run("community-usage-telemetry-contract", TestCommunityUsageTelemetryContract);
+        passed += Run("community-long-run-log-contract", TestCommunityLongRunLogContract);
         passed += Run("public-manifest-and-release-feed-roots", TestPublicManifestAndReleaseFeedRoots);
         Console.WriteLine($"NewFolder3 contract tests: {passed} passed");
         return 0;
@@ -73,9 +75,11 @@ internal static class Program
             capabilities.DetailedMapCatalogEndpoint == null &&
             capabilities.CommunityEvidenceEndpoint == null &&
             capabilities.UsageTelemetryEndpoint == null &&
+            capabilities.LongRunLogEndpoint == null &&
             !capabilities.HasOnlineCatalogService &&
             !capabilities.HasCommunityEvidenceUpload &&
             !capabilities.HasUsageTelemetry &&
+            !capabilities.HasLongRunLogUpload &&
             !capabilities.ContributesAnonymousEvidence &&
             !capabilities.SupportsControlledPtSurvey &&
             capabilities.CreateAccessGate == null,
@@ -573,6 +577,165 @@ internal static class Program
             Reason: outcome == RunFloorTerminalOutcome.PassageCompleted
                 ? "transitioning"
                 : "player-death");
+
+    private static void TestCommunityLongRunLogContract()
+    {
+        string configRoot = Path.Combine(
+            Path.GetTempPath(),
+            $"newfolder3-long-run-log-contract-{Guid.NewGuid():N}");
+        string logDirectory = Path.Combine(configRoot, "source");
+        string pendingDirectory = Path.Combine(configRoot, "LongRunLogs", "pending");
+        const string installationToken = "0123456789abcdef0123456789abcdef";
+        string scenarioKey =
+            DetailedMapEvidenceContract.PilgrimsTraverse21To30ScenarioKey;
+        DateTime startedAtUtc = new(2026, 8, 22, 1, 0, 0, DateTimeKind.Utc);
+        try
+        {
+            Assert(
+                !NewFolder3BuildProfile.Capabilities.HasLongRunLogUpload,
+                "Public builds must not configure a long-run log endpoint.");
+            Directory.CreateDirectory(logDirectory);
+            string exactThirtyPath = Path.Combine(logDirectory, "exact-thirty.jsonl");
+            string longPath = Path.Combine(logDirectory, "long.jsonl");
+            File.WriteAllBytes(
+                exactThirtyPath,
+                CreateCompletedRunLog(startedAtUtc, TimeSpan.FromMinutes(30)));
+            byte[] expectedLongLog =
+                CreateCompletedRunLog(startedAtUtc, TimeSpan.FromMinutes(31));
+            File.WriteAllBytes(longPath, expectedLongLog);
+
+            var handler = new GatedAcceptedHandler();
+            using var collector = new CommunityLongRunLogCollector(
+                configRoot,
+                installationToken,
+                "0.0.0-contract",
+                new UriBuilder(Uri.UriSchemeHttps, IPAddress.Loopback.ToString()).Uri,
+                DispatchProxy.Create<IPluginLog, NoOpDispatchProxy>(),
+                handler);
+
+            collector.ObserveRunRecordingClosed(
+                CreateRunRecordingClosed(
+                    exactThirtyPath,
+                    startedAtUtc,
+                    TimeSpan.FromMinutes(30),
+                    detailedMapActive: true,
+                    reason: "fsd-final-loop-complete",
+                    scenarioKey));
+            collector.ObserveRunRecordingClosed(
+                CreateRunRecordingClosed(
+                    longPath,
+                    startedAtUtc,
+                    TimeSpan.FromMinutes(31),
+                    detailedMapActive: false,
+                    reason: "fsd-final-loop-complete",
+                    scenarioKey));
+            collector.ObserveRunRecordingClosed(
+                CreateRunRecordingClosed(
+                    longPath,
+                    startedAtUtc,
+                    TimeSpan.FromMinutes(31),
+                    detailedMapActive: true,
+                    reason: "fsd-stopped",
+                    scenarioKey));
+            collector.ObserveRunRecordingClosed(
+                CreateRunRecordingClosed(
+                    longPath,
+                    startedAtUtc,
+                    TimeSpan.FromMinutes(31),
+                    detailedMapActive: true,
+                    reason: "fsd-final-loop-complete",
+                    scenarioKey));
+
+            try
+            {
+                Assert(
+                    handler.WaitUntilRequested(TimeSpan.FromSeconds(3)),
+                    "An eligible completed long detailed-map run was not uploaded.");
+                CommunityRunLogEnvelope envelope =
+                    CommunityRunLogContract.Parse(handler.GetRequestPayload(0));
+                byte[] uploadedLog = CommunityRunLogContract.GetRawLog(envelope);
+                Assert(
+                    uploadedLog.SequenceEqual(expectedLongLog),
+                    "The uploaded gzip envelope did not preserve the complete run log.");
+                Assert(
+                    envelope.ScenarioKey == scenarioKey &&
+                    envelope.DurationMilliseconds ==
+                        (long)TimeSpan.FromMinutes(31).TotalMilliseconds,
+                    "The uploaded long-run metadata was incorrect.");
+            }
+            finally
+            {
+                handler.AllowFirstResponse();
+            }
+
+            Assert(
+                SpinWait.SpinUntil(
+                    () => handler.RequestCount == 1 &&
+                          !Directory.EnumerateFiles(
+                              pendingDirectory,
+                              "*.json",
+                              SearchOption.TopDirectoryOnly).Any(),
+                    TimeSpan.FromSeconds(3)),
+                "Ineligible runs were uploaded or the accepted log remained pending.");
+
+            byte[] personalLog = Encoding.UTF8.GetBytes(
+                "{\"timestampUtc\":\"2026-08-22T01:00:00Z\",\"eventType\":\"controller-initialized\",\"data\":{\"recorderPath\":\"C:\\\\Users\\\\Example\\\\run.jsonl\"}}\n" +
+                "{\"timestampUtc\":\"2026-08-22T01:31:00Z\",\"eventType\":\"run-recorder-closing\",\"data\":{\"reason\":\"fsd-final-loop-complete\"}}\n");
+            bool personalLogRejected = false;
+            try
+            {
+                _ = CommunityRunLogContract.CreateEnvelope(
+                    personalLog,
+                    scenarioKey,
+                    "0.0.0-contract");
+            }
+            catch (InvalidDataException)
+            {
+                personalLogRejected = true;
+            }
+            Assert(
+                personalLogRejected,
+                "Run logs containing an absolute recorder path must be rejected.");
+        }
+        finally
+        {
+            if (Directory.Exists(configRoot))
+                Directory.Delete(configRoot, recursive: true);
+        }
+    }
+
+    private static RunRecordingClosedTelemetry CreateRunRecordingClosed(
+        string path,
+        DateTime startedAtUtc,
+        TimeSpan duration,
+        bool detailedMapActive,
+        string reason,
+        string scenarioKey) =>
+        new(
+            startedAtUtc,
+            startedAtUtc + duration,
+            path,
+            reason,
+            scenarioKey,
+            detailedMapActive,
+            ControlledSurvey: false);
+
+    private static byte[] CreateCompletedRunLog(DateTime startedAtUtc, TimeSpan duration)
+    {
+        string first = JsonSerializer.Serialize(new
+        {
+            timestampUtc = startedAtUtc,
+            eventType = "controller-initialized",
+            data = new { mode = "unknown" }
+        });
+        string last = JsonSerializer.Serialize(new
+        {
+            timestampUtc = startedAtUtc + duration,
+            eventType = "run-recorder-closing",
+            data = new { reason = "fsd-final-loop-complete" }
+        });
+        return Encoding.UTF8.GetBytes($"{first}\n{last}\n");
+    }
 
     private static void AssertUsagePayloadAllowlist(byte[] payload)
     {

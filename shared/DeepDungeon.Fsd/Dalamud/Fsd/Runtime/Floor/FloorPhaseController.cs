@@ -211,7 +211,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			RecordReplayEvent("controller-initialized", new
 			{
 				mode = _ctx?.Duty.IsInDuty == true ? "in-duty" : "unknown",
-				recorderPath = _runRecorder.FilePath
+				recorderFile = Path.GetFileName(_runRecorder.FilePath)
 			});
 			Service.Log.Info("[FloorPhase] Controller initialized");
 			Service.Log.Info($"[FloorPhase] DD run recorder -> {_runRecorder.FilePath}");
@@ -374,6 +374,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			if (_runRecorder == null)
 				return;
 
+			DeepDungeonRunRecorder recorder = _runRecorder;
 			RecordReplayEvent("run-recorder-closing", new
 			{
 				reason,
@@ -382,8 +383,25 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				floor = _floorRuntime?.Floor ?? 0,
 				details
 			});
-			_runRecorder.Dispose();
+			recorder.Dispose();
 			_runRecorder = null;
+
+			try
+			{
+				_runTelemetryObserver?.ObserveRunRecordingClosed(
+					new RunRecordingClosedTelemetry(
+						recorder.StartedAtUtc,
+						DateTime.UtcNow,
+						recorder.FilePath,
+						reason,
+						_ctx?.DetailedMap.ScenarioKey,
+						_ctx?.DetailedMap.Policy == DetailedMapRuntimePolicy.DetailedMap,
+						_ctx?.ControlledPtSurvey != null));
+			}
+			catch (Exception ex)
+			{
+				Service.Log.Error($"[RunTelemetry] Host run-recording observer failed: {ex}");
+			}
 		}
 
 		public void CancelActiveMovement()

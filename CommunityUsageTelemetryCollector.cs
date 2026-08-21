@@ -282,6 +282,10 @@ internal sealed class CommunityUsageTelemetryCollector : IRunTelemetryObserver, 
     {
     }
 
+    public void ObserveRunRecordingClosed(in RunRecordingClosedTelemetry observation)
+    {
+    }
+
     private void QueueEvent(
         string eventType,
         string? scenarioKey,
