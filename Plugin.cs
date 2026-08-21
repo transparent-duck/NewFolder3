@@ -3,6 +3,7 @@ using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using DeepDungeon.Fsd.Dalamud;
+using DeepDungeon.Fsd.Dalamud.Runtime;
 using OmenTools;
 using OmenTools.OmenService;
 
@@ -18,6 +19,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
     private readonly INewFolder3AccessGate _accessGate;
     private readonly CommunityEvidenceCollector? _communityEvidenceCollector;
     private readonly CommunityUsageTelemetryCollector? _usageTelemetryCollector;
+    private readonly CommunityLongRunLogCollector? _longRunLogCollector;
     private readonly FsdApplication _application;
     private readonly FsdWindow _window;
     private bool _disposed;
@@ -37,6 +39,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         FsdApplication? application = null;
         CommunityEvidenceCollector? communityEvidenceCollector = null;
         CommunityUsageTelemetryCollector? usageTelemetryCollector = null;
+        CommunityLongRunLogCollector? longRunLogCollector = null;
         var omenInitialized = false;
         var commandRegistered = false;
         var drawSubscribed = false;
@@ -66,7 +69,8 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
             NewFolder3BuildCapabilities capabilities = NewFolder3BuildProfile.Capabilities;
             string? installationToken = null;
             if (capabilities.CommunityEvidenceEndpoint != null ||
-                capabilities.UsageTelemetryEndpoint != null)
+                capabilities.UsageTelemetryEndpoint != null ||
+                capabilities.LongRunLogEndpoint != null)
             {
                 installationToken =
                     _configuration.GetOrCreateCommunityEvidenceInstallationToken();
@@ -93,9 +97,28 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
                     telemetryEndpoint,
                     pluginLog);
             }
+            if (capabilities.LongRunLogEndpoint is { } longRunLogEndpoint)
+            {
+                longRunLogCollector = new CommunityLongRunLogCollector(
+                    pluginInterface.GetPluginConfigDirectory(),
+                    installationToken
+                        ?? throw new InvalidOperationException(
+                            "Installation token is required for long-run log upload."),
+                    hostVersion,
+                    longRunLogEndpoint,
+                    pluginLog);
+            }
 
             _communityEvidenceCollector = communityEvidenceCollector;
             _usageTelemetryCollector = usageTelemetryCollector;
+            _longRunLogCollector = longRunLogCollector;
+
+            IRunTelemetryObserver? runTelemetryObserver =
+                usageTelemetryCollector != null && longRunLogCollector != null
+                    ? new CompositeRunTelemetryObserver(
+                        usageTelemetryCollector,
+                        longRunLogCollector)
+                    : usageTelemetryCollector ?? (IRunTelemetryObserver?)longRunLogCollector;
 
             // FsdApplication injects the shared Dalamud services required by FSD.
             application = new FsdApplication(
@@ -105,7 +128,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
                 hostVersion,
                 NewFolder3BuildProfile.CreateDetailedMapHostOptions(),
                 _communityEvidenceCollector,
-                runTelemetryObserver: _usageTelemetryCollector,
+                runTelemetryObserver,
                 tryAuthorizeFsdStart: _accessGate.TryAuthorizeFsdStart,
                 fsdStartDenialNoticeProvider: () => _accessGate.FsdStartDenialNotice);
             _application = application;
@@ -137,6 +160,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
             RollBack(() => application?.Dispose(), rollbackErrors);
             RollBack(() => communityEvidenceCollector?.Dispose(), rollbackErrors);
             RollBack(() => usageTelemetryCollector?.Dispose(), rollbackErrors);
+            RollBack(() => longRunLogCollector?.Dispose(), rollbackErrors);
             RollBack(() => { if (omenInitialized) DService.Uninit(); }, rollbackErrors);
 
             if (rollbackErrors.Count == 0)
@@ -188,6 +212,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         _application.Dispose();
         _communityEvidenceCollector?.Dispose();
         _usageTelemetryCollector?.Dispose();
+        _longRunLogCollector?.Dispose();
         DService.Uninit();
         _disposed = true;
     }

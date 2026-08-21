@@ -23,7 +23,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 			var logDir = GetLogDirectory();
 			Directory.CreateDirectory(logDir);
 
-			string timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+			StartedAtUtc = DateTime.UtcNow;
+			string timestamp = StartedAtUtc.ToString("yyyyMMdd-HHmmss");
 			string safeSessionName = SanitizeFileSegment(sessionName);
 			_filePath = Path.Combine(logDir, $"{timestamp}-{safeSessionName}.jsonl");
 			_writer = new StreamWriter(_filePath, append: false, new UTF8Encoding(false))
@@ -34,6 +35,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		}
 
 		public string FilePath => _filePath;
+		public DateTime StartedAtUtc { get; }
 
 		public static string GetLogDirectory()
 		{

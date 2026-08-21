@@ -82,6 +82,19 @@ public readonly record struct RunFloorTerminalTelemetry(
     RunFloorTerminalOutcome Outcome,
     string Reason);
 
+/// <summary>
+/// One closed per-loop run recorder. The file has already been flushed and is
+/// no longer owned by the engine when the host receives this observation.
+/// </summary>
+public readonly record struct RunRecordingClosedTelemetry(
+    DateTime StartedAtUtc,
+    DateTime ClosedAtUtc,
+    string FilePath,
+    string Reason,
+    string? ScenarioKey,
+    bool DetailedMapActive,
+    bool ControlledSurvey);
+
 public enum RunFloorStateTrigger
 {
     StableSetup,
@@ -182,4 +195,5 @@ public interface IRunTelemetryObserver
     void ObserveFloorBoundary(in RunFloorBoundaryTelemetry observation);
     void ObserveFloorTerminal(in RunFloorTerminalTelemetry observation);
     void ObserveFloorState(RunFloorStateTelemetry observation);
+    void ObserveRunRecordingClosed(in RunRecordingClosedTelemetry observation);
 }
