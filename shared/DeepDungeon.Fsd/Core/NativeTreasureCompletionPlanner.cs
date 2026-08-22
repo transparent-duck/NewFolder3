@@ -31,7 +31,7 @@ namespace DeepDungeon.Fsd.Core
         bool IsTargetable,
         byte State,
         byte Flags,
-        bool RetryTargetableInteraction = false,
+        bool RetryIncompleteInteraction = false,
         double InteractionElapsedSeconds = 0,
         double RetryAfterSeconds = 0);
 
@@ -63,18 +63,26 @@ namespace DeepDungeon.Fsd.Core
                 NativeTreasureCompletionKind.TreasureState =>
                     snapshot.State != UnopenedState || (snapshot.Flags & OpenedFlag) != 0
                         ? new NativeTreasureCompletionDecision(NativeTreasureCompletionStatus.Accepted, true)
-                        : new NativeTreasureCompletionDecision(NativeTreasureCompletionStatus.Unopened, false),
+                        : new NativeTreasureCompletionDecision(
+                            NativeTreasureCompletionStatus.Unopened,
+                            false,
+                            ShouldRetry(snapshot)),
                 NativeTreasureCompletionKind.EventObjectTargetable =>
                     !snapshot.IsTargetable
                         ? new NativeTreasureCompletionDecision(NativeTreasureCompletionStatus.Accepted, true)
                         : new NativeTreasureCompletionDecision(
                             NativeTreasureCompletionStatus.Targetable,
                             false,
-                            snapshot.RetryTargetableInteraction &&
-                            snapshot.RetryAfterSeconds > 0 &&
-                            snapshot.InteractionElapsedSeconds >= snapshot.RetryAfterSeconds),
+                            ShouldRetry(snapshot)),
                 _ => new NativeTreasureCompletionDecision(NativeTreasureCompletionStatus.Unavailable, false)
             };
+        }
+
+        private static bool ShouldRetry(in NativeTreasureCompletionSnapshot snapshot)
+        {
+            return snapshot.RetryIncompleteInteraction &&
+                   snapshot.RetryAfterSeconds > 0 &&
+                   snapshot.InteractionElapsedSeconds >= snapshot.RetryAfterSeconds;
         }
     }
 }

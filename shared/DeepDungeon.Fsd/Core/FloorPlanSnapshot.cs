@@ -43,6 +43,7 @@ namespace DeepDungeon.Fsd.Core
         public bool IsHome { get; init; }
         public bool IsSearched { get; init; }
         public bool IsHoardSearched { get; init; }
+        public bool BlindHoardProbeSuppressed { get; init; }
         public bool AreChestsSearched { get; init; }
         public bool IsIntelVisited { get; init; }
         public bool IsRevealed { get; init; }

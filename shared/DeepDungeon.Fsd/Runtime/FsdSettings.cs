@@ -12,6 +12,7 @@ public sealed class FsdSettings
     public bool NecromancerAutoOpenGoldChest { get; set; }
     public bool NecromancerAutoOpenSilverChest { get; set; }
     public bool NecromancerAutoOpenBronzeChest { get; set; } = true;
+    public bool AggressiveChestInteraction { get; set; }
     public float NecromancerChestInteractDistance { get; set; } = 3.5f;
     public bool NecromancerShowRoomCenterOverlay { get; set; } = true;
     public bool NecromancerShowTrapOverlay { get; set; } = true;

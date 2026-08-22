@@ -33,6 +33,8 @@ namespace DeepDungeon.Fsd.Dalamud
         private int _fsfScenarioIndex = 1;
         private bool _fsfLoopInfinite = false;
         private int _fsfLoopCount = 1;
+        private string? _runLogExportNotice;
+        private bool _runLogExportFailed;
         
         private bool _currentInDeepDungeon = false;
         private DeepDungeonStateSnapshot _currentDeepDungeonState = new(

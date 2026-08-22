@@ -92,6 +92,78 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 					(int)MathF.Round(evidence.Position.Z * normalization));
 			}
 		}
+
+		/// <summary>
+		/// TEMPORARY controlled-survey research only: dedupe key for once-per-floor
+		/// controlled-candidate-object-observed recorder events.
+		/// </summary>
+		private readonly record struct ControlledCandidateObjectAuditKey(
+			int CandidateRoomIndex,
+			int SourceCandidateIndex,
+			ushort ObjectIndex,
+			ulong GameObjectId,
+			uint EntityId,
+			uint BaseId,
+			string ObjectKind,
+			byte SubKind,
+			uint LayoutId,
+			uint GimmickId,
+			uint NameId)
+		{
+			public static ControlledCandidateObjectAuditKey From(in ControlledCandidateObjectMatch match) =>
+				new(
+					match.CandidateRoomIndex,
+					match.SourceCandidateIndex,
+					match.ObjectIndex,
+					match.GameObjectId,
+					match.EntityId,
+					match.BaseId,
+					match.ObjectKind,
+					match.SubKind,
+					match.LayoutId,
+					match.GimmickId,
+					match.NameId ?? 0u);
+		}
+
+		private enum FloorItemUseKind
+		{
+			Pomander,
+			Stone
+		}
+
+		private enum FloorItemUsePurpose
+		{
+			Automatic,
+			GoldChestOvercap,
+			ControlledStrength,
+			NaturalReveal,
+			ControlledReveal,
+			NaturalPoisonfruit,
+			NaturalPassageMazeroot,
+			ControlledPoisonfruit
+		}
+
+		private readonly record struct FloorItemUseKey(
+			FloorItemUseKind Kind,
+			uint ItemId);
+
+		private sealed class PendingFloorItemUse
+		{
+			public required FloorItemUseKey Key { get; init; }
+			public required FloorItemUsePurpose Purpose { get; init; }
+			public required int CountBeforeDispatch { get; init; }
+			public required int AttemptNumber { get; init; }
+			public required DateTime DispatchedAtUtc { get; init; }
+			public required string Reason { get; init; }
+			public bool BlocksFloorSetup { get; init; }
+			public long SightLogSequenceBeforeDispatch { get; init; }
+			public long MazerootLogSequenceBeforeDispatch { get; init; }
+			public long IntuitionAttemptId { get; init; }
+			public long IntuitionExpectedAtMilliseconds { get; init; }
+			public bool AuthoritativeConfirmationObserved { get; set; }
+			public bool UnconfirmedRecorded { get; set; }
+		}
+
 		private FloorPlanningState PlanningState =>
 			_floorRuntime?.PlanningState ?? throw new InvalidOperationException("No active floor planning state.");
 		private PendingIntuitionState PendingIntuition =>
@@ -211,7 +283,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			RecordReplayEvent("controller-initialized", new
 			{
 				mode = _ctx?.Duty.IsInDuty == true ? "in-duty" : "unknown",
-				recorderFile = Path.GetFileName(_runRecorder.FilePath)
+				recorderFile = System.IO.Path.GetFileName(_runRecorder.FilePath)
 			});
 			Service.Log.Info("[FloorPhase] Controller initialized");
 			Service.Log.Info($"[FloorPhase] DD run recorder -> {_runRecorder.FilePath}");
@@ -301,6 +373,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				if (activeRuntime == null || activeRuntime.IsDisposed)
 					return;
 				activeRuntime.RunTelemetry?.SampleStable(DateTime.UtcNow);
+				ResolvePendingFloorItemUse(dd, activeRuntime);
 				if (activeRuntime.Kind == FloorRuntimeKind.Normal && !RefreshFloorObjectEvidence(dd, activeRuntime))
 					return;
 				ResolveInheritedIntuition(activeRuntime);
@@ -753,8 +826,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 			if (_ctx?.ChestInteraction.TryInteract(ActiveChestAttempt, evidence, out var snapshot, out bool retry) == true)
 			{
-				runtime.ObjectEvidence.Invalidate();
-				RecordChestInteractionStarted(waypoint.Value, snapshot, retry);
+				if (!retry || _ctx?.Configuration.AggressiveChestInteraction != true)
+				{
+					runtime.ObjectEvidence.Invalidate();
+					RecordChestInteractionStarted(waypoint.Value, snapshot, retry);
+				}
 			}
 		}
 
@@ -904,12 +980,19 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 		private unsafe bool RefreshFloorObjectEvidence(InstanceContentDeepDungeon* dd, FloorRuntime runtime)
 		{
-			var refresh = runtime.ObjectEvidence.RefreshIfDue(runtime.DungeonId);
+			TryArmControlledCandidateObjectAudit(dd, runtime);
+			IReadOnlyList<ControlledCandidateAuditPoint>? auditUniverse =
+				_ctx?.ControlledPtSurvey != null &&
+				runtime.ControlledCandidateObjectAuditArmed
+					? runtime.ControlledCandidateObjectAuditUniverse
+					: null;
+			var refresh = runtime.ObjectEvidence.RefreshIfDue(runtime.DungeonId, auditUniverse);
 			if (refresh.Attempted)
 			{
 				ObserveCurrentRoom(dd);
 				ObserveFloorEvidence(dd, runtime);
 				PublishAuthoritativeRunFloorStateIfChanged(dd, runtime);
+				ObserveControlledCandidateObjectMatches(runtime, refresh);
 			}
 			var snapshot = runtime.ObjectEvidence.Current;
 			var now = DateTime.UtcNow;
@@ -958,6 +1041,130 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			return false;
 		}
 
+		/// <summary>
+		/// TEMPORARY controlled-survey research only: build a fixed PalacePal candidate audit
+		/// universe for all reachable rooms once graph/executor exist. Position coincidence only;
+		/// does not infer from Sight timing / load distance.
+		/// </summary>
+		private unsafe void TryArmControlledCandidateObjectAudit(
+			InstanceContentDeepDungeon* dd,
+			FloorRuntime runtime)
+		{
+			if (_ctx?.ControlledPtSurvey == null ||
+			    runtime.Kind != FloorRuntimeKind.Normal ||
+			    runtime.ControlledCandidateObjectAuditArmed)
+			{
+				return;
+			}
+
+			var graph = runtime.NormalGraph;
+			var executor = runtime.Executor;
+			if (graph == null || executor == null)
+				return;
+
+			var universe = new List<ControlledCandidateAuditPoint>();
+			IReadOnlyList<int> rooms = graph.ReachableRooms;
+			for (int roomOffset = 0; roomOffset < rooms.Count; roomOffset++)
+			{
+				int roomIndex = rooms[roomOffset];
+				IReadOnlyList<Vector3> candidates =
+					executor.GetPalacePalCandidatesForRoom(dd, roomIndex);
+				for (int candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
+				{
+					Vector3 candidate = candidates[candidateIndex];
+					var position = new RawWorldPosition(candidate.X, candidate.Y, candidate.Z);
+					bool duplicate = false;
+					for (int existing = 0; existing < universe.Count; existing++)
+					{
+						if (!RawWorldPosition.CanonicallyEquals(universe[existing].Position, position))
+							continue;
+						duplicate = true;
+						break;
+					}
+					if (duplicate)
+						continue;
+
+					universe.Add(new ControlledCandidateAuditPoint(
+						roomIndex,
+						candidateIndex,
+						position));
+				}
+			}
+
+			runtime.ControlledCandidateObjectAuditUniverse = universe.ToArray();
+			runtime.ControlledCandidateObjectAuditArmed = true;
+			RecordReplayEvent("controlled-candidate-object-audit-armed", new
+			{
+				floor = runtime.Floor,
+				floorGeneration = runtime.Generation,
+				candidateCount = universe.Count,
+				roomCount = rooms.Count
+			});
+		}
+
+		/// <summary>
+		/// TEMPORARY controlled-survey research only: log each unique candidate+object signature
+		/// once per FloorRuntime into the run recorder.
+		/// </summary>
+		private void ObserveControlledCandidateObjectMatches(
+			FloorRuntime runtime,
+			in FloorObjectEvidenceRefreshResult refresh)
+		{
+			if (_ctx?.ControlledPtSurvey == null ||
+			    !refresh.ScanCompleted ||
+			    refresh.Snapshot?.ControlledCandidateObjectMatches is not { Count: > 0 } matches)
+			{
+				return;
+			}
+
+			for (int i = 0; i < matches.Count; i++)
+			{
+				ControlledCandidateObjectMatch match = matches[i];
+				var key = ControlledCandidateObjectAuditKey.From(match);
+				if (!runtime.ControlledCandidateObjectAuditLoggedKeys.Add(key))
+					continue;
+
+				float dx = match.ObjectPosition.X - match.CandidatePosition.X;
+				float dy = match.ObjectPosition.Y - match.CandidatePosition.Y;
+				float dz = match.ObjectPosition.Z - match.CandidatePosition.Z;
+				float matchDistance = MathF.Sqrt(dx * dx + dy * dy + dz * dz);
+				RecordReplayEvent("controlled-candidate-object-observed", new
+				{
+					floor = runtime.Floor,
+					floorGeneration = runtime.Generation,
+					candidateRoomIndex = match.CandidateRoomIndex,
+					sourceCandidateIndex = match.SourceCandidateIndex,
+					candidatePosition = new
+					{
+						match.CandidatePosition.X,
+						match.CandidatePosition.Y,
+						match.CandidatePosition.Z
+					},
+					objectPosition = new
+					{
+						match.ObjectPosition.X,
+						match.ObjectPosition.Y,
+						match.ObjectPosition.Z
+					},
+					matchDistance,
+					match.ObjectIndex,
+					match.GameObjectId,
+					match.EntityId,
+					match.BaseId,
+					match.ObjectKind,
+					match.SubKind,
+					match.Name,
+					match.NameId,
+					match.LayoutId,
+					match.GimmickId,
+					match.IsTargetable,
+					match.IsDead,
+					match.HitboxRadius,
+					match.CurrentDistance
+				});
+			}
+		}
+
 		private unsafe void ObserveFloorEvidence(InstanceContentDeepDungeon* dd, FloorRuntime runtime)
 		{
 			var session = runtime.EvidenceSession;
@@ -967,6 +1174,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 			int intuitionStock = _pomanderManager.GetCount(FloorInitPlanner.IntuitionPomanderSlotIndex);
 			int sightStock = _pomanderManager.GetCount(FloorInitPlanner.SightPomanderSlotIndex);
+			int effectiveSightStock = IsPomanderBlockedForFloor(
+				FloorInitPlanner.SightPomanderSlotIndex)
+					? 0
+					: sightStock;
 			bool naturalPtStonesSupported =
 				DungeonCatalog.SupportsNaturalPtStones(dd->DeepDungeonId);
 			bool pomandersUsableThisFloor =
@@ -980,6 +1191,9 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				naturalPtStonesSupported
 					? _pomanderManager.GetStoneCount(2)
 					: 0;
+			int effectiveMazerootStock = naturalPtStonesSupported
+				? GetStoneCountAvailableForFloorUse(2)
+				: 0;
 			bool sightTrapObserved = snapshot.SightTrapIndicators.Count > 0;
 			if (sightTrapObserved)
 			{
@@ -1041,16 +1255,16 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				SightUseBlocked:
 					IsSightUseBlocked() ||
 					!pomandersUsableThisFloor,
-				SightStock: sightStock,
-				MazerootStock: mazerootStock,
+				SightStock: effectiveSightStock,
+				MazerootStock: effectiveMazerootStock,
 				RevealDispatchedThisFloor: runtime.NaturalRevealDispatched,
 				AuthoritativeRevealConfirmed: runtime.NaturalRevealConfirmed,
 				MazerootSupported: naturalPtStonesSupported,
 				MazerootUsableThisFloor: ptIncenseUsableThisFloor,
 				BandedHoardEvidenceAvailable: exactHoardEvidenceFromBanded));
 			int selectedResourceStock = decision.ShouldUseMazeroot
-				? mazerootStock
-				: sightStock;
+				? effectiveMazerootStock
+				: effectiveSightStock;
 			session?.ObserveResearchDecision(
 				decision,
 				selectedResourceStock,
@@ -1065,12 +1279,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			}
 
 			bool dispatched = decision.ShouldUseSight
-				? _pomanderManager.IsUsable(FloorInitPlanner.SightPomanderSlotIndex) &&
+				? IsPomanderAvailableForFloorUse(FloorInitPlanner.SightPomanderSlotIndex) &&
 				  TryUsePomander(
 					  FloorInitPlanner.SightPomanderSlotIndex,
 					  dd,
 					  "automatic exact-hoard research")
-				: mazerootStock > 0 &&
+				: effectiveMazerootStock > 0 &&
 				  TryUseNaturalMazeroot(
 					  dd,
 					  "automatic exact-hoard research");
@@ -1078,8 +1292,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				dispatched,
 				decision.RevealResource,
 				selectedResourceStock);
-			if (dispatched)
-				runtime.SightResearchDispatched = true;
 		}
 
 		private unsafe Vector3? TryResolveNaturalExactHoardPosition(
@@ -1441,15 +1653,27 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			int poisonfruitCount = _pomanderManager.GetStoneCount(1);
 			int effectiveSightStock =
 				DeepDungeonFloorItemUsePolicy.CanUsePomanders(
-					dd->DeepDungeonBanId)
+					dd->DeepDungeonBanId) &&
+				!IsPomanderBlockedForFloor(
+					FloorInitPlanner.SightPomanderSlotIndex)
 					? sightStock
 					: 0;
 			int effectiveMazerootCount =
 				DeepDungeonFloorItemUsePolicy.CanUsePtIncense(
-					dd->DeepDungeonBanId)
+					dd->DeepDungeonBanId) &&
+				!IsStoneBlockedForFloor(2)
 					? mazerootCount
 					: 0;
-			ProcessPendingControlledPostCapturePoisonfruit(dd, runtime, poisonfruitCount);
+			int effectivePoisonfruitCount =
+				DeepDungeonFloorItemUsePolicy.CanUsePtIncense(
+					dd->DeepDungeonBanId) &&
+				!IsStoneBlockedForFloor(1)
+					? poisonfruitCount
+					: 0;
+			ProcessPendingControlledPostCapturePoisonfruit(
+				dd,
+				runtime,
+				effectivePoisonfruitCount);
 			if (TryUseControlledStrength(dd, runtime))
 				return;
 			if (runtime.ControlledOpportunityCompleted)
@@ -1487,7 +1711,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				}
 				if (!CanAttemptPomanderUse())
 					return;
-				if (!_pomanderManager.IsUsable(FloorInitPlanner.IntuitionPomanderSlotIndex))
+				if (!IsPomanderAvailableForFloorUse(FloorInitPlanner.IntuitionPomanderSlotIndex))
 				{
 					if (firstFloor)
 					{
@@ -1653,7 +1877,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 						effectiveSightStock,
 						effectiveMazerootCount);
 					if (action == ControlledPtSurveyItemAction.UseSight &&
-					    !_pomanderManager.IsUsable(
+					    !IsPomanderAvailableForFloorUse(
 						    FloorInitPlanner.SightPomanderSlotIndex))
 					{
 						_status =
@@ -1669,8 +1893,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 					{
 						return;
 					}
-					long sightLogSequenceBeforeDispatch = _chatWatchers?.SightLogSequence ?? 0;
-					long mazerootLogSequenceBeforeDispatch = _chatWatchers?.MazerootLogSequence ?? 0;
 					bool dispatched = action switch
 					{
 						ControlledPtSurveyItemAction.UseMazeroot => TryUseControlledStone(
@@ -1680,7 +1902,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 						ControlledPtSurveyItemAction.UseSight => TryUsePomander(
 							FloorInitPlanner.SightPomanderSlotIndex,
 							dd,
-							"controlled positive capture with Sight"),
+							"controlled positive capture with Sight",
+							FloorItemUsePurpose.ControlledReveal),
 						_ => false
 					};
 					if (!dispatched)
@@ -1691,21 +1914,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 							$"Controlled PT floor {dd->Floor} has an exact hoard indicator but no Sight-capable resource could be dispatched.");
 						return;
 					}
-					evidence?.ObserveControlledCaptureItem(action);
-					runtime.ControlledCaptureItem = action;
-					runtime.ControlledSightDispatched = true;
-					runtime.ControlledSightLogSequenceAtDispatch = sightLogSequenceBeforeDispatch;
-					runtime.ControlledMazerootLogSequenceAtDispatch = mazerootLogSequenceBeforeDispatch;
-					runtime.ControlledSightDispatchedAt = DateTime.UtcNow;
-					runtime.ObjectEvidence.Invalidate();
-					evidence?.ObserveResearchAction(
-						true,
-						action == ControlledPtSurveyItemAction.UseMazeroot
-							? SightResearchRevealResource.Mazeroot
-							: SightResearchRevealResource.Sight,
-						action == ControlledPtSurveyItemAction.UseMazeroot
-							? mazerootCount
-							: sightStock);
 					return;
 				}
 
@@ -2056,7 +2264,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				runtime.ControlledStrengthHandled = true;
 				return false;
 			}
-			if (!_pomanderManager.IsUsable(FloorInitPlanner.StrengthPomanderSlotIndex) ||
+			if (!IsPomanderAvailableForFloorUse(FloorInitPlanner.StrengthPomanderSlotIndex) ||
 			    !CanAttemptPomanderUse())
 			{
 				return false;
@@ -2064,12 +2272,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			if (!TryUsePomander(
 				    FloorInitPlanner.StrengthPomanderSlotIndex,
 				    dd,
-				    "controlled combat acceleration"))
+				    "controlled combat acceleration",
+				    FloorItemUsePurpose.ControlledStrength))
 			{
 				return false;
 			}
 
-			runtime.ControlledStrengthHandled = true;
 			return true;
 		}
 
@@ -2078,18 +2286,13 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			InstanceContentDeepDungeon* dd,
 			string reason)
 		{
-			if (!DeepDungeonFloorItemUsePolicy.CanUsePtIncense(
-				    dd->DeepDungeonBanId) ||
-			    !CanAttemptPomanderUse() ||
-			    !_pomanderManager.UseStone(stoneId))
-				return false;
-
-			_pomanderDispatchedThisUpdate = true;
-			_nextPomanderUseAt = DateTime.UtcNow.AddSeconds(3);
-			_floorRuntime?.ObjectEvidence.Invalidate();
-			Service.Log.Info($"[FloorPhase] Used controlled PT incense {stoneId} ({reason}) on floor {dd->Floor}");
-			RecordReplayEvent("controlled-incense-used", new { floor = dd->Floor, stoneId, reason });
-			return true;
+			return TryDispatchFloorStone(
+				stoneId,
+				dd,
+				reason,
+				stoneId == 2
+					? FloorItemUsePurpose.ControlledReveal
+					: FloorItemUsePurpose.ControlledPoisonfruit);
 		}
 
 		private void RegisterNaturalRevealDispatch(
@@ -2129,7 +2332,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			    !DeepDungeonFloorItemUsePolicy.CanUsePtIncense(
 				    dd->DeepDungeonBanId) ||
 			    !CanAttemptPomanderUse() ||
-			    _pomanderManager.GetStoneCount(2) <= 0)
+			    GetStoneCountAvailableForFloorUse(2) <= 0)
 			{
 				return false;
 			}
@@ -2139,26 +2342,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				return false;
 			}
 
-			long sightLogSequenceBeforeDispatch =
-				_chatWatchers?.SightLogSequence ?? 0;
-			long mazerootLogSequenceBeforeDispatch =
-				_chatWatchers?.MazerootLogSequence ?? 0;
-			if (!_pomanderManager.UseStone(2))
-				return false;
-
-			_pomanderDispatchedThisUpdate = true;
-			_nextPomanderUseAt = DateTime.UtcNow.AddSeconds(3);
-			_chatWatchers?.MarkSightAttemptedThisFloor();
-			RegisterNaturalRevealDispatch(
-				SightResearchRevealResource.Mazeroot,
-				sightLogSequenceBeforeDispatch,
-				mazerootLogSequenceBeforeDispatch);
-			Service.Log.Info(
-				$"[FloorPhase] Used PT incense 2 ({reason}) on floor {dd->Floor}");
-			RecordReplayEvent(
-				"incense-used",
-				new { floor = dd->Floor, stoneId = 2, reason });
-			return true;
+			return TryDispatchFloorStone(
+				2,
+				dd,
+				reason,
+				FloorItemUsePurpose.NaturalReveal);
 		}
 
 		private unsafe bool CanDispatchNaturalPassageOpeningStoneSafely(
@@ -2213,8 +2401,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			bool activePairCapture =
 				runtime.EvidenceSession?.Bundle.AcquisitionMode ==
 				FloorEvidenceAcquisitionMode.AutomaticCommunitySurvey;
-			int poisonfruitStock = _pomanderManager.GetStoneCount(1);
-			int mazerootStock = _pomanderManager.GetStoneCount(2);
+			int poisonfruitStock = GetStoneCountAvailableForFloorUse(1);
+			int mazerootStock = GetStoneCountAvailableForFloorUse(2);
 			bool canDispatch = CanAttemptPomanderUse();
 			bool passageDispatchSafe =
 				canDispatch &&
@@ -2251,27 +2439,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			if (action != NaturalPassageAccelerationAction.DispatchPoisonfruit)
 				return false;
 
-			// PomanderManager.UseStone returns true only after it found a matching
-			// slot and invoked the native request.  That is the boundary for
-			// suppressing Mazeroot; it is not an effect-confirmation signal.
-			if (!_pomanderManager.UseStone(1))
-				return false;
-
-			runtime.NaturalPoisonfruitAttempted = true;
-			_pomanderDispatchedThisUpdate = true;
-			_nextPomanderUseAt = DateTime.UtcNow.AddSeconds(3);
-			runtime.ObjectEvidence.Invalidate();
-			Service.Log.Info(
-				$"[FloorPhase] Used PT incense 1 (ordinary passage acceleration) on floor {dd->Floor}");
-			RecordReplayEvent(
-				"incense-used",
-				new
-				{
-					floor = dd->Floor,
-					stoneId = 1,
-					reason = "ordinary passage acceleration"
-				});
-			return true;
+			return TryDispatchFloorStone(
+				1,
+				dd,
+				"ordinary passage acceleration",
+				FloorItemUsePurpose.NaturalPoisonfruit);
 		}
 
 		private unsafe bool TryUseNaturalPassageMazeroot(
@@ -2285,7 +2457,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			    !DeepDungeonFloorItemUsePolicy.CanUsePtIncense(
 				    dd->DeepDungeonBanId) ||
 			    !CanAttemptPomanderUse() ||
-			    _pomanderManager.GetStoneCount(2) <= 0)
+			    GetStoneCountAvailableForFloorUse(2) <= 0)
 			{
 				return false;
 			}
@@ -2294,19 +2466,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				_status = "Waiting to use passage accelerator safely away from the passage";
 				return false;
 			}
-			if (!_pomanderManager.UseStone(2))
-				return false;
-
-			runtime.NaturalMazerootAttemptedOrAdopted = true;
-			_pomanderDispatchedThisUpdate = true;
-			_nextPomanderUseAt = DateTime.UtcNow.AddSeconds(3);
-			runtime.ObjectEvidence.Invalidate();
-			Service.Log.Info(
-				$"[FloorPhase] Used PT incense 2 ({reason}) on floor {dd->Floor}");
-			RecordReplayEvent(
-				"incense-used",
-				new { floor = dd->Floor, stoneId = 2, reason });
-			return true;
+			return TryDispatchFloorStone(
+				2,
+				dd,
+				reason,
+				FloorItemUsePurpose.NaturalPassageMazeroot);
 		}
 
 		private unsafe bool EnsureControlledDispatchOutsidePassage(
@@ -2393,8 +2557,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		{
 			if (runtime.ControlledPoisonfruitDispatched || poisonfruitCount <= 0 || !CanAttemptPomanderUse())
 				return;
-			if (TryUseControlledStone(1, dd, reason))
-				runtime.ControlledPoisonfruitDispatched = true;
+			TryUseControlledStone(1, dd, reason);
 		}
 
 		private unsafe void ProcessPendingControlledPostCapturePoisonfruit(
@@ -2402,6 +2565,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			FloorRuntime runtime,
 			int poisonfruitCount)
 		{
+			if (runtime.PendingFloorItemUse?.Purpose ==
+			    FloorItemUsePurpose.ControlledPoisonfruit)
+			{
+				return;
+			}
+
 			var action = ControlledPtSurveyPolicy.DecidePostCaptureAcceleration(
 				runtime.ControlledPendingPostCapturePoisonfruit,
 				runtime.ControlledPoisonfruitDispatched,
@@ -2411,11 +2580,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			switch (action)
 			{
 				case ControlledPtPostCaptureAccelerationAction.Dispatch:
-					if (TryUseControlledStone(1, dd, "controlled post-Sight continuation acceleration"))
-					{
-						runtime.ControlledPoisonfruitDispatched = true;
-						runtime.ControlledPendingPostCapturePoisonfruit = false;
-					}
+					TryUseControlledStone(1, dd, "controlled post-Sight continuation acceleration");
 					break;
 				case ControlledPtPostCaptureAccelerationAction.CompleteWithoutDispatch:
 				case ControlledPtPostCaptureAccelerationAction.None:
@@ -2687,6 +2852,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			ObserveFloorTerminalTelemetry(runtime, reason);
 			ObserveFloorTelemetryBoundary(runtime, reason);
 			_chatWatchers?.CancelExpectedIntuitionResult(runtime.InheritedIntuitionAttemptId);
+			if (runtime.PendingFloorItemUse is { } pendingFloorItemUse)
+				CancelPendingIntuitionAttempt(pendingFloorItemUse);
 			runtime.Dispose();
 			_floorRuntime = null;
 			_phase = FloorPhase.FloorSetup;
@@ -3049,6 +3216,15 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				_executor!.ResetForFloor(dd, SnapshotRunOptions());
 				PlanningState.LastKnownHoardCount = dd->HoardCount;
 				TryUseFloorInitPomander(dd);
+				if (_floorRuntime?.PendingFloorItemUse is
+				    {
+					    BlocksFloorSetup: true
+				    } pendingFloorItemUse)
+				{
+					_status =
+						$"Waiting for {pendingFloorItemUse.Key.Kind} {pendingFloorItemUse.Key.ItemId} use confirmation";
+					return;
+				}
 				if (!RefreshCachedHoardIndicator(dd))
 				{
 					_status = "Waiting for hoard indicator evidence...";
@@ -3136,6 +3312,21 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 					});
 					return;
 				}
+			}
+
+			if (info.EvidenceAccepted &&
+			    (info.Reason is "LogMessage7272" or "LogMessage7273") &&
+			    _floorRuntime?.PendingFloorItemUse is
+			    {
+				    Key:
+				    {
+					    Kind: FloorItemUseKind.Pomander,
+					    ItemId: FloorInitPlanner.IntuitionPomanderSlotIndex
+				    }
+			    } pendingIntuitionUse &&
+			    pendingIntuitionUse.IntuitionAttemptId == info.EvidenceAttemptId)
+			{
+				pendingIntuitionUse.AuthoritativeConfirmationObserved = true;
 			}
 
 			var inheritedRuntime = _floorRuntime;
@@ -3631,6 +3822,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		private sealed class FloorRuntime : IDisposable
 		{
 			private readonly Dictionary<RoomObjectiveKey, long> _objectiveIds = new();
+			private readonly Dictionary<FloorItemUseKey, int> _unconfirmedItemUseAttempts = new();
+			private readonly HashSet<FloorItemUseKey> _blockedFloorItems = [];
 			private long _nextObjectiveId;
 			private ObjectiveArbiterSnapshot _objectiveInput;
 			private long _objectiveEvidenceVersion;
@@ -3676,6 +3869,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			public ObjectiveExecution? ActiveExecution { get; private set; }
 			public FloorPlanningState PlanningState { get; } = new();
 			public PendingIntuitionState PendingIntuition { get; } = new();
+			public PendingFloorItemUse? PendingFloorItemUse { get; private set; }
 			public bool BossNavigationResolved { get; set; }
 			public FloorSearchState SearchState { get; } = new();
 			public FloorObjectEvidenceTracker ObjectEvidence { get; }
@@ -3729,6 +3923,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			public long ControlledHoardRoomTargetFullScanCount { get; set; }
 			public HashSet<ControlledTrapWitnessKey> ControlledObservedTrapWitnesses { get; } = [];
 			public float ControlledMaximumTrapWitnessDistance { get; set; }
+			/// <summary>
+			/// TEMPORARY controlled-survey research only: fixed PalacePal candidate audit universe.
+			/// </summary>
+			public bool ControlledCandidateObjectAuditArmed { get; set; }
+			public ControlledCandidateAuditPoint[] ControlledCandidateObjectAuditUniverse { get; set; } = [];
+			public HashSet<ControlledCandidateObjectAuditKey> ControlledCandidateObjectAuditLoggedKeys { get; } = [];
 			public long ControlledIntuitionExpectationStartedAtMilliseconds { get; set; }
 			public long ControlledIntuitionExpectationAttemptId { get; set; }
 			public bool ControlledIntuitionRequiresCurrentUse { get; set; }
@@ -3746,6 +3946,66 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			public ObjectiveArbiterDecision ObjectiveDecision { get; private set; }
 			public bool HasObjectiveDecision { get; private set; }
 			public bool IsDisposed { get; private set; }
+
+			public bool IsFloorItemBlocked(FloorItemUseKey key) =>
+				_blockedFloorItems.Contains(key);
+
+			public PendingFloorItemUse BeginFloorItemUse(
+				FloorItemUseKey key,
+				FloorItemUsePurpose purpose,
+				int countBeforeDispatch,
+				DateTime dispatchedAtUtc,
+				string reason,
+				bool blocksFloorSetup,
+				long sightLogSequenceBeforeDispatch,
+				long mazerootLogSequenceBeforeDispatch,
+				long intuitionAttemptId,
+				long intuitionExpectedAtMilliseconds)
+			{
+				int attemptNumber = _unconfirmedItemUseAttempts.TryGetValue(key, out int previous)
+					? previous + 1
+					: 1;
+				_unconfirmedItemUseAttempts[key] = attemptNumber;
+				PendingFloorItemUse = new PendingFloorItemUse
+				{
+					Key = key,
+					Purpose = purpose,
+					CountBeforeDispatch = countBeforeDispatch,
+					AttemptNumber = attemptNumber,
+					DispatchedAtUtc = dispatchedAtUtc,
+					Reason = reason,
+					BlocksFloorSetup = blocksFloorSetup,
+					SightLogSequenceBeforeDispatch = sightLogSequenceBeforeDispatch,
+					MazerootLogSequenceBeforeDispatch = mazerootLogSequenceBeforeDispatch,
+					IntuitionAttemptId = intuitionAttemptId,
+					IntuitionExpectedAtMilliseconds = intuitionExpectedAtMilliseconds
+				};
+				return PendingFloorItemUse;
+			}
+
+			public void ConfirmFloorItemUse(PendingFloorItemUse pending)
+			{
+				if (!ReferenceEquals(PendingFloorItemUse, pending))
+					return;
+
+				_unconfirmedItemUseAttempts.Remove(pending.Key);
+				PendingFloorItemUse = null;
+			}
+
+			public void ReleaseFloorItemUseForRetry(PendingFloorItemUse pending)
+			{
+				if (ReferenceEquals(PendingFloorItemUse, pending))
+					PendingFloorItemUse = null;
+			}
+
+			public void ExhaustFloorItemUse(PendingFloorItemUse pending)
+			{
+				if (!ReferenceEquals(PendingFloorItemUse, pending))
+					return;
+
+				_blockedFloorItems.Add(pending.Key);
+				PendingFloorItemUse = null;
+			}
 
 			public void ReplaceObjectiveExecution(FloorObjectiveKind objective, NavigationHelper navigation)
 			{
@@ -3856,6 +4116,9 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				ActiveRoomNavigationTarget = null;
 				BandedRevealExpectation = null;
 				EvidenceSession = null;
+				PendingFloorItemUse = null;
+				_unconfirmedItemUseAttempts.Clear();
+				_blockedFloorItems.Clear();
 				_objectiveIds.Clear();
 				ActiveExecution?.Dispose();
 				ActiveExecution = null;

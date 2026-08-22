@@ -10,7 +10,8 @@ namespace DeepDungeon.Fsd.Core
                 snapshot.HasOpenedHoardThisFloor ||
                 snapshot.FloorsetBandedCount >= MaxHoardsPerFloorset ||
                 !FloorsetHoardDistributionPolicy.AllowsHoardPomander(snapshot.HoardOpportunity) ||
-                snapshot.IntuitionActive)
+                snapshot.IntuitionActive ||
+                snapshot.UsedIntuitionThisFloor)
             {
                 return new RoomFinishPomanderDecision
                 {

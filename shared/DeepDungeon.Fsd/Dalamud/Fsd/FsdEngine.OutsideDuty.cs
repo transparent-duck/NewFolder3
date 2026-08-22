@@ -16,6 +16,9 @@ namespace DeepDungeon.Fsd.Dalamud
             string? detailedMapScenarioKey,
             out string error)
         {
+            _runLogExportNotice = null;
+            _runLogExportFailed = false;
+
             if (_tryAuthorizeFsdStart is not null && !_tryAuthorizeFsdStart(out _))
             {
                 error = HostDeniedFsdStartError;
@@ -35,8 +38,7 @@ namespace DeepDungeon.Fsd.Dalamud
             }
 
             if (!_detailedMapCatalogManager.TryAcquireRunSnapshot(
-                    _configuration.UseDetailedMap &&
-                    _detailedMapHostOptions.HasOnlineCatalogService,
+                    _configuration.UseDetailedMap,
                     detailedMapScenarioKey,
                     out DetailedMapRunSnapshot detailedMapSnapshot,
                     out error))

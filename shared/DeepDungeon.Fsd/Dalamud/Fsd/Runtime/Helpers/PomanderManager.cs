@@ -12,6 +12,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 		private static readonly TimeSpan FailureLogInterval = TimeSpan.FromSeconds(5);
 		private DateTime _nextFailureLogAtUtc = DateTime.MinValue;
 
+		/// <summary>
+		/// Returns whether the native request was dispatched. The native method is
+		/// void, so this does not prove that the server accepted or consumed it.
+		/// </summary>
 		public unsafe bool Use(uint pomanderSlotIndex)
 		{
 			if (!TryGetDeepDungeon(nameof(Use), out var dd))
@@ -78,6 +82,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 			return count;
 		}
 
+		/// <summary>
+		/// Returns whether a matching slot was found and its native request was
+		/// dispatched. This does not prove that the server accepted or consumed it.
+		/// </summary>
 		public unsafe bool UseStone(byte stoneId)
 		{
 			if (!TryGetDeepDungeon(nameof(UseStone), out var dd))

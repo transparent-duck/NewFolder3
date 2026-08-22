@@ -12,14 +12,6 @@ using DeepDungeon.Fsd.Runtime;
 
 namespace DeepDungeon.Fsd.Dalamud
 {
-	internal enum ChestRecoveryPhase
-	{
-		None,
-		Recentering,
-		Returning,
-		Exhausted
-	}
-
 	internal sealed class ChestInteractionAttempt
 	{
 		internal ChestInteractionAttempt(RoomWaypoint waypoint)
@@ -29,12 +21,10 @@ namespace DeepDungeon.Fsd.Dalamud
 
 		internal RoomWaypoint Waypoint { get; }
 		internal uint EntityId;
-		internal DateTime FirstInteractionAttemptAtUtc;
 		internal DateTime InteractionStartedAtUtc;
 		internal long EvidenceSequenceAtStart;
 		internal DateTime NextInteractAt;
-		internal int ConsecutiveInteractionRejects;
-		internal ChestRecoveryPhase RecoveryPhase;
+		internal bool Reapproaching;
 		internal bool AcceptanceRecorded;
 		internal uint? PendingGoldOvercapSlotIndex;
 	}
@@ -52,7 +42,10 @@ namespace DeepDungeon.Fsd.Dalamud
     {
 		private readonly FsdSettings _configuration;
 		private readonly IRunOptionsProvider _runOptionsProvider;
-		private const double EventObjectChestInteractionRetrySeconds = 1.0;
+		private const double ChestInteractionRetrySeconds = 1.0;
+		private const float NormalChestOpenTimeoutSeconds = 30.0f;
+		private const float AggressiveChestOpenTimeoutSeconds = 10.0f;
+		private const float BandedChestOpenTimeoutSeconds = 120.0f;
 		private const float SilverHpThreshold = 0.85f;
 
         // Known Deep Dungeon treasure object DataIds
@@ -144,11 +137,11 @@ namespace DeepDungeon.Fsd.Dalamud
 				present && chest.Object.IsTargetable,
 				present ? (byte)chest.State : (byte)0,
 				present ? (byte)chest.Flags : (byte)0,
-				present && chest.NativeCompletionKind == NativeTreasureCompletionKind.EventObjectTargetable,
+				present,
 				attempt.InteractionStartedAtUtc == DateTime.MinValue
 					? 0
 					: (DateTime.UtcNow - attempt.InteractionStartedAtUtc).TotalSeconds,
-				EventObjectChestInteractionRetrySeconds));
+				ChestInteractionRetrySeconds));
 
 			return new ChestLifecycleSnapshot(
 				attempt.EntityId,
@@ -169,14 +162,15 @@ namespace DeepDungeon.Fsd.Dalamud
 			snapshot = default;
 			retry = false;
             try
-            {
+			{
 				if (attempt == null)
 					return false;
-				if (attempt.RecoveryPhase is ChestRecoveryPhase.Recentering or ChestRecoveryPhase.Returning)
+				if (attempt.Reapproaching)
 					return false;
+				bool aggressiveInteraction = _configuration.AggressiveChestInteraction;
 				snapshot = Observe(attempt, evidence);
 				if (snapshot.Decision.Complete ||
-				    attempt.EntityId != 0 && !snapshot.Decision.RetryInteraction)
+				    !aggressiveInteraction && attempt.EntityId != 0 && !snapshot.Decision.RetryInteraction)
 				{
 					return false;
 				}
@@ -197,7 +191,7 @@ namespace DeepDungeon.Fsd.Dalamud
 				if (!evidence.Available)
 					return false;
 
-				if (!CanAttemptInteraction())
+				if (!CanAttemptInteraction(aggressiveInteraction))
 					return false;
 
                 var player = Service.LocalPlayer;
@@ -205,13 +199,13 @@ namespace DeepDungeon.Fsd.Dalamud
                     return false;
 
 				// Resolve only the chest owned by the active waypoint.
-				var maxDist = Math.Clamp(_configuration.NecromancerChestInteractDistance, 0.5f, 6.0f);
+				var maxDist = GetInteractionDistance();
 				if (!TryFindWaypointChestEvidence(evidence, attempt.Waypoint, attempt.EntityId, out var chestEvidence) ||
 				    attempt.EntityId != 0 && chestEvidence.Object.EntityId != attempt.EntityId ||
 				    !chestEvidence.Object.IsTargetable ||
 				    !IsAllowedChest(chestEvidence.Kind, opts))
 					return false;
-				if (DateTime.UtcNow < attempt.NextInteractAt)
+				if (!aggressiveInteraction && DateTime.UtcNow < attempt.NextInteractAt)
 					return false;
 				var best = ResolveCurrentObject(chestEvidence);
 				if (best == null || !best.IsTargetable || !IsAllowedChest(best, opts))
@@ -228,17 +222,11 @@ namespace DeepDungeon.Fsd.Dalamud
 
 				bool wasRetry = attempt.EntityId != 0;
 				var interactionStartedAtUtc = DateTime.UtcNow;
-				if (attempt.FirstInteractionAttemptAtUtc == DateTime.MinValue)
-					attempt.FirstInteractionAttemptAtUtc = interactionStartedAtUtc;
-				attempt.NextInteractAt = interactionStartedAtUtc.AddSeconds(1);
+				attempt.NextInteractAt = interactionStartedAtUtc.AddSeconds(ChestInteractionRetrySeconds);
 				var interacted = GameInteraction.InteractWith(best, maxDist, force: IsBanded(best));
 				if (!interacted)
-				{
-					attempt.ConsecutiveInteractionRejects++;
 					return false;
-				}
 
-				attempt.ConsecutiveInteractionRejects = 0;
 				attempt.EntityId = best.EntityId;
 				attempt.InteractionStartedAtUtc = interactionStartedAtUtc;
 				attempt.EvidenceSequenceAtStart = evidence.RefreshSequence;
@@ -284,30 +272,48 @@ namespace DeepDungeon.Fsd.Dalamud
 			return false;
 		}
 
-		internal bool TryBeginRecovery(
+		internal bool TryBeginOrContinueReapproach(
 			ChestInteractionAttempt? attempt,
-			FloorObjectEvidenceSnapshot? evidence,
-			out string reason)
+			Vector3 playerPosition,
+			out bool started)
 		{
-			reason = string.Empty;
-			if (attempt == null ||
-			    attempt.RecoveryPhase != ChestRecoveryPhase.None ||
-			    evidence?.Available != true ||
-			    !TryFindWaypointChestEvidence(evidence, attempt.Waypoint, attempt.EntityId, out var chest) ||
-			    !chest.Object.IsTargetable)
-			{
-				return false;
-			}
-
-			bool rejected = attempt.ConsecutiveInteractionRejects >= 3;
-			bool unresolved = attempt.FirstInteractionAttemptAtUtc != DateTime.MinValue &&
-			                  DateTime.UtcNow - attempt.FirstInteractionAttemptAtUtc >= TimeSpan.FromSeconds(5);
-			if (!rejected && !unresolved)
+			started = false;
+			if (attempt == null)
 				return false;
 
-			attempt.RecoveryPhase = ChestRecoveryPhase.Recentering;
-			reason = rejected ? "native-interaction-rejected" : "native-state-unresolved";
+			if (attempt.Reapproaching)
+				return true;
+
+			float maxDist = GetInteractionDistance();
+			float dx = attempt.Waypoint.Position.X - playerPosition.X;
+			float dz = attempt.Waypoint.Position.Z - playerPosition.Z;
+			if (dx * dx + dz * dz <= maxDist * maxDist)
+				return false;
+
+			attempt.Reapproaching = true;
+			started = true;
 			return true;
+		}
+
+		internal void FinishReapproach(ChestInteractionAttempt attempt)
+		{
+			attempt.Reapproaching = false;
+			attempt.NextInteractAt = DateTime.MinValue;
+		}
+
+		internal float GetOpenTimeoutSeconds(RoomWaypoint waypoint)
+		{
+			if (waypoint.Type == RoomObjectiveType.ChestBanded)
+				return BandedChestOpenTimeoutSeconds;
+
+			return _configuration.AggressiveChestInteraction
+				? AggressiveChestOpenTimeoutSeconds
+				: NormalChestOpenTimeoutSeconds;
+		}
+
+		private float GetInteractionDistance()
+		{
+			return Math.Clamp(_configuration.NecromancerChestInteractDistance, 0.5f, 6.0f);
 		}
 
 		private static IGameObject? ResolveCurrentObject(FloorChestEvidence evidence)
@@ -378,9 +384,9 @@ namespace DeepDungeon.Fsd.Dalamud
 			};
 		}
 
-		private static bool CanAttemptInteraction()
+		private static bool CanAttemptInteraction(bool aggressiveInteraction)
 		{
-			return !Service.Condition[ConditionFlag.Casting] &&
+			return (aggressiveInteraction || !Service.Condition[ConditionFlag.Casting]) &&
 			       !Service.Condition[ConditionFlag.BetweenAreas] &&
 			       !Service.Condition[ConditionFlag.BetweenAreas51];
 		}

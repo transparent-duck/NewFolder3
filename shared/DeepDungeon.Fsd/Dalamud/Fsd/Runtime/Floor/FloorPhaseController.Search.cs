@@ -83,7 +83,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		private enum RoomFinishPomanderOutcome
 		{
 			NotNeeded,
-			UsedImmediately,
 			PendingRetry
 		}
 
@@ -154,8 +153,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		private const float TrapStandDurationSeconds = 3.0f;
 		private const float IntelSettleDurationSeconds = 1.0f;
 		private const float SilverWaitTimeoutSeconds = 30.0f;
-		private const float ChestOpenTimeoutSeconds = 30.0f;
-		private const float BandedChestOpenTimeoutSeconds = 120.0f;
 		private const float PostRoomPomanderRetrySeconds = 3.0f;
 		private const float BandedRevealExpectationSeconds = 3.0f;
 		private const uint StrengthStatusId = 687;
@@ -446,6 +443,16 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				roomIndex = targetRoom.Value,
 				executionKind = _searchExecutionKind.ToString(),
 				remainingWaypointCount = _executor.RoomContext?.RemainingWaypointCount ?? 0,
+				blindFallbackUnavailable =
+					_executor.RoomContext?.BlindFallbackUnavailable ?? false,
+				fallbackCandidates = _executor.RoomContext == null
+					? null
+					: new
+					{
+						catalog = _executor.RoomContext.FallbackCatalogCandidateCount,
+						palacePal = _executor.RoomContext.FallbackPalacePalCandidateCount,
+						union = _executor.RoomContext.FallbackUnionCandidateCount
+					},
 				planEntry = _executor.CurrentPlanEntry.HasValue
 					? new
 					{
@@ -793,7 +800,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 			if (TryHandleGoldChestOvercap(dd, player))
 				return;
-			if (TryUpdateChestRecovery(dd, player))
+			if (TryUpdateChestReapproach(dd, player))
 				return;
 
 			var taskPhaseBefore = _taskRunner!.Phase;
@@ -833,16 +840,34 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			}
 		}
 
-		private unsafe bool TryUpdateChestRecovery(InstanceContentDeepDungeon* dd, IPlayerCharacter player)
+		private unsafe bool TryUpdateChestReapproach(InstanceContentDeepDungeon* dd, IPlayerCharacter player)
 		{
 			var attempt = ActiveChestAttempt;
-			if (attempt == null || _activeWaypoint is not { } waypoint || !IsChestWaypoint(waypoint))
+			if (attempt == null ||
+			    _activeWaypoint is not { } waypoint ||
+			    !IsChestWaypoint(waypoint) ||
+			    _taskRunner?.Phase != TaskPhase.WaitingPost ||
+			    _ctx?.ChestInteraction == null)
+			{
 				return false;
+			}
 
-			if (_ctx?.ChestInteraction.TryBeginRecovery(
+			if (_taskRunner.ElapsedSeconds >= _ctx.ChestInteraction.GetOpenTimeoutSeconds(waypoint))
+			{
+				if (attempt.Reapproaching)
+					FinishChestReapproach(attempt, waypoint, false, "interaction-window-expired");
+				return false;
+			}
+
+			if (!_ctx.ChestInteraction.TryBeginOrContinueReapproach(
 					attempt,
-					_floorRuntime?.ObjectEvidence.Current,
-					out var reason) == true)
+					player.Position,
+					out bool started))
+			{
+				return false;
+			}
+
+			if (started)
 			{
 				_floorRuntime?.RunTelemetry?.ObserveChestRecoveryStarted();
 				RecordReplayEvent("chest-recovery-started", new
@@ -852,63 +877,41 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 					waypointIndex = _executor?.RoomContext?.CurrentWaypointIndex ?? -1,
 					chestType = waypoint.Type.ToString(),
 					entityId = attempt.EntityId,
-					reason
+					reason = "outside-interaction-range"
 				});
 			}
 
-			if (attempt.RecoveryPhase is not (ChestRecoveryPhase.Recentering or ChestRecoveryPhase.Returning))
-				return false;
-
-			int playerRoom = RoomGraph.GetLocalPlayerRoomIndex(dd);
-			if (playerRoom < 0 || !TryResolveRoomDestination(dd, playerRoom, out var roomCenter))
-			{
-				FinishChestRecovery(attempt, waypoint, false, "room-center-unavailable");
-				return false;
-			}
-
-			var destination = attempt.RecoveryPhase == ChestRecoveryPhase.Recentering
-				? roomCenter
-				: waypoint.Position;
-			var state = _navHelper!.Navigate(destination, player.Position, arrivalRadius: 1.5f);
+			var state = _navHelper!.Navigate(waypoint.Position, player.Position, arrivalRadius: 1.5f);
 			switch (state)
 			{
 				case NavigationState.Moving:
-					_status = attempt.RecoveryPhase == ChestRecoveryPhase.Recentering
-						? "Recentering after blocked chest interaction"
-						: $"Returning to {DescribeChest(waypoint.Type)} after recentering";
+					_status = $"Returning to {DescribeChest(waypoint.Type)} interaction range";
 					return true;
 				case NavigationState.StuckRepathing:
-					_status = $"Recovering blocked chest interaction ({_navHelper.StuckRetryCount}/3)";
+					_status = $"Reapproaching {DescribeChest(waypoint.Type)} ({_navHelper.StuckRetryCount}/3)";
 					return true;
 				case NavigationState.Arrived:
-					if (attempt.RecoveryPhase == ChestRecoveryPhase.Recentering)
-					{
-						attempt.RecoveryPhase = ChestRecoveryPhase.Returning;
-						_status = $"Reapproaching {DescribeChest(waypoint.Type)} after recentering";
-						return true;
-					}
-					FinishChestRecovery(attempt, waypoint, true, "returned-to-chest");
+					FinishChestReapproach(attempt, waypoint, true, "returned-to-chest");
 					return false;
 				case NavigationState.StuckGiveUp:
-					FinishChestRecovery(attempt, waypoint, false, "navigation-stuck");
-					return false;
+					_status = $"Retrying route to {DescribeChest(waypoint.Type)}";
+					return true;
 				case NavigationState.Failed:
-					FinishChestRecovery(attempt, waypoint, false, "navigation-failed");
-					return false;
+					_status = $"Waiting to retry route to {DescribeChest(waypoint.Type)}";
+					return true;
 				default:
 					return true;
 			}
 		}
 
-		private void FinishChestRecovery(
+		private void FinishChestReapproach(
 			ChestInteractionAttempt attempt,
 			RoomWaypoint waypoint,
 			bool succeeded,
 			string reason)
 		{
-			attempt.RecoveryPhase = ChestRecoveryPhase.Exhausted;
-			attempt.ConsecutiveInteractionRejects = 0;
-			attempt.NextInteractAt = DateTime.MinValue;
+			_ctx?.ChestInteraction.FinishReapproach(attempt);
+			_navHelper?.Cancel();
 			RecordReplayEvent(succeeded ? "chest-recovery-completed" : "chest-recovery-failed", new
 			{
 				roomIndex = _executor?.RoomContext?.RoomIndex ?? -1,
@@ -931,14 +934,29 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				return false;
 			}
 			uint slotIndex = chestAttempt.PendingGoldOvercapSlotIndex.Value;
+			if (_floorRuntime?.PendingFloorItemUse is
+			    {
+				    Purpose: FloorItemUsePurpose.GoldChestOvercap,
+				    Key:
+				    {
+					    Kind: FloorItemUseKind.Pomander,
+					    ItemId: var pendingSlotIndex
+				    }
+			    } &&
+			    pendingSlotIndex == slotIndex)
+			{
+				return true;
+			}
 
 			if (ShouldUseGoldChestOvercapPomander(slotIndex))
 			{
 				if (CanAttemptPomanderUse() &&
-				    TryUsePomander(slotIndex, dd, $"gold overcap relief ({DescribePomanderSlot(slotIndex)})"))
+				    TryUsePomander(
+					    slotIndex,
+					    dd,
+					    $"gold overcap relief ({DescribePomanderSlot(slotIndex)})",
+					    FloorItemUsePurpose.GoldChestOvercap))
 				{
-					Service.Log.Info($"[FloorPhase] Used {DescribePomanderSlot(slotIndex)} to resolve capped gold chest");
-					chestAttempt.PendingGoldOvercapSlotIndex = null;
 					return true;
 				}
 
@@ -1014,7 +1032,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 						waypoint.Position, 1.5f,
 						preCondition: null, preTimeoutSeconds: 0,
 						postCondition: _ => IsChestAccepted(waypoint),
-						postTimeoutSeconds: BandedChestOpenTimeoutSeconds);
+						postTimeoutSeconds: _ctx!.ChestInteraction.GetOpenTimeoutSeconds(waypoint));
 					break;
 
 				case RoomObjectiveType.ChestSilver:
@@ -1023,7 +1041,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 						preCondition: () => _ctx?.ChestInteraction.CanStart(ActiveChestAttempt, waypoint) == true,
 						preTimeoutSeconds: SilverWaitTimeoutSeconds,
 						postCondition: _ => IsChestAccepted(waypoint),
-						postTimeoutSeconds: ChestOpenTimeoutSeconds);
+						postTimeoutSeconds: _ctx!.ChestInteraction.GetOpenTimeoutSeconds(waypoint));
 					break;
 
 				default:
@@ -1031,7 +1049,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 						waypoint.Position, 1.5f,
 						preCondition: null, preTimeoutSeconds: 0,
 						postCondition: _ => IsChestAccepted(waypoint),
-						postTimeoutSeconds: ChestOpenTimeoutSeconds);
+						postTimeoutSeconds: _ctx!.ChestInteraction.GetOpenTimeoutSeconds(waypoint));
 					break;
 			}
 		}
@@ -2077,7 +2095,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			       !snapshot.IntuitionUsable &&
 			       !snapshot.SightUseBlocked &&
 			       !snapshot.SightUsable &&
-			       _pomanderManager.GetStoneCount(2) > 0;
+			       GetStoneCountAvailableForFloorUse(2) > 0;
 		}
 
 		private unsafe void TryUseGeneralAutoPomander(InstanceContentDeepDungeon* dd)
@@ -2107,15 +2125,16 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				HasOpenedHoardThisFloor = _executor?.HasOpenedHoardThisFloor ?? false,
 				HoardOpportunity = DeepDungeonFloorsetTracker.GetCurrentOpportunity(dd->Floor),
 				IntuitionActive = _nativeIntuitionActive,
+				UsedIntuitionThisFloor = _chatWatchers?.UsedIntuitionThisFloor == true,
 				SightUseBlocked = IsSightUseBlocked(),
-				IntuitionUsable = pomandersUsableThisFloor && _pomanderManager.IsUsable(FloorInitPlanner.IntuitionPomanderSlotIndex),
-				SightUsable = pomandersUsableThisFloor && _pomanderManager.IsUsable(FloorInitPlanner.SightPomanderSlotIndex),
-				AffluenceUsable = pomandersUsableThisFloor && _pomanderManager.IsUsable(FloorInitPlanner.AffluencePomanderSlotIndex),
-				StrengthUsable = pomandersUsableThisFloor && _pomanderManager.IsUsable(FloorInitPlanner.StrengthPomanderSlotIndex),
-				SteelUsable = pomandersUsableThisFloor && _pomanderManager.IsUsable(FloorInitPlanner.SteelPomanderSlotIndex),
-				PurityUsable = pomandersUsableThisFloor && _pomanderManager.IsUsable(FloorInitPlanner.PurityPomanderSlotIndex),
-				SerenityUsable = pomandersUsableThisFloor && _pomanderManager.IsUsable(FloorInitPlanner.SerenityPomanderSlotIndex),
-				RaisingUsable = pomandersUsableThisFloor && _pomanderManager.IsUsable(FloorInitPlanner.RaisingPomanderSlotIndex),
+				IntuitionUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.IntuitionPomanderSlotIndex),
+				SightUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.SightPomanderSlotIndex),
+				AffluenceUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.AffluencePomanderSlotIndex),
+				StrengthUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.StrengthPomanderSlotIndex),
+				SteelUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.SteelPomanderSlotIndex),
+				PurityUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.PurityPomanderSlotIndex),
+				SerenityUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.SerenityPomanderSlotIndex),
+				RaisingUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.RaisingPomanderSlotIndex),
 				AffluenceActive = _pomanderManager.IsActive(FloorInitPlanner.AffluencePomanderSlotIndex),
 				RaisingActive = _pomanderManager.IsActive(FloorInitPlanner.RaisingPomanderSlotIndex),
 				HasStrengthStatus = HasLocalPlayerStatus(StrengthStatusId),
@@ -2130,12 +2149,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			return new GeneralAutoPomanderSnapshot
 			{
 				CanAttemptPomanderUse = CanAttemptPomanderUse(),
-				AffluenceUsable = _pomanderManager.IsUsable(FloorInitPlanner.AffluencePomanderSlotIndex),
-				StrengthUsable = _pomanderManager.IsUsable(FloorInitPlanner.StrengthPomanderSlotIndex),
-				SteelUsable = _pomanderManager.IsUsable(FloorInitPlanner.SteelPomanderSlotIndex),
-				PurityUsable = _pomanderManager.IsUsable(FloorInitPlanner.PurityPomanderSlotIndex),
-				SerenityUsable = _pomanderManager.IsUsable(FloorInitPlanner.SerenityPomanderSlotIndex),
-				RaisingUsable = _pomanderManager.IsUsable(FloorInitPlanner.RaisingPomanderSlotIndex),
+				AffluenceUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.AffluencePomanderSlotIndex),
+				StrengthUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.StrengthPomanderSlotIndex),
+				SteelUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.SteelPomanderSlotIndex),
+				PurityUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.PurityPomanderSlotIndex),
+				SerenityUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.SerenityPomanderSlotIndex),
+				RaisingUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.RaisingPomanderSlotIndex),
 				AffluenceActive = _pomanderManager.IsActive(FloorInitPlanner.AffluencePomanderSlotIndex),
 				RaisingActive = _pomanderManager.IsActive(FloorInitPlanner.RaisingPomanderSlotIndex),
 				HasStrengthStatus = HasLocalPlayerStatus(StrengthStatusId),
@@ -2163,9 +2182,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				case RoomFinishPomanderDecisionKind.PendingRetry:
 					return RoomFinishPomanderOutcome.PendingRetry;
 				case RoomFinishPomanderDecisionKind.Use:
-					return TryUsePomander(decision.SlotIndex!.Value, dd, decision.Reason!)
-						? RoomFinishPomanderOutcome.UsedImmediately
-						: RoomFinishPomanderOutcome.PendingRetry;
+					TryUsePomander(decision.SlotIndex!.Value, dd, decision.Reason!);
+					return RoomFinishPomanderOutcome.PendingRetry;
 				default:
 					return RoomFinishPomanderOutcome.NotNeeded;
 			}
@@ -2191,6 +2209,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		{
 			if (_chatWatchers == null ||
 			    _executor == null ||
+			    IsPomanderBlockedForFloor(slotIndex) ||
 			    !_executor.ConfigSnapshot.BandedEnabled ||
 			    _executor.HasOpenedHoardThisFloor ||
 			    !FloorsetHoardDistributionPolicy.AllowsHoardPomander(
@@ -2227,9 +2246,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 					floorsetState,
 					dd->Floor),
 				IntuitionActive = _nativeIntuitionActive,
+				UsedIntuitionThisFloor = _chatWatchers?.UsedIntuitionThisFloor == true,
 				SightUseBlocked = IsSightUseBlocked(),
-				IntuitionUsable = pomandersUsableThisFloor && _pomanderManager.IsUsable(FloorInitPlanner.IntuitionPomanderSlotIndex),
-				SightUsable = pomandersUsableThisFloor && _pomanderManager.IsUsable(FloorInitPlanner.SightPomanderSlotIndex),
+				IntuitionUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.IntuitionPomanderSlotIndex),
+				SightUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.SightPomanderSlotIndex),
 				IntuitionCount = _pomanderManager.GetCount(FloorInitPlanner.IntuitionPomanderSlotIndex),
 				RemainingMobFloors = GetRemainingMobFloorCount(dd)
 			};
@@ -2263,7 +2283,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 		private bool CanAttemptPomanderUse()
 		{
-			if (Service.Condition[ConditionFlag.InCombat] ||
+			if (_floorRuntime?.PendingFloorItemUse != null ||
+			    Service.Condition[ConditionFlag.InCombat] ||
 			    Service.Condition[ConditionFlag.Casting] ||
 			    Service.Condition[ConditionFlag.BetweenAreas] ||
 			    Service.Condition[ConditionFlag.BetweenAreas51])
@@ -2277,13 +2298,43 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			return true;
 		}
 
-		private unsafe bool TryUsePomander(uint slotIndex, InstanceContentDeepDungeon* dd, string reason)
+		private bool IsPomanderAvailableForFloorUse(uint slotIndex)
 		{
-			if (!DeepDungeonFloorItemUsePolicy.CanUsePomanders(
+			return !IsPomanderBlockedForFloor(slotIndex) &&
+			       _pomanderManager.IsUsable(slotIndex);
+		}
+
+		private bool IsPomanderBlockedForFloor(uint slotIndex) =>
+			_floorRuntime?.IsFloorItemBlocked(
+				new FloorItemUseKey(FloorItemUseKind.Pomander, slotIndex)) == true;
+
+		private bool IsStoneBlockedForFloor(byte stoneId) =>
+			_floorRuntime?.IsFloorItemBlocked(
+				new FloorItemUseKey(FloorItemUseKind.Stone, stoneId)) == true;
+
+		private int GetStoneCountAvailableForFloorUse(byte stoneId)
+		{
+			return IsStoneBlockedForFloor(stoneId)
+				? 0
+				: _pomanderManager.GetStoneCount(stoneId);
+		}
+
+		private unsafe bool TryUsePomander(
+			uint slotIndex,
+			InstanceContentDeepDungeon* dd,
+			string reason,
+			FloorItemUsePurpose purpose = FloorItemUsePurpose.Automatic)
+		{
+			var runtime = _floorRuntime;
+			if (runtime == null ||
+			    runtime.IsDisposed ||
+			    !CanAttemptPomanderUse() ||
+			    !DeepDungeonFloorItemUsePolicy.CanUsePomanders(
 				    dd->DeepDungeonBanId) ||
-			    !_pomanderManager.IsUsable(slotIndex))
+			    !IsPomanderAvailableForFloorUse(slotIndex))
 				return false;
 
+			int countBeforeDispatch = _pomanderManager.GetCount(slotIndex);
 			long sightLogSequenceBeforeDispatch =
 				_chatWatchers?.SightLogSequence ?? 0;
 			long mazerootLogSequenceBeforeDispatch =
@@ -2304,41 +2355,42 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 			if (_pomanderManager.Use(slotIndex))
 			{
-				_pomanderDispatchedThisUpdate = true;
+				DateTime dispatchedAtUtc = DateTime.UtcNow;
+				bool blocksFloorSetup =
+					_phase == FloorPhase.FloorSetup &&
+					slotIndex is FloorInitPlanner.IntuitionPomanderSlotIndex or
+						FloorInitPlanner.SightPomanderSlotIndex;
+				var pending = runtime.BeginFloorItemUse(
+					new FloorItemUseKey(FloorItemUseKind.Pomander, slotIndex),
+					purpose,
+					countBeforeDispatch,
+					dispatchedAtUtc,
+					reason,
+					blocksFloorSetup,
+					sightLogSequenceBeforeDispatch,
+					mazerootLogSequenceBeforeDispatch,
+					intuitionAttemptId,
+					intuitionExpectedAtMilliseconds);
 				if (slotIndex == FloorInitPlanner.IntuitionPomanderSlotIndex)
-				{
-					_chatWatchers?.MarkIntuitionUsedThisFloor();
-					if (_ctx?.ControlledPtSurvey != null && _floorRuntime != null)
-					{
-						_floorRuntime.ControlledIntuitionExpectationStartedAtMilliseconds = intuitionExpectedAtMilliseconds;
-						_floorRuntime.ControlledIntuitionExpectationAttemptId = intuitionAttemptId;
-						_floorRuntime.ControlledIntuitionResolved = false;
-						_floorRuntime.ControlledIntuitionDecision = null;
-					}
-				}
-				else if (slotIndex == FloorInitPlanner.SightPomanderSlotIndex)
-				{
-					_chatWatchers?.MarkSightAttemptedThisFloor();
-					_floorRuntime?.ObjectEvidence.Invalidate();
-					RegisterNaturalRevealDispatch(
-						SightResearchRevealResource.Sight,
-						sightLogSequenceBeforeDispatch,
-						mazerootLogSequenceBeforeDispatch);
-				}
-
-				_nextPomanderUseAt = DateTime.UtcNow.AddSeconds(3);
-				Service.Log.Info($"[FloorPhase] Used pomander slot {slotIndex} ({reason}) on floor {dd->Floor}");
-				RecordReplayEvent("pomander-used", new
+					_chatWatchers?.MarkIntuitionUsePendingThisFloor();
+				_pomanderDispatchedThisUpdate = true;
+				_nextPomanderUseAt = dispatchedAtUtc.AddMilliseconds(
+					FloorItemUseConfirmationPolicy.RetryDelayMilliseconds);
+				Service.Log.Info(
+					$"[FloorPhase] Dispatched pomander slot {slotIndex} request ({reason}) on floor {dd->Floor}; awaiting confirmation");
+				RecordReplayEvent("floor-item-use-dispatched", new
 				{
 					floor = dd->Floor,
-					slotIndex,
+					kind = pending.Key.Kind.ToString(),
+					itemId = pending.Key.ItemId,
+					purpose = pending.Purpose.ToString(),
+					attempt = pending.AttemptNumber,
 					reason,
-					intuitionAttemptId = slotIndex == FloorInitPlanner.IntuitionPomanderSlotIndex
-						? intuitionAttemptId
-						: 0
+					countBeforeDispatch,
+					intuitionAttemptId
 				});
 				if (slotIndex == FloorInitPlanner.IntuitionPomanderSlotIndex)
-					RecordNativeIntuitionState($"after-intuition-use:{reason}:success", force: true);
+					RecordNativeIntuitionState($"after-intuition-use:{reason}:dispatched", force: true);
 				return true;
 			}
 
@@ -2350,6 +2402,358 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			}
 			_nextPomanderUseAt = DateTime.UtcNow.AddSeconds(1);
 			return false;
+		}
+
+		private unsafe bool TryDispatchFloorStone(
+			byte stoneId,
+			InstanceContentDeepDungeon* dd,
+			string reason,
+			FloorItemUsePurpose purpose)
+		{
+			var runtime = _floorRuntime;
+			if (runtime == null ||
+			    runtime.IsDisposed ||
+			    !CanAttemptPomanderUse() ||
+			    !DeepDungeonFloorItemUsePolicy.CanUsePtIncense(
+				    dd->DeepDungeonBanId) ||
+			    GetStoneCountAvailableForFloorUse(stoneId) <= 0)
+			{
+				return false;
+			}
+
+			int countBeforeDispatch = _pomanderManager.GetStoneCount(stoneId);
+			long sightLogSequenceBeforeDispatch =
+				_chatWatchers?.SightLogSequence ?? 0;
+			long mazerootLogSequenceBeforeDispatch =
+				_chatWatchers?.MazerootLogSequence ?? 0;
+			if (!_pomanderManager.UseStone(stoneId))
+				return false;
+
+			DateTime dispatchedAtUtc = DateTime.UtcNow;
+			var pending = runtime.BeginFloorItemUse(
+				new FloorItemUseKey(FloorItemUseKind.Stone, stoneId),
+				purpose,
+				countBeforeDispatch,
+				dispatchedAtUtc,
+				reason,
+				_phase == FloorPhase.FloorSetup &&
+				purpose == FloorItemUsePurpose.NaturalReveal,
+				sightLogSequenceBeforeDispatch,
+				mazerootLogSequenceBeforeDispatch,
+				0,
+				0);
+			_pomanderDispatchedThisUpdate = true;
+			_nextPomanderUseAt = dispatchedAtUtc.AddMilliseconds(
+				FloorItemUseConfirmationPolicy.RetryDelayMilliseconds);
+			Service.Log.Info(
+				$"[FloorPhase] Dispatched PT incense {stoneId} request ({reason}) on floor {dd->Floor}; awaiting confirmation");
+			RecordReplayEvent("floor-item-use-dispatched", new
+			{
+				floor = dd->Floor,
+				kind = pending.Key.Kind.ToString(),
+				itemId = pending.Key.ItemId,
+				purpose = pending.Purpose.ToString(),
+				attempt = pending.AttemptNumber,
+				reason,
+				countBeforeDispatch
+			});
+			return true;
+		}
+
+		private unsafe void ResolvePendingFloorItemUse(
+			InstanceContentDeepDungeon* dd,
+			FloorRuntime runtime)
+		{
+			var pending = runtime.PendingFloorItemUse;
+			if (pending == null)
+				return;
+
+			int currentCount = pending.Key.Kind == FloorItemUseKind.Pomander
+				? _pomanderManager.GetCount(pending.Key.ItemId)
+				: _pomanderManager.GetStoneCount((byte)pending.Key.ItemId);
+			bool authoritativeConfirmationObserved =
+				pending.AuthoritativeConfirmationObserved ||
+				pending.Key is
+				{
+					Kind: FloorItemUseKind.Pomander,
+					ItemId: FloorInitPlanner.SightPomanderSlotIndex
+				} &&
+				(_chatWatchers?.SightLogSequence ?? 0) >
+				pending.SightLogSequenceBeforeDispatch ||
+				pending.Key is
+				{
+					Kind: FloorItemUseKind.Stone,
+					ItemId: 2
+				} &&
+				(_chatWatchers?.MazerootLogSequence ?? 0) >
+				pending.MazerootLogSequenceBeforeDispatch;
+			int elapsedMilliseconds = (int)Math.Clamp(
+				(DateTime.UtcNow - pending.DispatchedAtUtc).TotalMilliseconds,
+				0,
+				int.MaxValue);
+			var decision = FloorItemUseConfirmationPolicy.Decide(
+				new FloorItemUseConfirmationSnapshot(
+					pending.CountBeforeDispatch,
+					currentCount,
+					authoritativeConfirmationObserved,
+					pending.AttemptNumber,
+					elapsedMilliseconds));
+
+			switch (decision)
+			{
+				case FloorItemUseConfirmationDecisionKind.PendingConfirmation:
+					return;
+				case FloorItemUseConfirmationDecisionKind.Confirmed:
+					runtime.ConfirmFloorItemUse(pending);
+					ApplyConfirmedFloorItemUse(dd, runtime, pending, currentCount);
+					return;
+				case FloorItemUseConfirmationDecisionKind.WaitingToRetry:
+					RecordUnconfirmedFloorItemUse(dd, pending, currentCount, exhausted: false);
+					return;
+				case FloorItemUseConfirmationDecisionKind.RetryReady:
+					RecordUnconfirmedFloorItemUse(dd, pending, currentCount, exhausted: false);
+					CancelPendingIntuitionAttempt(pending);
+					runtime.ReleaseFloorItemUseForRetry(pending);
+					return;
+				case FloorItemUseConfirmationDecisionKind.Exhausted:
+					RecordUnconfirmedFloorItemUse(dd, pending, currentCount, exhausted: true);
+					CancelPendingIntuitionAttempt(pending);
+					runtime.ExhaustFloorItemUse(pending);
+					ApplyExhaustedFloorItemUse(runtime, pending);
+					return;
+			}
+		}
+
+		private unsafe void ApplyConfirmedFloorItemUse(
+			InstanceContentDeepDungeon* dd,
+			FloorRuntime runtime,
+			PendingFloorItemUse pending,
+			int currentCount)
+		{
+			if (pending.Key.Kind == FloorItemUseKind.Pomander)
+			{
+				uint slotIndex = pending.Key.ItemId;
+				if (slotIndex == FloorInitPlanner.IntuitionPomanderSlotIndex)
+				{
+					_chatWatchers?.MarkIntuitionUsedThisFloor();
+					if (_ctx?.ControlledPtSurvey != null)
+					{
+						runtime.ControlledIntuitionExpectationStartedAtMilliseconds =
+							pending.IntuitionExpectedAtMilliseconds;
+						runtime.ControlledIntuitionExpectationAttemptId =
+							pending.IntuitionAttemptId;
+						runtime.ControlledIntuitionResolved = false;
+						runtime.ControlledIntuitionDecision = null;
+					}
+					RecordNativeIntuitionState(
+						$"after-intuition-use:{pending.Reason}:confirmed",
+						force: true);
+				}
+				else if (slotIndex == FloorInitPlanner.SightPomanderSlotIndex)
+				{
+					_chatWatchers?.MarkSightAttemptedThisFloor();
+					if (pending.Purpose == FloorItemUsePurpose.ControlledReveal)
+						ApplyConfirmedControlledReveal(runtime, pending);
+					else
+						ApplyConfirmedNaturalReveal(
+							runtime,
+							pending,
+							SightResearchRevealResource.Sight);
+				}
+
+				if (pending.Purpose == FloorItemUsePurpose.ControlledStrength)
+					runtime.ControlledStrengthHandled = true;
+				if (pending.Purpose == FloorItemUsePurpose.GoldChestOvercap &&
+				    ActiveChestAttempt?.PendingGoldOvercapSlotIndex == slotIndex)
+				{
+					ActiveChestAttempt.PendingGoldOvercapSlotIndex = null;
+					Service.Log.Info(
+						$"[FloorPhase] Used {DescribePomanderSlot(slotIndex)} to resolve capped gold chest");
+				}
+
+				Service.Log.Info(
+					$"[FloorPhase] Confirmed pomander slot {slotIndex} use ({pending.Reason}) on floor {dd->Floor}");
+				RecordReplayEvent("pomander-used", new
+				{
+					floor = dd->Floor,
+					slotIndex,
+					reason = pending.Reason,
+					attempt = pending.AttemptNumber,
+					countBeforeDispatch = pending.CountBeforeDispatch,
+					currentCount,
+					intuitionAttemptId = pending.IntuitionAttemptId
+				});
+			}
+			else
+			{
+				byte stoneId = (byte)pending.Key.ItemId;
+				switch (pending.Purpose)
+				{
+					case FloorItemUsePurpose.NaturalReveal:
+						_chatWatchers?.MarkSightAttemptedThisFloor();
+						ApplyConfirmedNaturalReveal(
+							runtime,
+							pending,
+							SightResearchRevealResource.Mazeroot);
+						break;
+					case FloorItemUsePurpose.ControlledReveal:
+						ApplyConfirmedControlledReveal(runtime, pending);
+						break;
+					case FloorItemUsePurpose.NaturalPoisonfruit:
+						runtime.NaturalPoisonfruitAttempted = true;
+						runtime.ObjectEvidence.Invalidate();
+						break;
+					case FloorItemUsePurpose.NaturalPassageMazeroot:
+						runtime.NaturalMazerootAttemptedOrAdopted = true;
+						runtime.ObjectEvidence.Invalidate();
+						break;
+					case FloorItemUsePurpose.ControlledPoisonfruit:
+						runtime.ControlledPoisonfruitDispatched = true;
+						runtime.ControlledPendingPostCapturePoisonfruit = false;
+						runtime.ObjectEvidence.Invalidate();
+						break;
+				}
+
+				string eventType = pending.Purpose is
+					FloorItemUsePurpose.ControlledReveal or
+					FloorItemUsePurpose.ControlledPoisonfruit
+						? "controlled-incense-used"
+						: "incense-used";
+				Service.Log.Info(
+					$"[FloorPhase] Confirmed PT incense {stoneId} use ({pending.Reason}) on floor {dd->Floor}");
+				RecordReplayEvent(eventType, new
+				{
+					floor = dd->Floor,
+					stoneId,
+					reason = pending.Reason,
+					attempt = pending.AttemptNumber,
+					countBeforeDispatch = pending.CountBeforeDispatch,
+					currentCount
+				});
+			}
+
+			RecordReplayEvent("floor-item-use-confirmed", new
+			{
+				floor = dd->Floor,
+				kind = pending.Key.Kind.ToString(),
+				itemId = pending.Key.ItemId,
+				purpose = pending.Purpose.ToString(),
+				attempt = pending.AttemptNumber,
+				countBeforeDispatch = pending.CountBeforeDispatch,
+				currentCount
+			});
+		}
+
+		private void ApplyConfirmedNaturalReveal(
+			FloorRuntime runtime,
+			PendingFloorItemUse pending,
+			SightResearchRevealResource resource)
+		{
+			runtime.SightResearchDispatched = true;
+			RegisterNaturalRevealDispatch(
+				resource,
+				pending.SightLogSequenceBeforeDispatch,
+				pending.MazerootLogSequenceBeforeDispatch);
+		}
+
+		private void ApplyConfirmedControlledReveal(
+			FloorRuntime runtime,
+			PendingFloorItemUse pending)
+		{
+			var action = pending.Key.Kind == FloorItemUseKind.Pomander
+				? ControlledPtSurveyItemAction.UseSight
+				: ControlledPtSurveyItemAction.UseMazeroot;
+			runtime.ControlledCaptureItem = action;
+			runtime.ControlledSightDispatched = true;
+			runtime.ControlledSightLogSequenceAtDispatch =
+				pending.SightLogSequenceBeforeDispatch;
+			runtime.ControlledMazerootLogSequenceAtDispatch =
+				pending.MazerootLogSequenceBeforeDispatch;
+			runtime.ControlledSightDispatchedAt = pending.DispatchedAtUtc;
+			runtime.ObjectEvidence.Invalidate();
+			runtime.EvidenceSession?.ObserveControlledCaptureItem(action);
+			runtime.EvidenceSession?.ObserveResearchAction(
+				true,
+				action == ControlledPtSurveyItemAction.UseMazeroot
+					? SightResearchRevealResource.Mazeroot
+					: SightResearchRevealResource.Sight,
+				pending.CountBeforeDispatch);
+		}
+
+		private void ApplyExhaustedFloorItemUse(
+			FloorRuntime runtime,
+			PendingFloorItemUse pending)
+		{
+			if (pending.Key is
+			    {
+				    Kind: FloorItemUseKind.Pomander,
+				    ItemId: FloorInitPlanner.IntuitionPomanderSlotIndex or
+					    FloorInitPlanner.SightPomanderSlotIndex
+			    } ||
+			    pending.Purpose == FloorItemUsePurpose.NaturalReveal)
+			{
+				RequestPlanRefresh("floor-item-use-exhausted");
+			}
+
+			switch (pending.Purpose)
+			{
+				case FloorItemUsePurpose.ControlledStrength:
+					runtime.ControlledStrengthHandled = true;
+					break;
+				case FloorItemUsePurpose.NaturalPoisonfruit:
+					// Once Poisonfruit has been requested twice, preserve the policy
+					// that 敏慧 must not be consumed as its fallback on this floor.
+					runtime.NaturalPoisonfruitAttempted = true;
+					break;
+				case FloorItemUsePurpose.NaturalPassageMazeroot:
+					runtime.NaturalMazerootAttemptedOrAdopted = true;
+					break;
+				case FloorItemUsePurpose.ControlledPoisonfruit:
+					runtime.ControlledPendingPostCapturePoisonfruit = false;
+					break;
+			}
+		}
+
+		private void CancelPendingIntuitionAttempt(PendingFloorItemUse pending)
+		{
+			if (pending.Key is not
+			    {
+				    Kind: FloorItemUseKind.Pomander,
+				    ItemId: FloorInitPlanner.IntuitionPomanderSlotIndex
+			    })
+			{
+				return;
+			}
+
+			PendingIntuition.CancelAttempt(pending.IntuitionAttemptId);
+			_chatWatchers?.CancelExpectedIntuitionResult(pending.IntuitionAttemptId);
+			_chatWatchers?.CancelPendingIntuitionUseThisFloor();
+		}
+
+		private unsafe void RecordUnconfirmedFloorItemUse(
+			InstanceContentDeepDungeon* dd,
+			PendingFloorItemUse pending,
+			int currentCount,
+			bool exhausted)
+		{
+			if (pending.UnconfirmedRecorded)
+				return;
+
+			pending.UnconfirmedRecorded = true;
+			Service.Log.Warning(
+				$"[FloorPhase] Floor item request was not confirmed: {pending.Key.Kind} {pending.Key.ItemId}, attempt {pending.AttemptNumber}, reason={pending.Reason}, exhausted={exhausted}");
+			RecordReplayEvent("floor-item-use-unconfirmed", new
+			{
+				floor = dd->Floor,
+				kind = pending.Key.Kind.ToString(),
+				itemId = pending.Key.ItemId,
+				purpose = pending.Purpose.ToString(),
+				attempt = pending.AttemptNumber,
+				countBeforeDispatch = pending.CountBeforeDispatch,
+				currentCount,
+				exhausted,
+				reason = pending.Reason
+			});
 		}
 
 		private unsafe void ObserveHoardCount(InstanceContentDeepDungeon* dd, string checkpoint)
@@ -2437,10 +2841,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				case RoomFinishPomanderOutcome.NotNeeded:
 					ClearPostRoomPomanderRetry();
 					break;
-				case RoomFinishPomanderOutcome.UsedImmediately:
-					Service.Log.Info("[FloorPhase] Consumed post-room S2 pomander while continuing main flow");
-					ClearPostRoomPomanderRetry();
-					return true;
 				case RoomFinishPomanderOutcome.PendingRetry:
 					break;
 			}

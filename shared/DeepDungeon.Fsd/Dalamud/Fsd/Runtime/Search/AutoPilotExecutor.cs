@@ -25,6 +25,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 		private readonly PalacePalProvider _palacePalProvider;
 		private readonly DetailedMapRunSnapshot _detailedMap;
 		private readonly List<Vector3> _observedSightTrapPositions = new();
+		private readonly HashSet<int> _blindHoardProbeSuppressedRooms = new();
 
 		private RunOptions _configSnapshot;
 		private int _floorHoardBaseline;
@@ -153,6 +154,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 			_hoardOpenedThisFloor = false;
 			_cachedHoardIndicatorPos = null;
 			_observedSightTrapPositions.Clear();
+			_blindHoardProbeSuppressedRooms.Clear();
 			_lastHoardEvidenceState = HoardEvidenceState.Disabled;
 			_lastPlanTrace = default;
 			_hasPlanningSnapshot = false;
@@ -282,6 +284,16 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 				_observedSightTrapPositions,
 				out evidenceUnavailable,
 				out chestDiagnostic);
+			if (_roomContext?.BlindFallbackUnavailable == true)
+			{
+				_blindHoardProbeSuppressedRooms.Add(entry.Value.RoomIndex);
+				_roomPlan[0] = entry.Value with { ShouldProbeHoard = false };
+				Service.Log.Info(
+					$"[AutoPilot] Suppressed blind hoard probe in room {entry.Value.RoomIndex}: " +
+					$"catalog={_roomContext.FallbackCatalogCandidateCount} " +
+					$"palacePal={_roomContext.FallbackPalacePalCandidateCount} " +
+					$"union={_roomContext.FallbackUnionCandidateCount}");
+			}
 			return _roomContext != null;
 		}
 
@@ -390,6 +402,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 					IsHome = (flags & InstanceContentDeepDungeon.RoomFlags.Home) != 0,
 					IsSearched = IsRoomSearched(roomIndex),
 					IsHoardSearched = progress.HoardSearched,
+					BlindHoardProbeSuppressed =
+						_blindHoardProbeSuppressedRooms.Contains(roomIndex),
 					AreChestsSearched = progress.ChestsSearched,
 					IsIntelVisited = progress.IntelVisited,
 					IsRevealed = DeepDungeonChestData.IsRoomRevealed(dd, roomIndex),
@@ -419,7 +433,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 				ChatSaysHoard = chatWatchers?.ChatSaysHoard ?? false,
 				ChatSaysNoHoard = chatWatchers?.ChatSaysNoHoard ?? false,
 				InheritedNoHoardInferred = _inheritedNoHoardInferred,
-				UsedIntuitionThisFloor = chatWatchers?.UsedIntuitionThisFloor ?? false
+				UsedIntuitionThisFloor = chatWatchers?.HasCurrentFloorIntuitionUse ?? false
 			};
 		}
 
@@ -452,6 +466,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 			public List<int> RoomPath = new();
 			public int CurrentRoomIdx;
 			public HashSet<int> CompletedRooms = new();
+			public HashSet<int> BlindHoardProbeSuppressedRooms = new();
 			public FloorPhase Phase;
 			public TaskPhase TaskPhase;
 			public string Status = "";
@@ -497,6 +512,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 				RoomPath = _roomPlan.Select(x => x.RoomIndex).ToList(),
 				CurrentRoomIdx = 0,
 				CompletedRooms = completed,
+				BlindHoardProbeSuppressedRooms =
+					new HashSet<int>(_blindHoardProbeSuppressedRooms),
 				HoardCount = _observedHoardCount,
 				HoardEvidenceState = _lastHoardEvidenceState,
 				CachedHoardIndicatorPos = _cachedHoardIndicatorPos,
