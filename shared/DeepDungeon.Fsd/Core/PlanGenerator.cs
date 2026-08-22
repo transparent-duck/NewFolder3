@@ -246,9 +246,13 @@ namespace DeepDungeon.Fsd.Core
             bool shouldVisitForIntel = ShouldVisitForIntel(room, hoardEvidenceState, intelVisited);
             if (!shouldProbeHoard && !shouldSearchChests && !shouldVisitForIntel)
             {
-                reason = hoardEvidenceState == HoardEvidenceState.IntuitionPending
-                    ? "intuition-pending"
-                    : "no-objectives";
+                reason = hoardEvidenceState switch
+                {
+                    HoardEvidenceState.IntuitionPending => "intuition-pending",
+                    HoardEvidenceState.BlindSearch when room.BlindHoardProbeSuppressed =>
+                        "blind-hoard-unavailable",
+                    _ => "no-objectives"
+                };
                 return false;
             }
 
@@ -271,7 +275,8 @@ namespace DeepDungeon.Fsd.Core
 
             return hoardEvidenceState switch
             {
-                HoardEvidenceState.BlindSearch => !hoardSearched,
+                HoardEvidenceState.BlindSearch =>
+                    !hoardSearched && !room.BlindHoardProbeSuppressed,
                 HoardEvidenceState.IntuitionDirect => snapshot.CachedHoardIndicatorRoomIndex == room.RoomIndex && !hoardSearched,
                 _ => false
             };

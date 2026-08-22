@@ -43,6 +43,9 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 		public bool IntuitionActive { get; private set; }
 		public SightUseState SightState { get; private set; }
 		public bool UsedIntuitionThisFloor { get; private set; }
+		public bool IntuitionUsePendingThisFloor { get; private set; }
+		public bool HasCurrentFloorIntuitionUse =>
+			UsedIntuitionThisFloor || IntuitionUsePendingThisFloor;
 		public bool ChatSaysHoard { get; private set; }
 		public bool ChatSaysNoHoard { get; private set; }
 		public bool HoardCofferFound { get; private set; }
@@ -57,6 +60,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 			IntuitionActive = nativeIntuitionActive;
 			SightState = SightUseState.None;
 			UsedIntuitionThisFloor = false;
+			IntuitionUsePendingThisFloor = false;
 			ClearExpectedEvidence();
 			ChatSaysHoard = false;
 			ChatSaysNoHoard = false;
@@ -75,11 +79,30 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 
 		public void MarkIntuitionUsedThisFloor()
 		{
-			if (UsedIntuitionThisFloor)
+			if (UsedIntuitionThisFloor && !IntuitionUsePendingThisFloor)
 				return;
 
 			UsedIntuitionThisFloor = true;
+			IntuitionUsePendingThisFloor = false;
 			NotifyStateChanged("MarkIntuitionUsedThisFloor");
+		}
+
+		public void MarkIntuitionUsePendingThisFloor()
+		{
+			if (UsedIntuitionThisFloor || IntuitionUsePendingThisFloor)
+				return;
+
+			IntuitionUsePendingThisFloor = true;
+			NotifyStateChanged("MarkIntuitionUsePendingThisFloor");
+		}
+
+		public void CancelPendingIntuitionUseThisFloor()
+		{
+			if (!IntuitionUsePendingThisFloor)
+				return;
+
+			IntuitionUsePendingThisFloor = false;
+			NotifyStateChanged("CancelPendingIntuitionUseThisFloor");
 		}
 
 		public long ExpectIntuitionResult(byte sourceFloor)

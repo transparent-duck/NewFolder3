@@ -108,6 +108,9 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 			public IReadOnlyList<Vector3> DetailedMapCandidates = Array.Empty<Vector3>();
 			public int DetailedMapDirectCandidateCount;
 			public IReadOnlyList<Vector3> FallbackTrapMarkers = Array.Empty<Vector3>();
+			public int FallbackCatalogCandidateCount;
+			public int FallbackPalacePalCandidateCount;
+			public bool BlindFallbackUnavailable;
 			public IReadOnlyList<CoreSnapshotTrapIndicatorEntry> VisibleTrapIndicators = Array.Empty<CoreSnapshotTrapIndicatorEntry>();
 			public List<VisibleChestSource> VisibleChests { get; } = new();
 		}
@@ -119,7 +122,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 			List<RoomWaypoint> orderedWaypoints,
 			bool shouldProbeHoard,
 			bool shouldSearchChests,
-			bool shouldVisitForIntel)
+			bool shouldVisitForIntel,
+			bool blindFallbackUnavailable = false,
+			int fallbackCatalogCandidateCount = 0,
+			int fallbackPalacePalCandidateCount = 0,
+			int fallbackUnionCandidateCount = 0)
 		{
 			RoomIndex = roomIndex;
 			RoomCenter = roomCenter;
@@ -128,6 +135,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 			_shouldProbeHoard = shouldProbeHoard;
 			_shouldSearchChests = shouldSearchChests;
 			_shouldVisitForIntel = shouldVisitForIntel;
+			BlindFallbackUnavailable = blindFallbackUnavailable;
+			FallbackCatalogCandidateCount = fallbackCatalogCandidateCount;
+			FallbackPalacePalCandidateCount = fallbackPalacePalCandidateCount;
+			FallbackUnionCandidateCount = fallbackUnionCandidateCount;
 			for (int i = 0; i < orderedWaypoints.Count; i++)
 			{
 				if (orderedWaypoints[i].Type is RoomObjectiveType.Trap or RoomObjectiveType.ChestBanded)
@@ -179,6 +190,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 		public bool HasWaypoints => _currentWaypointIdx < _waypoints.Count;
 		public RoomWaypoint? CurrentWaypoint => _currentWaypointIdx < _waypoints.Count ? _waypoints[_currentWaypointIdx] : null;
 		public IReadOnlyList<RoomWaypoint> Waypoints => _waypoints;
+		public bool BlindFallbackUnavailable { get; }
+		public int FallbackCatalogCandidateCount { get; }
+		public int FallbackPalacePalCandidateCount { get; }
+		public int FallbackUnionCandidateCount { get; }
 		public string LastOutcomeReason { get; private set; } = string.Empty;
 
 		public void AdvanceWaypoint()
@@ -240,7 +255,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 			var snapshot = new RoomContextSnapshot
 			{
 				RoomIndex = RoomIndex,
-				CurrentWaypointIndex = _currentWaypointIdx
+				CurrentWaypointIndex = _currentWaypointIdx,
+				BlindFallbackUnavailable = BlindFallbackUnavailable,
+				FallbackCatalogCandidateCount = FallbackCatalogCandidateCount,
+				FallbackPalacePalCandidateCount = FallbackPalacePalCandidateCount,
+				FallbackUnionCandidateCount = FallbackUnionCandidateCount
 			};
 
 			foreach (var waypoint in _waypoints)
@@ -316,14 +335,20 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 				selected.Waypoints,
 				sourceData,
 				cachedHoardIndicatorPos);
+			bool effectiveShouldProbeHoard =
+				shouldProbeHoard && !sourceData.BlindFallbackUnavailable;
 			return new RoomSearchContext(
 				roomIndex,
 				center,
 				roomRadius,
 				ordered,
-				shouldProbeHoard,
+				effectiveShouldProbeHoard,
 				shouldSearchChests,
-				shouldVisitForIntel);
+				shouldVisitForIntel,
+				sourceData.BlindFallbackUnavailable,
+				sourceData.FallbackCatalogCandidateCount,
+				sourceData.FallbackPalacePalCandidateCount,
+				sourceData.FallbackTrapMarkers.Count);
 		}
 
 		public static unsafe RoomSearchContext? BuildBandedOnly(
@@ -391,6 +416,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 			bool hasDetailedMapRoom = false;
 			int detailedMapCandidateCount = 0;
 			int fallbackTrapCount = 0;
+			bool usedFallbackCandidates = false;
 			IReadOnlyList<CoreSnapshotChestEntry> visibleChests = Array.Empty<CoreSnapshotChestEntry>();
 			IReadOnlyList<CoreSnapshotTrapIndicatorEntry> visibleTrapIndicators = Array.Empty<CoreSnapshotTrapIndicatorEntry>();
 
@@ -486,12 +512,21 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 							out visibleTrapIndicators);
 						if (usePalacePalFallback)
 						{
-							sourceData.FallbackTrapMarkers =
+							IReadOnlyList<Vector3> palacePalCandidates =
 								palacePalProvider.GetCandidatePositionsForRoom(
 									dd,
 									roomIndex);
+							sourceData.FallbackCatalogCandidateCount =
+								catalogRoom?.Candidates.Length ?? 0;
+							sourceData.FallbackPalacePalCandidateCount =
+								palacePalCandidates.Count;
+							sourceData.FallbackTrapMarkers =
+								BuildFallbackCandidateUnion(
+									catalogRoom,
+									palacePalCandidates);
 							fallbackTrapCount =
 								sourceData.FallbackTrapMarkers.Count;
+							usedFallbackCandidates = true;
 						}
 						else
 						{
@@ -506,9 +541,22 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 					}
 					else
 					{
-						sourceData.FallbackTrapMarkers = palacePalProvider.GetCandidatePositionsForRoom(dd, roomIndex);
+						IReadOnlyList<Vector3> palacePalCandidates =
+							palacePalProvider.GetCandidatePositionsForRoom(dd, roomIndex);
+						sourceData.FallbackPalacePalCandidateCount =
+							palacePalCandidates.Count;
+						sourceData.FallbackTrapMarkers =
+							BuildFallbackCandidateUnion(null, palacePalCandidates);
 						fallbackTrapCount = sourceData.FallbackTrapMarkers.Count;
+						usedFallbackCandidates = true;
 					}
+
+					sourceData.BlindFallbackUnavailable =
+						hoardEvidenceState == HoardEvidenceState.BlindSearch &&
+						!visibleBandedChestInRoom &&
+						!cachedHoardIndicatorInRoom &&
+						usedFallbackCandidates &&
+						fallbackTrapCount == 0;
 				}
 
 			}
@@ -607,6 +655,48 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 				direct,
 				detailedOrdinary,
 				ordinary);
+		}
+
+		internal static IReadOnlyList<Vector3> BuildFallbackCandidateUnion(
+			DetailedMapCatalogRoom? catalogRoom,
+			IReadOnlyList<Vector3> palacePalCandidates)
+		{
+			ArgumentNullException.ThrowIfNull(palacePalCandidates);
+			int catalogCount = catalogRoom?.Candidates.Length ?? 0;
+			if (catalogCount == 0 && palacePalCandidates.Count == 0)
+				return Array.Empty<Vector3>();
+
+			var result = new List<Vector3>(catalogCount + palacePalCandidates.Count);
+			if (catalogRoom != null)
+			{
+				for (int index = 0; index < catalogRoom.Candidates.Length; index++)
+				{
+					RawWorldPosition position = catalogRoom.Candidates[index].Position;
+					result.Add(new Vector3(position.X, position.Y, position.Z));
+				}
+			}
+
+			for (int index = 0; index < palacePalCandidates.Count; index++)
+			{
+				Vector3 candidate = palacePalCandidates[index];
+				var rawCandidate = new RawWorldPosition(candidate.X, candidate.Y, candidate.Z);
+				bool duplicate = false;
+				for (int existingIndex = 0; existingIndex < result.Count; existingIndex++)
+				{
+					Vector3 existing = result[existingIndex];
+					var rawExisting = new RawWorldPosition(existing.X, existing.Y, existing.Z);
+					if (!RawWorldPosition.CanonicallyEquals(rawExisting, rawCandidate))
+						continue;
+
+					duplicate = true;
+					break;
+				}
+
+				if (!duplicate)
+					result.Add(candidate);
+			}
+
+			return result;
 		}
 
 		private static void BuildDetailedMapCandidateOrder(
@@ -1182,6 +1272,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 	{
 		public int RoomIndex { get; init; }
 		public int CurrentWaypointIndex { get; init; }
+		public bool BlindFallbackUnavailable { get; init; }
+		public int FallbackCatalogCandidateCount { get; init; }
+		public int FallbackPalacePalCandidateCount { get; init; }
+		public int FallbackUnionCandidateCount { get; init; }
 		public List<RoomContextWaypoint> Waypoints { get; init; } = new();
 	}
 

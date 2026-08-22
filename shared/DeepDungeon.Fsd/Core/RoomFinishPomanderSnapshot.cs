@@ -8,6 +8,7 @@ namespace DeepDungeon.Fsd.Core
         public int FloorsetBandedCount { get; init; }
         public FloorsetHoardOpportunity HoardOpportunity { get; init; }
         public bool IntuitionActive { get; init; }
+        public bool UsedIntuitionThisFloor { get; init; }
         public bool SightUseBlocked { get; init; }
         public bool IntuitionUsable { get; init; }
         public bool SightUsable { get; init; }

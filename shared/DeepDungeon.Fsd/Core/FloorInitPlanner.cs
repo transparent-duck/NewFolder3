@@ -21,7 +21,8 @@ namespace DeepDungeon.Fsd.Core
             if (snapshot.BandedEnabled &&
                 !snapshot.HasOpenedHoardThisFloor &&
                 FloorsetHoardDistributionPolicy.AllowsHoardPomander(snapshot.HoardOpportunity) &&
-                !snapshot.IntuitionActive)
+                !snapshot.IntuitionActive &&
+                !snapshot.UsedIntuitionThisFloor)
             {
                 if (snapshot.IntuitionUsable)
                 {

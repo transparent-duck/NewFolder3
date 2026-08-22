@@ -357,7 +357,33 @@ namespace DeepDungeon.Fsd.Dalamud
 						StopFullSelfDelving();
 					}
 					ImGui.EndDisabled();
+					ImGui.SameLine();
+					if (ImGui.Button("導出日誌##fsf_export_logs_top"))
+					{
+						try
+						{
+							string archivePath =
+								DeepDungeonRunLogExporter.ExportRecentToDesktop(_hostIdentity);
+							_runLogExportNotice =
+								$"日誌置於 {archivePath.Replace('\\', '/')}";
+							_runLogExportFailed = false;
+						}
+						catch (Exception ex)
+						{
+							_runLogExportNotice = "最近三天沒有可導出的運行日誌";
+							_runLogExportFailed = true;
+							Service.Log.Error($"[FsdEngine] Run-log export failed: {ex}");
+						}
+					}
 					ImGui.Unindent();
+				}
+
+				if (!string.IsNullOrEmpty(_runLogExportNotice))
+				{
+					if (_runLogExportFailed)
+						ImGui.TextColored(new Vector4(1f, 0.55f, 0.55f, 1f), _runLogExportNotice);
+					else
+						ImGui.TextDisabled(_runLogExportNotice);
 				}
 
 				if (_fsdStartDenialNoticeProvider is not null)
@@ -402,6 +428,22 @@ namespace DeepDungeon.Fsd.Dalamud
 						{
 							_configuration.NecromancerAutoOpenBronzeChest = ob; _configuration.Save();
 							if (provider != null) provider.Update(o => o.OpenBronze = ob);
+						}
+						bool aggressiveChestInteraction = _configuration.AggressiveChestInteraction;
+						if (ImGui.Checkbox("我開箱會卡住很久##aggressiveChestInteraction", ref aggressiveChestInteraction))
+						{
+							_configuration.AggressiveChestInteraction = aggressiveChestInteraction;
+							_configuration.Save();
+						}
+						ImGui.SameLine();
+						ImGui.TextDisabled("(?)");
+						if (ImGui.IsItemHovered())
+						{
+							ImGui.BeginTooltip();
+							ImGui.PushTextWrapPos(ImGui.GetFontSize() * 32f);
+							ImGui.TextUnformatted("啟用該項目會增加開箱的力度, 如幀數較低或戰鬥時很難成功開箱, 請啟用以增加對輸出或其他外掛搶佔成功率. 若沒有遇到這個問題, 請不要啟用");
+							ImGui.PopTextWrapPos();
+							ImGui.EndTooltip();
 						}
 
 						ImGui.Separator();
