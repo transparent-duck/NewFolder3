@@ -20,6 +20,7 @@ internal sealed class CommunityRunLogEnvelope
     public int SchemaVersion { get; init; } = CurrentSchemaVersion;
     public string ScenarioKey { get; init; } = string.Empty;
     public string ClientVersion { get; init; } = string.Empty;
+    public string UploadReason { get; init; } = CommunityRunLogContract.LongRunReason;
     public long DurationMilliseconds { get; init; }
     public string LogSha256 { get; init; } = string.Empty;
     public string Compression { get; init; } = CommunityRunLogContract.GzipBase64Encoding;
@@ -29,6 +30,8 @@ internal sealed class CommunityRunLogEnvelope
 internal static class CommunityRunLogContract
 {
     internal const string GzipBase64Encoding = "gzip-base64";
+    internal const string LongRunReason = "longRun";
+    internal const string UnmatchedHoardReason = "unmatchedHoard";
     internal const int MaximumRawLogBytes = 16 * 1024 * 1024;
     internal const int MaximumCompressedLogBytes = 1024 * 1024;
     internal static readonly TimeSpan MinimumDuration = TimeSpan.FromMinutes(30);
@@ -56,10 +59,12 @@ internal static class CommunityRunLogContract
     internal static CommunityRunLogEnvelope CreateEnvelope(
         ReadOnlySpan<byte> rawLog,
         string scenarioKey,
-        string clientVersion)
+        string clientVersion,
+        string uploadReason = LongRunReason)
     {
         ValidateScenarioAndVersion(scenarioKey, clientVersion);
         TimeSpan duration = ValidateRunLog(rawLog);
+        ValidateDurationForReason(duration, uploadReason);
         byte[] compressed = Compress(rawLog);
         if (compressed.Length > MaximumCompressedLogBytes)
         {
@@ -71,6 +76,7 @@ internal static class CommunityRunLogContract
         {
             ScenarioKey = scenarioKey,
             ClientVersion = clientVersion,
+            UploadReason = uploadReason,
             DurationMilliseconds = checked((long)duration.TotalMilliseconds),
             LogSha256 = Convert.ToHexString(SHA256.HashData(rawLog)).ToLowerInvariant(),
             LogData = Convert.ToBase64String(compressed)
@@ -135,6 +141,7 @@ internal static class CommunityRunLogContract
         }
 
         TimeSpan duration = ValidateRunLog(rawLog);
+        ValidateDurationForReason(duration, envelope.UploadReason);
         string logSha256 = Convert.ToHexString(SHA256.HashData(rawLog)).ToLowerInvariant();
         if (!string.Equals(logSha256, envelope.LogSha256, StringComparison.Ordinal))
             throw new InvalidDataException("Run-log SHA-256 does not match the payload.");
@@ -155,11 +162,14 @@ internal static class CommunityRunLogContract
                 $"Unsupported run-log schemaVersion {envelope.SchemaVersion}.");
         }
         ValidateScenarioAndVersion(envelope.ScenarioKey, envelope.ClientVersion);
-        if (envelope.DurationMilliseconds <= MinimumDuration.TotalMilliseconds ||
+        if (envelope.DurationMilliseconds <= 0 ||
             envelope.DurationMilliseconds > TimeSpan.FromHours(24).TotalMilliseconds)
         {
             throw new InvalidDataException("Run-log duration is outside the accepted range.");
         }
+        ValidateDurationForReason(
+            TimeSpan.FromMilliseconds(envelope.DurationMilliseconds),
+            envelope.UploadReason);
         if (!IsLowerHex(envelope.LogSha256, 64))
             throw new InvalidDataException("Run-log SHA-256 is invalid.");
         if (!string.Equals(envelope.Compression, GzipBase64Encoding, StringComparison.Ordinal))
@@ -249,9 +259,23 @@ internal static class CommunityRunLogContract
         }
 
         TimeSpan duration = lastTimestamp.Value - firstTimestamp.Value;
-        if (duration <= MinimumDuration || duration > TimeSpan.FromHours(24))
-            throw new InvalidDataException("Completed FSD loop did not exceed 30 minutes.");
+        if (duration <= TimeSpan.Zero || duration > TimeSpan.FromHours(24))
+            throw new InvalidDataException("Completed FSD loop duration is outside the accepted range.");
         return duration;
+    }
+
+    private static void ValidateDurationForReason(
+        TimeSpan duration,
+        string uploadReason)
+    {
+        if (uploadReason == LongRunReason)
+        {
+            if (duration <= MinimumDuration)
+                throw new InvalidDataException("Completed FSD loop did not exceed 30 minutes.");
+            return;
+        }
+        if (uploadReason != UnmatchedHoardReason)
+            throw new InvalidDataException("Run-log upload reason is unsupported.");
     }
 
     private static void RejectPersonalIdentityProperties(JsonElement value)
@@ -310,8 +334,8 @@ internal sealed class CommunityLongRunLogCollector : IRunTelemetryObserver, IDis
     private readonly Uri _endpoint;
     private readonly IPluginLog _log;
     private readonly HttpClient _httpClient;
-    private readonly Channel<RunRecordingClosedTelemetry> _observations =
-        Channel.CreateUnbounded<RunRecordingClosedTelemetry>(
+    private readonly Channel<PendingRunLog> _observations =
+        Channel.CreateUnbounded<PendingRunLog>(
             new UnboundedChannelOptions
             {
                 SingleReader = true,
@@ -322,6 +346,9 @@ internal sealed class CommunityLongRunLogCollector : IRunTelemetryObserver, IDis
     private readonly Task _worker;
 
     private bool _stopping;
+    private long _candidateFloorGeneration = long.MinValue;
+    private RawWorldPosition[] _frozenFloorCandidates = [];
+    private bool _unmatchedHoardObservedInCurrentRun;
     private int _consecutiveUploadFailures;
 
     internal CommunityLongRunLogCollector(
@@ -369,19 +396,44 @@ internal sealed class CommunityLongRunLogCollector : IRunTelemetryObserver, IDis
 
     public void ObserveFloorState(RunFloorStateTelemetry observation)
     {
+        lock (_stateLock)
+        {
+            if (_stopping || !observation.DetailedMapActive || observation.ControlledSurvey)
+                return;
+
+            if (_candidateFloorGeneration != observation.FloorGeneration)
+            {
+                _candidateFloorGeneration = observation.FloorGeneration;
+                _frozenFloorCandidates = observation.Candidates
+                    .Select(candidate => candidate.Position)
+                    .ToArray();
+            }
+            if (_frozenFloorCandidates.Length == 0)
+                return;
+
+            if (IsUnmatched(observation.ExactHoardIndicator) ||
+                IsUnmatched(observation.VisibleBanded))
+            {
+                _unmatchedHoardObservedInCurrentRun = true;
+            }
+        }
     }
 
     public void ObserveRunRecordingClosed(in RunRecordingClosedTelemetry observation)
     {
+        bool unmatchedHoardObserved;
         lock (_stateLock)
         {
             if (_stopping)
                 return;
+            unmatchedHoardObserved = _unmatchedHoardObservedInCurrentRun;
+            _unmatchedHoardObservedInCurrentRun = false;
+            _candidateFloorGeneration = long.MinValue;
+            _frozenFloorCandidates = [];
         }
 
         if (!observation.DetailedMapActive ||
             observation.ControlledSurvey ||
-            observation.ClosedAtUtc - observation.StartedAtUtc <= CommunityRunLogContract.MinimumDuration ||
             observation.Reason is not ("fsd-loop-complete" or "fsd-final-loop-complete") ||
             observation.ScenarioKey is not { } scenarioKey ||
             !DetailedMapScenarioCatalog.TryGetByKey(scenarioKey, out _))
@@ -389,7 +441,16 @@ internal sealed class CommunityLongRunLogCollector : IRunTelemetryObserver, IDis
             return;
         }
 
-        if (!_observations.Writer.TryWrite(observation))
+        string? uploadReason = unmatchedHoardObserved
+            ? CommunityRunLogContract.UnmatchedHoardReason
+            : observation.ClosedAtUtc - observation.StartedAtUtc >
+              CommunityRunLogContract.MinimumDuration
+                ? CommunityRunLogContract.LongRunReason
+                : null;
+        if (uploadReason == null)
+            return;
+
+        if (!_observations.Writer.TryWrite(new PendingRunLog(observation, uploadReason)))
         {
             _log.Error(
                 "Completed long-run log {FileName} could not be queued.",
@@ -405,7 +466,7 @@ internal sealed class CommunityLongRunLogCollector : IRunTelemetryObserver, IDis
             while (true)
             {
                 bool persistedObservation = false;
-                while (_observations.Reader.TryRead(out RunRecordingClosedTelemetry observation))
+                while (_observations.Reader.TryRead(out PendingRunLog observation))
                 {
                     await PersistAsync(observation).ConfigureAwait(false);
                     persistedObservation = true;
@@ -439,7 +500,7 @@ internal sealed class CommunityLongRunLogCollector : IRunTelemetryObserver, IDis
                 }
             }
 
-            while (_observations.Reader.TryRead(out RunRecordingClosedTelemetry observation))
+            while (_observations.Reader.TryRead(out PendingRunLog observation))
                 await PersistAsync(observation).ConfigureAwait(false);
         }
         catch (Exception error)
@@ -448,15 +509,17 @@ internal sealed class CommunityLongRunLogCollector : IRunTelemetryObserver, IDis
         }
     }
 
-    private async Task PersistAsync(RunRecordingClosedTelemetry observation)
+    private async Task PersistAsync(PendingRunLog pending)
     {
+        RunRecordingClosedTelemetry observation = pending.Observation;
         try
         {
             byte[] rawLog = await File.ReadAllBytesAsync(observation.FilePath).ConfigureAwait(false);
             CommunityRunLogEnvelope envelope = CommunityRunLogContract.CreateEnvelope(
                 rawLog,
                 observation.ScenarioKey!,
-                _clientVersion);
+                _clientVersion,
+                pending.UploadReason);
             byte[] payload = CommunityRunLogContract.Serialize(envelope);
             string finalPath = Path.Combine(_pendingDirectory, $"{envelope.LogSha256}.json");
             if (File.Exists(finalPath))
@@ -514,6 +577,26 @@ internal sealed class CommunityLongRunLogCollector : IRunTelemetryObserver, IDis
                 Path.GetFileName(observation.FilePath));
         }
     }
+
+    private bool IsUnmatched(RawWorldPosition? exactHoard)
+    {
+        if (!exactHoard.HasValue)
+            return false;
+        for (int index = 0; index < _frozenFloorCandidates.Length; index++)
+        {
+            if (RawWorldPosition.CanonicallyEquals(
+                    _frozenFloorCandidates[index],
+                    exactHoard.Value))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private readonly record struct PendingRunLog(
+        RunRecordingClosedTelemetry Observation,
+        string UploadReason);
 
     private async Task<UploadAttemptResult> TryUploadAsync()
     {
