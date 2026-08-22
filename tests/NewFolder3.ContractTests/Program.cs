@@ -613,6 +613,20 @@ internal static class Program
                 DispatchProxy.Create<IPluginLog, NoOpDispatchProxy>(),
                 handler);
 
+            collector.ObserveFloorState(new RunFloorStateTelemetry
+            {
+                FloorGeneration = 1,
+                DetailedMapActive = true,
+                Candidates =
+                [
+                    new RunFloorCandidateFact(
+                        RoomIndex: 1,
+                        Position: new RawWorldPosition(0, 0, 0),
+                        PosteriorWeight: 1,
+                        DirectSightSuccessor: false)
+                ],
+                ExactHoardIndicator = new RawWorldPosition(0, 0, 0)
+            });
             collector.ObserveRunRecordingClosed(
                 CreateRunRecordingClosed(
                     exactThirtyPath,
@@ -677,6 +691,63 @@ internal static class Program
                               SearchOption.TopDirectoryOnly).Any(),
                     TimeSpan.FromSeconds(3)),
                 "Ineligible runs were uploaded or the accepted log remained pending.");
+
+            string unmatchedRoot = Path.Combine(configRoot, "unmatched-hoard");
+            string shortPath = Path.Combine(logDirectory, "short-unmatched.jsonl");
+            byte[] expectedShortLog =
+                CreateCompletedRunLog(startedAtUtc, TimeSpan.FromMinutes(10));
+            File.WriteAllBytes(shortPath, expectedShortLog);
+            var unmatchedHandler = new GatedAcceptedHandler();
+            using (var unmatchedCollector = new CommunityLongRunLogCollector(
+                       unmatchedRoot,
+                       installationToken,
+                       "0.0.0-contract",
+                       new UriBuilder(Uri.UriSchemeHttps, IPAddress.Loopback.ToString()).Uri,
+                       DispatchProxy.Create<IPluginLog, NoOpDispatchProxy>(),
+                       unmatchedHandler))
+            {
+                unmatchedCollector.ObserveFloorState(new RunFloorStateTelemetry
+                {
+                    FloorGeneration = 1,
+                    DetailedMapActive = true,
+                    Candidates =
+                    [
+                        new RunFloorCandidateFact(
+                            RoomIndex: 1,
+                            Position: new RawWorldPosition(0, 0, 0),
+                            PosteriorWeight: 1,
+                            DirectSightSuccessor: false)
+                    ],
+                    ExactHoardIndicator = new RawWorldPosition(6, 0, 0)
+                });
+                unmatchedCollector.ObserveRunRecordingClosed(
+                    CreateRunRecordingClosed(
+                        shortPath,
+                        startedAtUtc,
+                        TimeSpan.FromMinutes(10),
+                        detailedMapActive: true,
+                        reason: "fsd-final-loop-complete",
+                        scenarioKey));
+                try
+                {
+                    Assert(
+                        unmatchedHandler.WaitUntilRequested(TimeSpan.FromSeconds(3)),
+                        "A short run containing an unmatched hoard was not uploaded.");
+                    CommunityRunLogEnvelope unmatchedEnvelope =
+                        CommunityRunLogContract.Parse(
+                            unmatchedHandler.GetRequestPayload(0));
+                    Assert(
+                        unmatchedEnvelope.UploadReason ==
+                            CommunityRunLogContract.UnmatchedHoardReason &&
+                        CommunityRunLogContract.GetRawLog(unmatchedEnvelope)
+                            .SequenceEqual(expectedShortLog),
+                        "The unmatched-hoard upload did not preserve its reason and full log.");
+                }
+                finally
+                {
+                    unmatchedHandler.AllowFirstResponse();
+                }
+            }
 
             byte[] personalLog = Encoding.UTF8.GetBytes(
                 "{\"timestampUtc\":\"2026-08-22T01:00:00Z\",\"eventType\":\"controller-initialized\",\"data\":{\"recorderPath\":\"C:\\\\Users\\\\Example\\\\run.jsonl\"}}\n" +
