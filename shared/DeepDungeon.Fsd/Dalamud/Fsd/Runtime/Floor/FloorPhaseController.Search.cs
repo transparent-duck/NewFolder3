@@ -222,7 +222,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 		private unsafe bool TryApplyPassageWorkPolicy(InstanceContentDeepDungeon* dd, IPlayerCharacter player)
 		{
-			if (_ctx?.Duty.PassageOpen != true || _executor == null)
+			if (_ctx?.RunOptions.Current.HarvestChestsRequired == true ||
+                _ctx?.Duty.PassageOpen != true || _executor == null)
 			{
 				return false;
 			}
@@ -2659,6 +2660,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			else
 			{
 				byte stoneId = (byte)pending.Key.ItemId;
+                if (stoneId is 1 or 2) runtime.FarmingPassageItemConfirmed = true;
 				if (pending.Purpose == FloorItemUsePurpose.SilverChestOvercap &&
 				    ActiveChestAttempt is { PendingSilverOvercapDemicloneRowId: not null } chestAttempt)
 				{

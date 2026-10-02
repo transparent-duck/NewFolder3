@@ -137,14 +137,9 @@ namespace DeepDungeon.Fsd.Dalamud
 			}
 
 			int requestedLoops = Math.Max(1, targetLoops);
-			if (!TryStartOutsideDutyFsd(
-				    () => new PTChestScenario(startFloor),
-				    requestedLoops,
-				    infinite,
-				    startFloor == 21
-					    ? DetailedMapScenarioCatalog.PilgrimsTraverse21To30.Key
-					    : DetailedMapScenarioCatalog.PilgrimsTraverse31To40.Key,
-				    out var startError))
+            if (!TryStartFarming(FarmingMode.Hoard, SaveUse.Create, startFloor, requestedLoops, infinite,
+                    _configuration.NecromancerAutoBandedFarmEnabled, _configuration.NecromancerAutoOpenGoldChest,
+                    _configuration.NecromancerAutoOpenSilverChest, _configuration.NecromancerAutoOpenBronzeChest, out var startError))
 			{
 				return new
 				{
@@ -158,6 +153,7 @@ namespace DeepDungeon.Fsd.Dalamud
 			_bridgeDeleteSaveStatusIsError = false;
 			_fsfScenarioIndex = startFloor == 21 ? 0 : 1;
 			_configuration.NecromancerFsdScenarioIndex = _fsfScenarioIndex;
+            _configuration.Farming.Mode = FarmingMode.Hoard;
 			_configuration.Save();
 			var startedHost = _ddHost!;
 			if (!ApplyLeaveModeOverride(startedHost, leaveModeOverride, out var leaveModeError, out var appliedLeaveMode))
@@ -393,7 +389,15 @@ namespace DeepDungeon.Fsd.Dalamud
 				};
 			}
 
-			DeepDungeonUi.CloseDeepDungeonEntryWindows();
+            if (!DeepDungeonUi.CloseDeepDungeonEntryWindows())
+            {
+                return new
+                {
+                    ok = false,
+                    error = "Refusing to force-close an entry selection or confirmation; cancel the dialog in-game first.",
+                    snapshot = GetMobPilotSnapshot()
+                };
+            }
 			_bridgeDeleteSaveStatus = string.Empty;
 			_bridgeDeleteSaveStatusIsError = false;
 			return new
@@ -613,6 +617,10 @@ namespace DeepDungeon.Fsd.Dalamud
 				hostActive,
 				scenario = activeHost?.CurrentScenarioName ?? string.Empty,
 				completedLoops = activeHost?.CompletedLoops ?? 0,
+                cycleUnit = activeHost?.CycleUnit ?? string.Empty,
+                farmingFailures = activeHost?.FarmingFailures ?? 0,
+                hoardDiscoveries = activeHost?.HoardDiscoveries ?? 0,
+                preparedSave = activeHost?.PreparedSaveDescription ?? string.Empty,
 				targetLoops = activeHost?.TargetLoops ?? 0,
 				infiniteLoops = activeHost?.Infinite ?? false,
 				leaveMode = activeRunOptions?.LeaveMode.ToString() ?? string.Empty,
@@ -683,6 +691,19 @@ namespace DeepDungeon.Fsd.Dalamud
 							position = SnapshotVector(waypoint.Position)
 						}).ToArray()
 					},
+                companions = new
+                {
+                    farmingMode = activeHost?.Context?.FarmingPlan?.Mode.ToString(),
+                    mechanicsEnabled = _bossMechanics.IsEnabled,
+                    rotationProvider = _configuration.Rotation.Provider.ToString(),
+                    rotationSuppressionActive = IsRunActive && activeHost?.Context?.FarmingPlan?.ReusesSave == true,
+                    rotationDesiredEnabled = IsRunActive ? _rotationControl.DesiredEnabled : (bool?)null,
+                    rotationConfigurationError = TryValidateRotation(out var rotationError) ? null : rotationError,
+                    rotationFailure = _rotationControl.FailedProvider?.ToString(),
+                    rsr = ReadRotationState(FsdRotationProvider.RotationSolverReborn).ToString(),
+                    wrath = ReadRotationState(FsdRotationProvider.WrathCombo).ToString(),
+                    prome = ReadRotationState(FsdRotationProvider.PromeRotation).ToString()
+                },
 				saveSlots = BuildBridgeSaveSlotSnapshot(out _, out _),
 				saveDelete = new
 				{

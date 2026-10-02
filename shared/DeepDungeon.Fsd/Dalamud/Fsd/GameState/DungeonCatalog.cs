@@ -71,7 +71,7 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
 			Name = "Pilgrim's Traverse",
 			DutyDungeonId = 4,
 			NpcDataId = 1054942,
-			FloorsetNeedleByStartFloor = new Dictionary<int, string>() { { 21, "21" }, { 31, "31" } },
+			FloorsetNeedleByStartFloor = new Dictionary<int, string>() { { 1, "1" }, { 21, "21" }, { 31, "31" } },
 			RecoveryPotionItemId = Service.Item_PilgrimsPotion,
 			RecoveryPotionName = "Pilgrim's Potion",
 			PotsherdItemId = DeepDungeonItems.PtPotsherd,

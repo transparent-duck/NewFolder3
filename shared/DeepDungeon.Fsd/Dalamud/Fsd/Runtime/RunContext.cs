@@ -29,6 +29,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		internal readonly CombatAssistPolicy CombatAssist;
 		internal readonly FsdChestInteraction ChestInteraction;
 		internal ControlledPtSurveySession? ControlledPtSurvey;
+        internal DeepDungeon.Fsd.Core.FarmingPlan? FarmingPlan;
+        internal bool HarvestComplete;
+        internal bool AttemptAborted;
+        internal string AttemptAbortReason = string.Empty;
+        internal int HoardDiscoveries;
+        internal string PreparedSaveDescription = string.Empty;
 
 		// Status
 		public string StatusLine = string.Empty;

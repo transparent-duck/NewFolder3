@@ -1,3 +1,5 @@
+using DeepDungeon.Fsd.Core;
+
 namespace DeepDungeon.Fsd.Runtime;
 
 /// <summary>Dispatches only on policy changes; never sends commands on every frame.</summary>
@@ -13,7 +15,7 @@ public sealed class FsdBossMechanicsController
     public FsdBossMechanicsController(Func<string, bool> dispatch) => _dispatch = dispatch;
     public bool IsEnabled { get; private set; }
 
-    public void Update(bool runActive, in DeepDungeonStateSnapshot state, FsdBossMechanicsSettings settings)
+    public void Update(bool runActive, in DeepDungeonStateSnapshot state, FsdBossMechanicsSettings settings, FarmingMode? mode = null)
     {
         if (!runActive)
         {
@@ -39,7 +41,7 @@ public sealed class FsdBossMechanicsController
 
         string on = settings.GetEnableCommand() ?? string.Empty;
         string off = settings.GetDisableCommand() ?? string.Empty;
-        bool enabled = state.FloorKind == DeepDungeonFloorKind.Boss;
+        bool enabled = mode == FarmingMode.DeepProgression || state.FloorKind == DeepDungeonFloorKind.Boss;
         bool changed = on != _enableCommand || off != _disableCommand;
         if (_hasPolicy && !changed && enabled == _desiredEnabled)
             return;

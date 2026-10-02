@@ -33,6 +33,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 			ConfigureEndMode();
 		}
 
+        public void SetTargets(int cycles, bool infinite)
+        {
+            TargetLoops = Math.Max(1, cycles);
+            InfiniteLoop = infinite;
+        }
+
 		public void IncrementLoop()
 		{
 			CompletedLoops++;

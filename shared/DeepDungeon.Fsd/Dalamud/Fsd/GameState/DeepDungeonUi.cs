@@ -1,5 +1,8 @@
 using System;
 using System.Linq;
+using System.Collections.Generic;
+using System.Text.RegularExpressions;
+using DeepDungeon.Fsd.Core;
 
 using global::Dalamud.Utility;
 using FFXIVClientStructs.FFXIV.Component.GUI;
@@ -53,12 +56,14 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
 		/// Clicks a save slot in DeepDungeonSaveData via Agent event for ENTRY mode.
 		/// Based on debug data: event#0 with AtkValue[0]=slotIndex, AtkValue[1]=0 (entry mode)
 		/// </summary>
-		/// <param name="slotIndex">0 for slot 1, 1 for slot 2</param>
+		/// <param name="slotIndex">Zero-based logical save-list index.</param>
 		public static unsafe bool ClickSaveSlotForEntry(int slotIndex)
 		{
 			try
 			{
-				var idx = slotIndex <= 0 ? 0 : 1;
+				if (slotIndex < 0 || !TryReadSaveSlots(out var slots, out _) ||
+                    !slots.Any(slot => slot.Index == slotIndex && slot.Enterable)) return false;
+                var idx = slotIndex;
 				// Entry mode: SendEvent(0, slotIndex, 0) - AtkValue[0]=slotIndex, AtkValue[1]=0
 				AgentId.DeepDungeonSaveData.SendEvent(0, idx, 0);
 				try { Service.Log.Info($"[DeepDungeonUi] ClickSaveSlotForEntry via Agent: slot={idx}, mode=0"); } catch { }
@@ -71,12 +76,14 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
 		/// Clicks a save slot in DeepDungeonSaveData via Agent event for DELETE mode.
 		/// Based on debug data: event#0 with AtkValue[0]=slotIndex, AtkValue[1]=1 (delete mode)
 		/// </summary>
-		/// <param name="slotIndex">0 for slot 1, 1 for slot 2</param>
+		/// <param name="slotIndex">Zero-based logical save-list index.</param>
 		public static unsafe bool ClickSaveSlotForDelete(int slotIndex)
 		{
 			try
 			{
-				var idx = slotIndex <= 0 ? 0 : 1;
+				if (slotIndex < 0 || !TryReadSaveSlots(out var slots, out _) ||
+                    !slots.Any(slot => slot.Index == slotIndex)) return false;
+                var idx = slotIndex;
 				// Delete mode: SendEvent(0, slotIndex, 1) - AtkValue[0]=slotIndex, AtkValue[1]=1
 				AgentId.DeepDungeonSaveData.SendEvent(0, idx, 1);
 				try { Service.Log.Info($"[DeepDungeonUi] ClickSaveSlotForDelete via Agent: slot={idx}, mode=1"); } catch { }
@@ -296,8 +303,16 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
 			}
 		}
 
-		public static void CloseDeepDungeonEntryWindows()
+		public static bool CloseDeepDungeonEntryWindows()
 		{
+            // A pending modal can callback into its entry agent when it closes.
+            // Do not force-close its parent chain; let the game's cancellation
+            // path handle it (native crash observed during bridge cleanup).
+            if (IsAddonOpen("SelectString") || IsAddonOpen("SelectYesno") || IsAddonOpen("ContentsFinderConfirm"))
+            {
+                Service.Log.Warning("[DeepDungeonUi] Refusing forced entry-window cleanup while a selection or confirmation is open.");
+                return false;
+            }
 			TryCloseAddon("DeepDungeonSaveData");
 			TryCloseAddon("DeepDungeonMenu");
 			TryCloseAddon("ContentsFinderConfirm");
@@ -306,59 +321,147 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
 			TryCloseAddon("Talk");
 			TryCloseAddon("EventTalk");
 			TryCloseAddon("ContextIconMenu");
+            return true;
 		}
 
-		public static unsafe bool TryGetEmptySlotsFromDeepDungeonSaveData(out bool slot1Empty, out bool slot2Empty, bool log = true)
-		{
-			slot1Empty = false;
-			slot2Empty = false;
-			try
-			{
-				if (!TryGetAddon("DeepDungeonSaveData", out var save) || !save->IsAddonAndNodesReady())
-					return false;
+        public static bool TryGetEmptySlotsFromDeepDungeonSaveData(out bool slot1Empty, out bool slot2Empty, bool log = true)
+        {
+            slot1Empty = slot2Empty = false;
+            if (!TryReadSaveSlots(out var slots, out _) || slots.Count != 2) return false;
+            slot1Empty = slots[0].Empty;
+            slot2Empty = slots[1].Empty;
+            return true;
+        }
 
-				var nodeA = save->UldManager.NodeList[2];
-				
-				var slot1Comp = GetChildNode(nodeA, 1);
-				var slot1TextNode = GetChildNode(slot1Comp, 15);
-				var slot1Text = GetTextNodeContent(slot1TextNode);
-				
-				var slot2Comp = GetChildNode(nodeA, 2);
-				var slot2TextNode = GetChildNode(slot2Comp, 15);
-				var slot2Text = GetTextNodeContent(slot2TextNode);
-				
-				if (log) try { Service.Log.Info($"[DeepDungeonUi] SaveData slot1 text: '{slot1Text}', slot2 text: '{slot2Text}'"); } catch { }
-				
-				slot1Empty = IsSlotTextEmpty(slot1Text);
-				slot2Empty = IsSlotTextEmpty(slot2Text);
-				
-				if (log) try { Service.Log.Info($"[DeepDungeonUi] Detection result: slot1Empty={slot1Empty}, slot2Empty={slot2Empty}"); } catch { }
-				return true;
-			}
-			catch { return false; }
-		}
-		
-		private static unsafe string GetTextNodeContent(AtkResNode* node)
-		{
-			try
-			{
-				if (node == null) return string.Empty;
-				var tn = node->GetAsAtkTextNode();
-				if (tn == null) return string.Empty;
-				return tn->NodeText.ToString();
-			}
-			catch { return string.Empty; }
-		}
-		
-		private static bool IsSlotTextEmpty(string text)
-		{
-			if (string.IsNullOrWhiteSpace(text)) return true;
-			foreach (var c in text)
-			{
-				if (char.IsDigit(c)) return false;
-			}
-			return true;
-		}
+        public static unsafe bool TryReadSaveSlots(out IReadOnlyList<SaveSlotSnapshot> slots, out string error)
+        {
+            slots = Array.Empty<SaveSlotSnapshot>();
+            error = "存檔列表尚未完整載入或結構無法識別。";
+            try
+            {
+                if (!TryGetAddon("DeepDungeonSaveData", out var save)) return false;
+                if (!save->IsAddonAndNodesReady() || save->UldManager.NodeList == null)
+                    return ReportSaveReadFailure(save, "addon-not-ready", out error);
+                AtkComponentList* list = null;
+                uint listNodeId = 0;
+                for (int nodeIndex = 0; nodeIndex < save->UldManager.NodeListCount; nodeIndex++)
+                {
+                    var node = save->UldManager.NodeList[nodeIndex];
+                    if (node == null) continue;
+                    var candidate = node->GetAsAtkComponentList();
+                    if (candidate == null) continue;
+                    if (list != null) return ReportSaveReadFailure(save, "multiple-save-lists", out error);
+                    list = candidate;
+                    listNodeId = node->NodeId;
+                }
+                if (list == null) return ReportSaveReadFailure(save, "save-list-unavailable", out error);
+                if (list->IsUpdatePending) return ReportSaveReadFailure(save, "list-update-pending", out error);
+                int count = list->GetItemCount();
+                if (count is < 1 or > 16) return ReportSaveReadFailure(save, $"list-count={count}", out error);
+                string? emptyLabel = Service.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Addon>()?
+                    .GetRow(10404).Text.ExtractText();
+                if (string.IsNullOrWhiteSpace(emptyLabel)) return ReportSaveReadFailure(save, "empty-label-unavailable", out error);
+                var result = new List<SaveSlotSnapshot>(count);
+                for (int i = 0; i < count; i++)
+                {
+                    var renderer = list->GetItemRenderer(i);
+                    if (renderer == null) return ReportSaveReadFailure(save, $"renderer-{i}-null", out error);
+                    if (renderer->ListItemIndex != i || renderer->UldManager.NodeList == null)
+                        return ReportSaveReadFailure(save, $"renderer-{i}-index={renderer->ListItemIndex},nodes={renderer->UldManager.NodeListCount}", out error);
+                    // Live PT rows identify progress by NodeId 7. Array positions change
+                    // with the ULD layout (the former index 15 now holds the job level).
+                    var textNode = renderer->UldManager.SearchNodeById(7);
+                    if (textNode == null) return ReportSaveReadFailure(save, $"progress-{i}-node-null", out error);
+                    var text = textNode->GetAsAtkTextNode();
+                    if (text == null) return ReportSaveReadFailure(save, $"progress-{i}-not-text", out error);
+                    var identity = new List<string>();
+                    for (int nodeIndex = 0; nodeIndex < renderer->UldManager.NodeListCount; nodeIndex++)
+                    {
+                        var node = renderer->UldManager.NodeList[nodeIndex];
+                        if (node == null || node == textNode) continue;
+                        var identityNode = node->GetAsAtkTextNode();
+                        if (identityNode == null) continue;
+                        string label = identityNode->NodeText.ExtractText().Trim();
+                        if (label.Length > 0 && label.Any(char.IsLetter) && !label.Any(char.IsDigit)) identity.Add(label);
+                    }
+                    if (!SaveSlotUiPolicy.TryParse(i, text->NodeText.ExtractText(), emptyLabel,
+                        string.Join("|", identity), !list->GetItemDisabledState(i), out var slot, out var parseError))
+                        return ReportSaveReadFailure(save, parseError, out error);
+                    result.Add(slot);
+                }
+                slots = result;
+                error = string.Empty;
+                var snapshot = $"listNodeId={listNodeId}; count={count}; " + string.Join("; ",
+                    result.Select(slot => $"slot={slot.Index},empty={slot.Empty},enterable={slot.Enterable},progress='{slot.Progress}'"));
+                if (!string.Equals(snapshot, _lastSaveReadSnapshot, StringComparison.Ordinal))
+                {
+                    _lastSaveReadSnapshot = snapshot;
+                    Service.Log.Info($"[DeepDungeonUi.SaveRead] {snapshot}");
+                }
+                return true;
+            }
+            catch (Exception ex) { error = $"存檔讀取失敗：{ex.Message}"; return false; }
+        }
+
+        private static string _lastSaveReadSnapshot = string.Empty;
+        private static DateTime _lastSaveReadDiagnosticAt;
+        private static unsafe bool ReportSaveReadFailure(AtkUnitBase* save, string reason, out string error)
+        {
+            error = "存檔列表讀取失敗：" + reason;
+            if (DateTime.UtcNow - _lastSaveReadDiagnosticAt < TimeSpan.FromSeconds(3)) return false;
+            _lastSaveReadDiagnosticAt = DateTime.UtcNow;
+            try
+            {
+                var detail = new System.Text.StringBuilder();
+                detail.Append($"reason={reason}; addonNodes={save->UldManager.NodeListCount}; values={save->AtkValuesCount}; ");
+                if (save->AtkValues != null)
+                    for (int i = 0; i < Math.Min((int)save->AtkValuesCount, 96); i++)
+                    {
+                        ref var value = ref save->AtkValues[i];
+                        detail.Append($"v{i}({value.Type})=");
+                        if (value.Type is AtkValueType.String or AtkValueType.ManagedString or AtkValueType.ConstString)
+                            detail.Append(value.String.ToString());
+                        else if (value.Type is AtkValueType.Int or AtkValueType.UInt or AtkValueType.Bool)
+                            detail.Append(value.UInt);
+                        detail.Append("; ");
+                    }
+                int budget = 180;
+                for (int i = 0; i < Math.Min((int)save->UldManager.NodeListCount, 64); i++)
+                    AppendSaveNodeDiagnostic(save->UldManager.NodeList[i], $"n{i}", 0, detail, ref budget);
+                Service.Log.Info($"[DeepDungeonUi.SaveRead] {detail}");
+            }
+            catch (Exception ex) { Service.Log.Info($"[DeepDungeonUi.SaveRead] reason={reason}; diagnostic-error={ex.Message}"); }
+            return false;
+        }
+
+        private static unsafe void AppendSaveNodeDiagnostic(AtkResNode* node, string path, int depth,
+            System.Text.StringBuilder detail, ref int budget)
+        {
+            if (node == null || budget-- <= 0) return;
+            detail.Append($"{path}:id={node->NodeId},type={node->Type},enabled={(node->NodeFlags & NodeFlags.Enabled) != 0}");
+            if (node->Type == NodeType.Text)
+                detail.Append($",text='{((AtkTextNode*)node)->NodeText.ExtractText()}'");
+            if ((int)node->Type >= 1000)
+            {
+                var component = node->GetAsAtkComponentNode()->Component;
+                if (component != null)
+                {
+                    var kind = component->GetComponentType();
+                    detail.Append($",component={kind},nodes={component->UldManager.NodeListCount}");
+                    if (kind == ComponentType.List)
+                    {
+                        var list = (AtkComponentList*)component;
+                        detail.Append($",count={list->GetItemCount()},pending={list->IsUpdatePending},renderers={list->AllocatedItemRendererListLength}");
+                    }
+                    detail.Append("; ");
+                    if (depth < 3 && component->UldManager.NodeList != null)
+                        for (int i = 0; i < Math.Min((int)component->UldManager.NodeListCount, 64); i++)
+                            AppendSaveNodeDiagnostic(component->UldManager.NodeList[i], $"{path}/{i}", depth + 1, detail, ref budget);
+                    return;
+                }
+            }
+            detail.Append("; ");
+        }
 
 		public static unsafe bool TryFindSelectStringIndexContaining(string needle, out int index)
 		{
@@ -379,7 +482,9 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
 					if (text.IsEmpty) continue;
 					
 					var textStr = System.Text.Encoding.UTF8.GetString(text);
-					if (textStr.Contains(needle, StringComparison.OrdinalIgnoreCase))
+					if (needle.All(char.IsDigit)
+                        ? Regex.IsMatch(textStr, $"(?<![0-9]){Regex.Escape(needle)}(?![0-9])")
+                        : textStr.Contains(needle, StringComparison.OrdinalIgnoreCase))
 					{
 						index = i;
 						return true;
@@ -390,24 +495,6 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
 			catch { return false; }
 		}
 
-		private static unsafe AtkResNode* GetChildNode(AtkResNode* parent, int childIndex)
-		{
-			if (parent == null) return null;
-			// Move into component if necessary
-			if ((int)parent->Type >= 1000)
-			{
-				var comp = parent->GetAsAtkComponentNode()->Component;
-				var uld = comp->UldManager;
-				return uld.NodeList[childIndex];
-			}
-			// Otherwise, treat as container starting at ChildNode, traverse to index
-			var child = parent->ChildNode;
-			for (int i = 0; i < childIndex && child != null; i++)
-			{
-				child = child->PrevSiblingNode;
-			}
-			return child;
-		}
 	}
 }
 

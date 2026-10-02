@@ -30,7 +30,9 @@ namespace DeepDungeon.Fsd.Core
         bool PassageActivationRequired,
         bool CombatInProgress,
         bool RoutineCombatAllowed,
-        bool ActiveChestInteraction);
+        bool ActiveChestInteraction,
+        bool RequiredChestWork = false,
+        bool SuppressCombat = false);
 
     public readonly record struct ObjectiveChannelPermissions(
         CommandChannelPermission Movement,
@@ -59,6 +61,7 @@ namespace DeepDungeon.Fsd.Core
                 primary == FloorObjectiveKind.None
                     ? CommandChannelPermission.Blocked
                     : CommandChannelPermission.PrimaryObjective,
+                snapshot.SuppressCombat ? CommandChannelPermission.Blocked :
                 primary is FloorObjectiveKind.ActivatePassage or FloorObjectiveKind.DefeatBoss or FloorObjectiveKind.FinishCombatBeforePassage
                     ? CommandChannelPermission.PrimaryObjective
                     : snapshot.RoutineCombatAllowed && !enteringPassage
@@ -84,6 +87,8 @@ namespace DeepDungeon.Fsd.Core
                 return FloorObjectiveKind.CompleteKnownHoard;
             if (!snapshot.MandatoryHoardTerminal && snapshot.RequiredHoardDiscovery)
                 return FloorObjectiveKind.DiscoverHoard;
+            if (snapshot.RequiredChestWork)
+                return FloorObjectiveKind.OpenPlannedChest;
             if (!snapshot.PassageOpen && snapshot.PassageActivationRequired)
                 return FloorObjectiveKind.ActivatePassage;
             if (snapshot.PassageOpen && snapshot.MandatoryHoardTerminal && snapshot.CombatInProgress)

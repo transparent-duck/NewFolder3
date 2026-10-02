@@ -29,6 +29,7 @@ namespace DeepDungeon.Fsd.Dalamud
         private readonly Func<string?>? _fsdStartDenialNoticeProvider;
         private readonly NativeDeepDungeonLogMessageSource _logMessageSource;
         private readonly FsdBossMechanicsController _bossMechanics = new(DispatchCompanionCommand);
+        private readonly FsdRotationController _rotationControl = new(ReadRotationState, SetRotationEnabled);
         
 		private RunHost? _ddHost = null;
         private int _fsfScenarioIndex = 1;
@@ -260,8 +261,7 @@ namespace DeepDungeon.Fsd.Dalamud
         {
             _fsfScenarioIndex = GetEffectiveScenarioIndex();
             string? selectedDetailedMapScenario =
-                DetailedMapCatalogManager.GetScenarioKey(
-                    _fsfScenarioIndex);
+                GetSelectedDetailedMapScenarioKey();
             _detailedMapCatalogManager.Update(
                 _configuration.UseDetailedMap &&
                 _detailedMapHostOptions.HasOnlineCatalogService,
@@ -282,10 +282,10 @@ namespace DeepDungeon.Fsd.Dalamud
             RefreshDeepDungeonStateSnapshot();
 
             // Tick the host to allow entry flows outside duty (FSD mode)
-            _bossMechanics.Update(IsRunActive, _currentDeepDungeonState, _configuration.BossMechanics);
+            UpdateCompanionControls();
             _configuration.BossMechanicsActive = _bossMechanics.IsEnabled;
             _ddHost?.Update(framework);
-            _bossMechanics.Update(IsRunActive, _currentDeepDungeonState, _configuration.BossMechanics);
+            UpdateCompanionControls();
             _configuration.BossMechanicsActive = _bossMechanics.IsEnabled;
             if (_detailedMapCatalogManager.ActiveRunSnapshot != null &&
                 _ddHost?.FsdActive != true)
@@ -508,6 +508,7 @@ namespace DeepDungeon.Fsd.Dalamud
         public void Dispose()
         {
             _bossMechanics.Stop();
+            _rotationControl.Reset();
             Service.ClientState.TerritoryChanged -= OnTerritoryChanged;
             ResetRoomPresentation();
             _detailedMapCatalogManager.ReleaseRunSnapshot();

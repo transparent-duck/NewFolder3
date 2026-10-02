@@ -29,6 +29,9 @@ namespace DeepDungeon.Fsd.Dalamud
             if (!TryAuthorizeOutsideDutyOperation(OutsideDutyOperation.StartOrEnter, out error))
                 return false;
 
+            if (!TryValidateRotation(out error))
+                return false;
+
             EnsureGeneralAssists();
             if (_dutyState == null)
             {
@@ -73,12 +76,14 @@ namespace DeepDungeon.Fsd.Dalamud
                 return false;
             }
             if (_ddHost.FsdActive)
+                UpdateCompanionControls();
+            if (_ddHost.FsdActive)
             {
                 error = string.Empty;
                 return true;
             }
 
-            error = "Deep Dungeon FSD did not start.";
+            error = _farmingError ?? "Deep Dungeon FSD did not start.";
             _detailedMapCatalogManager.ReleaseRunSnapshot();
             if (_executionLease.IsHeld)
                 _executionLease.Release();

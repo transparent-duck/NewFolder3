@@ -46,6 +46,8 @@ public sealed class FsdApplication : IFsdApplication
                 ?? throw new InvalidOperationException("The FSD settings store returned null.");
             _settings.AttachStore(settingsStore);
             _settings.BossMechanics ??= new();
+            _settings.Rotation ??= new();
+            _settings.Rotation.NormalizeProvider();
             FsdSettingsValidator.ValidateOrThrow(_settings);
             lease = new FsdExecutionLease($"{hostIdentity}/{hostVersion}");
             _lease = lease;
@@ -104,12 +106,8 @@ public sealed class FsdApplication : IFsdApplication
                 _settings.NecromancerFsdLoopInfinite,
                 "start-controlled-pt-capture");
         }
-        var floor = _settings.NecromancerFsdScenarioIndex == 0 ? 21 : 31;
-        return StartPilgrimsTraverseFsd(
-            floor,
-            Math.Max(1, _settings.NecromancerFsdLoopCount),
-            _settings.NecromancerFsdLoopInfinite,
-            "start-pt-fsd");
+        bool started = _module.StartSelectedFarming(out string error);
+        return new { ok = started, error };
     }
 
     public object Stop()
@@ -153,6 +151,14 @@ public sealed class FsdApplication : IFsdApplication
     public object GetMobPilotSnapshot() { ThrowIfDisposed(); return _module.GetMobPilotSnapshot(); }
     public object GetPilgrimsTraverseFsdPreflight(int startFloor) { ThrowIfDisposed(); return _module.GetPilgrimsTraverseFsdPreflight(startFloor); }
     public object StartPilgrimsTraverseFsd(int startFloor, int targetLoops, bool infinite, string? confirmation, string? leaveModeOverride = null) { ThrowIfDisposed(); return _module.StartPilgrimsTraverseFsd(startFloor, targetLoops, infinite, confirmation, leaveModeOverride); }
+    public object StartFarming(DeepDungeon.Fsd.Core.FarmingMode mode, DeepDungeon.Fsd.Core.SaveUse saveUse,
+        int startFloor, int cycles, bool infinite, bool hoard, bool gold, bool silver, bool bronze)
+    {
+        ThrowIfDisposed();
+        bool started = _module.TryStartFarming(mode, saveUse, startFloor, cycles, infinite,
+            hoard, gold, silver, bronze, out string error);
+        return new { ok = started, error };
+    }
     public object StopDeepDungeonFsd() { ThrowIfDisposed(); return _module.StopDeepDungeonFsd(); }
     public object StartDeepDungeonLeaveDuty(string? confirmation) { ThrowIfDisposed(); return _module.StartDeepDungeonLeaveDuty(confirmation); }
     public object CloseDeepDungeonEntryWindowsForBridge() { ThrowIfDisposed(); return _module.CloseDeepDungeonEntryWindowsForBridge(); }

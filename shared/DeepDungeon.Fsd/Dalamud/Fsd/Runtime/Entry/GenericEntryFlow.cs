@@ -219,9 +219,9 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 			// Guard: only click slot once, then wait for next UI step
 			if (hasSave && SeenStable("save", StabilityNormal) && !IsOnCooldown("save-slot") && !_hasClickedSlot)
 			{
-				if (_ctx.SaveSlots.TrySelectPreferredEmpty(_preferredSlotIndex, out var chosen))
+				if (_ctx.SaveSlots.TrySelectPreferredEmpty(_preferredSlotIndex, out var chosen, out var saveError))
 				{
-					SetStatus($"{_dungeon.Name}: selected empty save slot {(chosen == 0 ? 1 : 2)}");
+					SetStatus($"{_dungeon.Name}: selected empty save slot {chosen + 1}");
 					_hasClickedSlot = true;
 					SetCooldown("save-slot", CooldownNormal);
 					_lastProgress = DateTime.Now;
@@ -232,7 +232,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 				else
 				{
 					if (_ctx != null) _ctx.StatusIsError = true;
-					SetStatus($"{_dungeon.Name}: no empty slot - both slots are filled");
+					SetStatus($"{_dungeon.Name}: {saveError}");
 					_noEmptySlotError = true;
 					return false;
 				}

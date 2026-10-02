@@ -39,6 +39,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		/// deliberate abandonment and must not fabricate a duty-completion event.
 		/// </summary>
 		bool RequiresDutyCompletionEvent { get; }
+        bool CountsAsCycle => true;
+        bool RecoversDutyFailure => false;
 	}
 }
 

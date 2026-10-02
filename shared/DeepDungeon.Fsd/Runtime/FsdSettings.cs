@@ -7,7 +7,10 @@ public sealed class FsdSettings
     [JsonIgnore]
     private IFsdSettingsStore? _store;
 
+    public FarmingSettings Farming { get; set; } = new();
+
     public FsdBossMechanicsSettings BossMechanics { get; set; } = new();
+    public FsdRotationSettings Rotation { get; set; } = new();
 
     [JsonIgnore, NonSerialized]
     public bool BossMechanicsActive;

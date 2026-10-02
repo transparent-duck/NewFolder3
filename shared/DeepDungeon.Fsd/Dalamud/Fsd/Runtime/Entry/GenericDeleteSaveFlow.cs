@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using global::Dalamud.Plugin.Services;
 using DeepDungeon.Fsd.Dalamud.GameState;
@@ -16,6 +17,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 	{
 		private RunContext? _ctx;
 		private readonly DungeonData _dungeon;
+		private readonly Func<IReadOnlyList<DeepDungeon.Fsd.Core.SaveSlotSnapshot>, string?>? _validateSource;
 		private readonly int _slotIndex; // 0 for slot 1, 1 for slot 2
 
 		private readonly Dictionary<string, DateTime> _cooldowns = new Dictionary<string, DateTime>();
@@ -42,10 +44,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 		private static readonly TimeSpan PostInteractGrace = TimeSpan.FromMilliseconds(1500);
 		private static readonly TimeSpan NoWindowReinteractDelay = TimeSpan.FromMilliseconds(2200);
 
-		public GenericDeleteSaveFlow(DungeonData dungeon, int slotIndex)
+		public GenericDeleteSaveFlow(DungeonData dungeon, int slotIndex,
+            Func<IReadOnlyList<DeepDungeon.Fsd.Core.SaveSlotSnapshot>, string?>? validateSource = null)
 		{
 			_dungeon = dungeon;
-			_slotIndex = slotIndex <= 0 ? 0 : 1;
+            _validateSource = validateSource;
+			_slotIndex = slotIndex >= 0 ? slotIndex : throw new ArgumentOutOfRangeException(nameof(slotIndex));
 		}
 
 		public void Prepare(RunContext context)
@@ -116,26 +120,26 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 			// 2) If SaveData visible, click chosen slot via Agent
 			if (hasSave && SeenStable("save", StabilityNormal) && !IsOnCooldown("save-slot"))
 			{
-				if (!DeepDungeonUi.TryGetEmptySlotsFromDeepDungeonSaveData(out var slot1Empty, out var slot2Empty))
+				if (!DeepDungeonUi.TryReadSaveSlots(out var slots, out _) || !slots.Any(slot => slot.Index == _slotIndex))
 				{
 					SetStatus($"{_dungeon.Name} Del: waiting for save slot state");
 					_nextTry = DateTime.Now.AddMilliseconds(250);
 					return false;
 				}
 
-				bool targetSlotEmpty = _slotIndex == 0 ? slot1Empty : slot2Empty;
+				bool targetSlotEmpty = slots.Single(slot => slot.Index == _slotIndex).Empty;
 				if (_deleteConfirmed)
 				{
 					if (targetSlotEmpty)
 					{
 						_targetSlotObservedEmptyAfterDelete = true;
-						SetStatus($"{_dungeon.Name} Del: slot {(_slotIndex == 0 ? 1 : 2)} verified empty");
+						SetStatus($"{_dungeon.Name} Del: slot {(_slotIndex + 1)} verified empty");
 						DeepDungeonUi.TryCloseAddon("DeepDungeonSaveData");
 						_lastProgress = DateTime.Now;
 					}
 					else
 					{
-						SetStatus($"{_dungeon.Name} Del: waiting for slot {(_slotIndex == 0 ? 1 : 2)} to clear");
+						SetStatus($"{_dungeon.Name} Del: waiting for slot {(_slotIndex + 1)} to clear");
 					}
 					_nextTry = DateTime.Now.AddMilliseconds(250);
 					return false;
@@ -143,10 +147,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 
 				if (targetSlotEmpty)
 				{
-					return Fail($"{_dungeon.Name} Del: slot {(_slotIndex == 0 ? 1 : 2)} is already empty");
+					return Fail($"{_dungeon.Name} Del: slot {(_slotIndex + 1)} is already empty");
 				}
 
-				SetStatus($"{_dungeon.Name} Del: clicking slot {(_slotIndex == 0 ? 1 : 2)}");
+                string? sourceError = _validateSource?.Invoke(slots);
+                if (!string.IsNullOrEmpty(sourceError)) return Fail(sourceError);
+				SetStatus($"{_dungeon.Name} Del: clicking slot {(_slotIndex + 1)}");
 				// Use Agent with delete mode parameter
 				if (!DeepDungeonUi.ClickSaveSlotForDelete(_slotIndex))
 				{

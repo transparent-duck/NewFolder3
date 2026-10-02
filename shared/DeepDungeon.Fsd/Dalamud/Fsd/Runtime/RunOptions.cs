@@ -62,6 +62,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		public bool OpenBronze = false;
 
 		public bool BandedEnabled = true;
+        public bool HarvestChestsRequired;
+        public bool DiscoveryOnly;
 
 		public LeaveMode LeaveMode = LeaveMode.AfterFinishDungeon;
 		public int LeaveAfterMinutes = 0;
@@ -75,6 +77,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 				OpenSilver = OpenSilver,
 				OpenBronze = OpenBronze,
 				BandedEnabled = BandedEnabled,
+                HarvestChestsRequired = HarvestChestsRequired,
+                DiscoveryOnly = DiscoveryOnly,
 				LeaveMode = LeaveMode,
 				LeaveAfterMinutes = LeaveAfterMinutes,
 				RequireValidatedAbandonPrompt = RequireValidatedAbandonPrompt

@@ -8,28 +8,29 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 		private int _lastUsedSlotIndex = -1;
 
 		public bool TryFindEmptySlot(int preferredSlotIndex, out int chosenSlotIndex)
+			=> TryFindEmptySlot(preferredSlotIndex, out chosenSlotIndex, out _);
+
+        private bool TryFindEmptySlot(int preferredSlotIndex, out int chosenSlotIndex, out string error)
 		{
 			chosenSlotIndex = -1;
-			try
-			{
-				if (GameState.DeepDungeonUi.TryGetEmptySlotsFromDeepDungeonSaveData(out var slot1Empty, out var slot2Empty))
-				{
-					var pref = preferredSlotIndex <= 0 ? 0 : 1;
-					if (pref == 0 && slot1Empty) { chosenSlotIndex = 0; return true; }
-					if (pref == 1 && slot2Empty) { chosenSlotIndex = 1; return true; }
-					if (slot1Empty) { chosenSlotIndex = 0; return true; }
-					if (slot2Empty) { chosenSlotIndex = 1; return true; }
-				}
-			}
-			catch { }
-			return false;
-		}
+            if (!GameState.DeepDungeonUi.TryReadSaveSlots(out var slots, out error)) return false;
+            foreach (var slot in slots)
+                if (slot.Index == preferredSlotIndex && slot.Empty && slot.Enterable) { chosenSlotIndex = slot.Index; return true; }
+            foreach (var slot in slots)
+                if (slot.Empty && slot.Enterable) { chosenSlotIndex = slot.Index; return true; }
+            error = "沒有可用的空存檔槽位。";
+            return false;
+        }
 
 		public bool TrySelectPreferredEmpty(int preferredSlotIndex, out int chosenSlotIndex)
+			=> TrySelectPreferredEmpty(preferredSlotIndex, out chosenSlotIndex, out _);
+
+        public bool TrySelectPreferredEmpty(int preferredSlotIndex, out int chosenSlotIndex, out string error)
 		{
-			if (TryFindEmptySlot(preferredSlotIndex, out chosenSlotIndex))
+			if (TryFindEmptySlot(preferredSlotIndex, out chosenSlotIndex, out error))
 			{
-				return TrySelectSlot(chosenSlotIndex);
+				if (TrySelectSlot(chosenSlotIndex)) return true;
+                error = "空存檔槽位選取失敗；列表可能已變更。";
 			}
 			return false;
 		}
@@ -38,7 +39,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 		{
 			try
 			{
-				var idx = slotIndex <= 0 ? 0 : 1;
+				if (slotIndex < 0) return false;
+                var idx = slotIndex;
 				if (GameState.DeepDungeonUi.ClickSaveSlotForEntry(idx))
 				{
 					_lastUsedSlotIndex = idx;

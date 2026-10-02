@@ -394,6 +394,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 					return;
 				}
 
+                if (TryFinishHarvest(dd, activeRuntime)) return;
 				RefreshObjectiveDecision(dd, activeRuntime);
 				switch (_phase)
 				{
@@ -515,7 +516,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		private static bool IsSearchObjective(FloorObjectiveKind objective) =>
 			objective is FloorObjectiveKind.OpenVisibleBandedChest or
 				FloorObjectiveKind.CompleteKnownHoard or
-				FloorObjectiveKind.DiscoverHoard;
+				FloorObjectiveKind.DiscoverHoard or FloorObjectiveKind.OpenPlannedChest;
 
 		private bool ShouldContinuePlannedRouteForPassageActivation(FloorObjectiveKind objective) =>
 			_ctx?.ControlledPtSurvey == null &&
@@ -614,6 +615,13 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 			if (objective is FloorObjectiveKind.ActivatePassage or FloorObjectiveKind.FinishCombatBeforePassage)
 			{
+                if (_ctx?.FarmingPlan?.ReusesSave == true)
+                {
+                    CancelActiveMovement();
+                    _ctx.ClearPreferredAggroTarget();
+                    _status = "速刷：等待跳層道具生效／脫離戰鬥";
+                    return;
+                }
 				UpdateClearingMechanics(dd);
 				return;
 			}
@@ -825,6 +833,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			if (!waypoint.HasValue || !IsChestWaypoint(waypoint.Value) || evidence?.Available != true)
 				return;
 
+            if (waypoint.Value.Type == RoomObjectiveType.ChestBanded && _ctx?.RunOptions.Current.DiscoveryOnly == true)
+                return;
 			if (_ctx?.ChestInteraction.TryInteract(ActiveChestAttempt, evidence, out var snapshot, out bool retry) == true)
 			{
 				if (!retry || _ctx?.Configuration.AggressiveChestInteraction != true)
@@ -839,7 +849,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		{
 			status = string.Empty;
 			var context = _ctx;
-			if (context == null || !AllowsCombatChannel)
+			if (context == null || context.FarmingPlan?.ReusesSave == true || !AllowsCombatChannel)
 				return false;
 
 			context.CombatAssist.Tick(
@@ -892,7 +902,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			var activeWaypoint = _activeWaypoint ?? executor?.CurrentWaypoint;
 			bool passageOpen = _ctx?.Duty.PassageOpen == true;
 			bool combatInProgress = Service.Condition[ConditionFlag.InCombat];
-			bool routineCombatAllowed = combatInProgress || !passageOpen;
+			bool suppressCombat = _ctx?.FarmingPlan?.ReusesSave == true;
+			bool routineCombatAllowed = !suppressCombat && (combatInProgress || !passageOpen);
 			bool chestInteractionAllowed =
 				objectEvidence != null &&
 				_activeWaypoint.HasValue &&
@@ -944,7 +955,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				PassageActivationRequired: passageActivationRequired,
 				CombatInProgress: combatInProgress,
 				RoutineCombatAllowed: routineCombatAllowed,
-				ActiveChestInteraction: chestInteractionAllowed);
+				ActiveChestInteraction: chestInteractionAllowed,
+                SuppressCombat: suppressCombat,
+                RequiredChestWork: _ctx?.RunOptions.Current.HarvestChestsRequired == true &&
+                    (executor?.PlannedRouteCount > 0 || executor?.RoomContext != null ||
+                     _activeWaypoint.HasValue || (_taskRunner != null && _taskRunner.Phase != TaskPhase.Idle)));
 			if (!runtime.RefreshObjectiveDecision(
 					snapshot,
 					objectEvidence?.Version ?? 0,
@@ -3903,6 +3918,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			public bool NaturalJointScanComplete { get; set; }
 			public bool NaturalPoisonfruitAttempted { get; set; }
 			public bool NaturalMazerootAttemptedOrAdopted { get; set; }
+            public bool FarmingPassageItemConfirmed { get; set; }
 			public bool ControlledSightDispatched { get; set; }
 			public long ControlledSightLogSequenceAtDispatch { get; set; }
 			public long ControlledMazerootLogSequenceAtDispatch { get; set; }
@@ -4337,6 +4353,13 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			if (player == null || !player.IsDead)
 				return false;
 
+            if (_ctx?.FarmingPlan?.Mode == FarmingMode.DeepProgression)
+            {
+                _ctx.MarkDutyFailed();
+                _ctx.RunOptions.Update(o => o.LeaveMode = LeaveMode.Immediate);
+                CancelActiveMovement();
+                return true;
+            }
 			_status = "Deep Dungeon run failed - player died";
 			if (_ctx != null && !_ctx.StatusIsError)
 			{
@@ -4377,6 +4400,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				OpenSilver = source.OpenSilver,
 				OpenBronze = source.OpenBronze,
 				BandedEnabled = source.BandedEnabled,
+                HarvestChestsRequired = source.HarvestChestsRequired,
+                DiscoveryOnly = source.DiscoveryOnly,
 				LeaveMode = source.LeaveMode,
 				LeaveAfterMinutes = source.LeaveAfterMinutes,
 				RequireValidatedAbandonPrompt = source.RequireValidatedAbandonPrompt

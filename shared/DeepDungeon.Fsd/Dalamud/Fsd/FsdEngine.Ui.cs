@@ -288,30 +288,8 @@ namespace DeepDungeon.Fsd.Dalamud
 				ImGui.Text("Necromancer FSD");
 				UiHelpers.DrawGrayTipText("Full Self-Delving (Supervised) in Deep Dungeons");
 				ImGui.Indent();
-					// Scenario selector
-					string[] scenarios = _detailedMapHostOptions.SupportsControlledPtSurvey
-						? new[]
-						{
-							"朝聖交錯路 21-30 層",
-							"朝聖交錯路 31-40 層",
-							"朝聖交錯路 21-30 層受控採集（可複用存檔）"
-						}
-						: new[]
-						{
-							"朝聖交錯路 21-30 層",
-							"朝聖交錯路 31-40 層"
-						};
-				int idx = Math.Clamp(_fsfScenarioIndex, 0, scenarios.Length - 1);
-				ImGui.SetNextItemWidth(260f);
-				bool hostAssistActive = _ddHost?.AssistModeActive == true;
-				ImGui.BeginDisabled(hostAssistActive);
-					if (ImGui.Combo("場景##fsf_scn", ref idx, scenarios, scenarios.Length))
-					{
-						_fsfScenarioIndex = idx;
-						_configuration.NecromancerFsdScenarioIndex = idx;
-						_configuration.Save();
-					}
-					ImGui.EndDisabled();
+                bool hostAssistActive = _ddHost?.AssistModeActive == true;
+                DrawFarmingSelection(hostAssistActive);
 
 				DrawDetailedMapSettings(hostAssistActive);
 
@@ -326,23 +304,11 @@ namespace DeepDungeon.Fsd.Dalamud
 					{
 						try
 						{
-							var controlledSession = _fsfScenarioIndex == 2
-								? new ControlledPtSurveySession()
-								: null;
-							Func<IScenario> factory = _fsfScenarioIndex switch
-							{
-								0 => () => new PTChestScenario(21),
-								1 => () => new PTChestScenario(31),
-								2 => () => new ControlledPt21To30Scenario(controlledSession!),
-								_ => () => new PTChestScenario()
-							};
-							if (!TryStartOutsideDutyFsd(
-								    factory,
-								    Math.Max(1, _fsfLoopCount),
-								    _fsfLoopInfinite,
-								    DetailedMapCatalogManager.GetScenarioKey(_fsfScenarioIndex),
-								    out var error))
-								Service.Log.Warning($"[Necromancer] FSF start rejected: {error}");
+                            if (!StartSelectedFarming(out var error))
+                            {
+                                _farmingError = error;
+                                Service.Log.Warning($"[Necromancer] FSD start rejected: {error}");
+                            }
 						}
 						catch (Exception ex)
 						{
@@ -393,279 +359,7 @@ namespace DeepDungeon.Fsd.Dalamud
 						ImGui.TextColored(new Vector4(1f, 0.55f, 0.55f, 1f), startDenialNotice);
 				}
 
-				// Runtime/default options (always visible)
-				try
-				{
-					var provider = _ddHost?.RunOptionsProvider;
-					ImGui.Separator();
-						ImGui.Text("FSD 選項");
-						ImGui.Indent();
-						// Source values: provider if running, otherwise configuration defaults
-						bool controlledCapture = _detailedMapHostOptions.SupportsControlledPtSurvey &&
-							(_fsfScenarioIndex == 2 ||
-							 string.Equals(_ddHost?.CurrentScenarioName, "PT 21-30 controlled capture", StringComparison.Ordinal));
-						ImGui.BeginDisabled(controlledCapture);
-						bool banded = provider != null ? provider.Current.BandedEnabled : _configuration.NecromancerAutoBandedFarmEnabled;
-						if (ImGui.Checkbox("探索埋藏的寶藏", ref banded))
-						{
-							_configuration.NecromancerAutoBandedFarmEnabled = banded; _configuration.Save();
-							if (provider != null) provider.Update(o => o.BandedEnabled = banded);
-						}
-						bool og = provider != null ? provider.Current.OpenGold : _configuration.NecromancerAutoOpenGoldChest;
-						if (ImGui.Checkbox("開啟金寶箱", ref og))
-						{
-							_configuration.NecromancerAutoOpenGoldChest = og; _configuration.Save();
-							if (provider != null) provider.Update(o => o.OpenGold = og);
-						}
-						bool os = provider != null ? provider.Current.OpenSilver : _configuration.NecromancerAutoOpenSilverChest;
-						if (ImGui.Checkbox("開啟銀寶箱", ref os))
-						{
-							_configuration.NecromancerAutoOpenSilverChest = os; _configuration.Save();
-							if (provider != null) provider.Update(o => o.OpenSilver = os);
-						}
-						bool ob = provider != null ? provider.Current.OpenBronze : _configuration.NecromancerAutoOpenBronzeChest;
-						if (ImGui.Checkbox("開啟銅寶箱", ref ob))
-						{
-							_configuration.NecromancerAutoOpenBronzeChest = ob; _configuration.Save();
-							if (provider != null) provider.Update(o => o.OpenBronze = ob);
-						}
-						bool aggressiveChestInteraction = _configuration.AggressiveChestInteraction;
-						if (ImGui.Checkbox("我開箱會卡住很久##aggressiveChestInteraction", ref aggressiveChestInteraction))
-						{
-							_configuration.AggressiveChestInteraction = aggressiveChestInteraction;
-							_configuration.Save();
-						}
-						ImGui.SameLine();
-						ImGui.TextDisabled("(?)");
-						if (ImGui.IsItemHovered())
-						{
-							ImGui.BeginTooltip();
-							ImGui.PushTextWrapPos(ImGui.GetFontSize() * 32f);
-							ImGui.TextUnformatted("啟用該項目會增加開箱的力度, 如幀數較低或戰鬥時很難成功開箱, 請啟用以增加對輸出或其他外掛搶佔成功率. 若沒有遇到這個問題, 請不要啟用");
-							ImGui.PopTextWrapPos();
-							ImGui.EndTooltip();
-						}
-
-						ImGui.Separator();
-						ImGui.Text("退出深宮...");
-						// UI indices (modeIdx): 0=完成任務後, 1=獲取1個寶藏後, 2=立即(debug)
-						string[] leaveModes = new[] { "完成任務後", "獲得 1 個埋藏的寶藏後", "立即（調試）", "進入首領層時", "N 分鐘後" };
-						int currentModeIdx = provider != null ? LeaveModeUiMapping.ToUiIndex(provider.Current.LeaveMode) : Math.Clamp(_configuration.NecromancerAutoLeaveMode, 0, 4);
-						ImGui.SetNextItemWidth(180f);
-						if (ImGui.Combo("##leaveMode", ref currentModeIdx, leaveModes, leaveModes.Length))
-						{
-							_configuration.NecromancerAutoLeaveMode = currentModeIdx; _configuration.Save();
-							if (provider != null) provider.Update(o => o.LeaveMode = LeaveModeUiMapping.FromUiIndex(currentModeIdx));
-						}
-						ImGui.EndDisabled();
-						if (LeaveModeUiMapping.FromUiIndex(currentModeIdx) == LeaveMode.AfterNMinutes)
-						{
-							int leaveAfterMinutes = provider != null ? provider.Current.LeaveAfterMinutes : _configuration.NecromancerAutoLeaveAfterMinutes;
-							if (ImGui.SliderInt("離開前等待分鐘數##leaveAfterMinutes", ref leaveAfterMinutes, 1, 180))
-							{
-								leaveAfterMinutes = Math.Clamp(leaveAfterMinutes, 1, 180);
-								_configuration.NecromancerAutoLeaveAfterMinutes = leaveAfterMinutes; _configuration.Save();
-								if (provider != null) provider.Update(o => o.LeaveAfterMinutes = leaveAfterMinutes);
-							}
-						}
-						// ==== FSD end mode & targets + debug item count tester ====
-						ImGui.Spacing();
-						ImGui.Text("結束 FSD...");
-						// TODO: Deprecated item-count end modes; FSD should only stop by loop count.
-						if (_configuration.NecromancerFsdEndMode != (int)FsdEndMode.Loops)
-						{
-							_configuration.NecromancerFsdEndMode = (int)FsdEndMode.Loops;
-							_configuration.Save();
-						}
-						int endMode = (int)FsdEndMode.Loops;
-
-						// Loops mode
-						if (endMode == 0)
-						{
-							bool infinite = _configuration.NecromancerFsdLoopInfinite;
-							if (ImGui.Checkbox("無限循環##fsf_inf", ref infinite))
-							{
-								_configuration.NecromancerFsdLoopInfinite = infinite;
-								_configuration.Save();
-								_fsfLoopInfinite = infinite;
-							}
-							ImGui.SameLine();
-							ImGui.BeginDisabled(infinite);
-							int loops = Math.Max(1, _configuration.NecromancerFsdLoopCount);
-							ImGui.SetNextItemWidth(90f);
-							if (ImGui.InputInt("循環次數##fsf_loops", ref loops))
-							{
-								loops = Math.Max(1, loops);
-								_configuration.NecromancerFsdLoopCount = loops;
-								_configuration.Save();
-								_fsfLoopCount = loops;
-							}
-							ImGui.EndDisabled();
-						}
-						else
-						{
-							// Potsherd / Hoard modes show dungeon-specific targets
-							ImGui.Spacing();
-							uint ddId = 0;
-							try
-							{
-								var efw = EventFramework.Instance();
-								var dd = efw != null ? efw->GetInstanceContentDeepDungeon() : null;
-								ddId = dd != null ? dd->DeepDungeonId : 0u;
-							}
-							catch { }
-
-							// if not in duty, infer from selected scenario
-							if (ddId == 0)
-							{
-								ddId = 4u;
-							}
-
-							if (endMode == 1)
-							{
-								// Potsherd targets
-								uint itemId = ddId switch
-								{
-									1u => DeepDungeonItems.PotdPotsherd,
-									2u => DeepDungeonItems.HohPotsherd,
-									3u => DeepDungeonItems.EoPotsherd,
-									4u => DeepDungeonItems.PtPotsherd,
-									_ => 0u
-								};
-
-								string label = "陶片";
-								if (itemId != 0)
-								{
-									try
-									{
-										var info = ItemManager.GetOrRegister(itemId);
-										if (info.IsValid && !string.IsNullOrEmpty(info.Name))
-											label = info.Name;
-									}
-									catch { }
-								}
-
-								int current = itemId != 0 ? DeepDungeonLootTracker.GetItemCount(itemId) : 0;
-								int target = ddId switch
-								{
-									1u => _configuration.NecromancerFsdPotdPotsherdTarget,
-									2u => _configuration.NecromancerFsdHoHPotsherdTarget,
-									3u => _configuration.NecromancerFsdEOPotsherdTarget,
-									4u => _configuration.NecromancerFsdPTPotsherdTarget,
-									_ => 0
-								};
-
-								ImGui.Text($"{label}: {current} /");
-								ImGui.SameLine();
-								ImGui.SetNextItemWidth(80f);
-								if (ImGui.InputInt("##potsherd_target", ref target))
-								{
-									target = Math.Max(0, target);
-									switch (ddId)
-									{
-										case 1u: _configuration.NecromancerFsdPotdPotsherdTarget = target; break;
-										case 2u: _configuration.NecromancerFsdHoHPotsherdTarget = target; break;
-										case 3u: _configuration.NecromancerFsdEOPotsherdTarget = target; break;
-										case 4u: _configuration.NecromancerFsdPTPotsherdTarget = target; break;
-									}
-								}
-							}
-							else if (endMode == 2)
-							{
-								// Hoard targets per dungeon
-								void DrawHoardRow(uint itemId, ref int target, string fallbackName)
-								{
-								string name = fallbackName;
-									try
-									{
-										var sheet = Service.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>();
-										if (sheet != null)
-										{
-											var row = sheet.GetRow(itemId);
-											if (row.RowId == itemId)
-												name = row.Name.ToString();
-										}
-									}
-									catch { }
-									int current = DeepDungeonLootTracker.GetItemCount(itemId);
-									ImGui.Text($"{name}: {current} /");
-									ImGui.SameLine();
-									ImGui.SetNextItemWidth(80f);
-									if (ImGui.InputInt($"##hoard_{itemId}", ref target))
-									{
-										target = Math.Max(0, target);
-									}
-								}
-
-								switch (ddId)
-								{
-									case 1u: // POTD
-										{
-											int t1 = _configuration.NecromancerFsdPotdHoard16170Target;
-											int t2 = _configuration.NecromancerFsdPotdHoard16171Target;
-											int t3 = _configuration.NecromancerFsdPotdHoard16172Target;
-											int t4 = _configuration.NecromancerFsdPotdHoard16173Target;
-											DrawHoardRow(16170u, ref t1, "埋藏的寶藏 G1");
-											DrawHoardRow(16171u, ref t2, "埋藏的寶藏 G2");
-											DrawHoardRow(16172u, ref t3, "埋藏的寶藏 G3");
-											DrawHoardRow(16173u, ref t4, "埋藏的寶藏 G4");
-											_configuration.NecromancerFsdPotdHoard16170Target = t1;
-											_configuration.NecromancerFsdPotdHoard16171Target = t2;
-											_configuration.NecromancerFsdPotdHoard16172Target = t3;
-											_configuration.NecromancerFsdPotdHoard16173Target = t4;
-											_configuration.Save();
-										}
-										break;
-									case 2u: // HoH
-										{
-											int t1 = _configuration.NecromancerFsdHoHHoard23223Target;
-											int t2 = _configuration.NecromancerFsdHoHHoard23224Target;
-											int t3 = _configuration.NecromancerFsdHoHHoard23225Target;
-											DrawHoardRow(23223u, ref t1, "埋藏的寶藏 H1");
-											DrawHoardRow(23224u, ref t2, "埋藏的寶藏 H2");
-											DrawHoardRow(23225u, ref t3, "埋藏的寶藏 H3");
-											_configuration.NecromancerFsdHoHHoard23223Target = t1;
-											_configuration.NecromancerFsdHoHHoard23224Target = t2;
-											_configuration.NecromancerFsdHoHHoard23225Target = t3;
-											_configuration.Save();
-										}
-										break;
-									case 3u: // EO
-										{
-											int t1 = _configuration.NecromancerFsdEOHoard38945Target;
-											int t2 = _configuration.NecromancerFsdEOHoard38946Target;
-											int t3 = _configuration.NecromancerFsdEOHoard38947Target;
-											DrawHoardRow(38945u, ref t1, "埋藏的寶藏 I");
-											DrawHoardRow(38946u, ref t2, "埋藏的寶藏 II");
-											DrawHoardRow(38947u, ref t3, "埋藏的寶藏 III");
-											_configuration.NecromancerFsdEOHoard38945Target = t1;
-											_configuration.NecromancerFsdEOHoard38946Target = t2;
-											_configuration.NecromancerFsdEOHoard38947Target = t3;
-											_configuration.Save();
-										}
-										break;
-									case 4u: // PT
-										{
-											int t1 = _configuration.NecromancerFsdPTHoard47104Target;
-											int t2 = _configuration.NecromancerFsdPTHoard47105Target;
-											int t3 = _configuration.NecromancerFsdPTHoard47106Target;
-											DrawHoardRow(47104u, ref t1, "埋藏的寶藏 L1");
-											DrawHoardRow(47105u, ref t2, "埋藏的寶藏 L2");
-											DrawHoardRow(47106u, ref t3, "埋藏的寶藏 L3");
-											_configuration.NecromancerFsdPTHoard47104Target = t1;
-											_configuration.NecromancerFsdPTHoard47105Target = t2;
-											_configuration.NecromancerFsdPTHoard47106Target = t3;
-											_configuration.Save();
-										}
-										break;
-								}
-							}
-						}
-
-
-						ImGui.Unindent();
-					}
-					catch { }
+                DrawFarmingOptions();
 
 					// Battle assist (Banded chest farming settings)
 					ImGui.Separator();
@@ -738,6 +432,11 @@ namespace DeepDungeon.Fsd.Dalamud
 
 		private void DrawDetailedMapSettings(bool runActive)
 		{
+			// Only fixed-floorset hoard farming exposes detailed-map controls.
+			// Hiding this UI preserves the saved preference and survey runtime behavior.
+			if (!IsFixedFloorsetHoard)
+				return;
+
 			string? scenarioKey =
 				DetailedMapCatalogManager.GetScenarioKey(_fsfScenarioIndex);
 			bool supported = scenarioKey != null;
@@ -2529,12 +2228,9 @@ namespace DeepDungeon.Fsd.Dalamud
         {
             try
             {
-                if (TryStartOutsideDutyFsd(
-                        () => new PTChestScenario(),
-                        1,
-                        false,
-                        detailedMapScenarioKey: null,
-                        out var error))
+                if (TryStartFarming(FarmingMode.Hoard, SaveUse.Create, 31, 1, false,
+                        _configuration.NecromancerAutoBandedFarmEnabled, _configuration.NecromancerAutoOpenGoldChest,
+                        _configuration.NecromancerAutoOpenSilverChest, _configuration.NecromancerAutoOpenBronzeChest, out var error))
                     Service.Log.Info($"[Necromancer] FullSelfDelving started: PT chest (banded only)");
                 else
                     Service.Log.Warning($"[Necromancer] FullSelfDelving start rejected: {error}");

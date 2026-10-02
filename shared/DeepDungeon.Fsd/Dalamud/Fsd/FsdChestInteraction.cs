@@ -24,6 +24,8 @@ namespace DeepDungeon.Fsd.Dalamud
 		internal DateTime InteractionStartedAtUtc;
 		internal long EvidenceSequenceAtStart;
 		internal DateTime NextInteractAt;
+        internal DateTime NextRejectionDiagnosticAt;
+        internal DateTime NextNativeAttemptDiagnosticAt;
 		internal bool Reapproaching;
 		internal bool AcceptanceRecorded;
 		internal uint? PendingGoldOvercapSlotIndex;
@@ -177,7 +179,7 @@ namespace DeepDungeon.Fsd.Dalamud
 				}
 				// Only active during auto-farming: require run options provider assigned by engine
 				if (!DeepDungeonHelper.IsInDeepDungeon())
-                    return false;
+                    return RejectInteraction(attempt, "not-in-deep-dungeon");
 
 				long optionsVersion;
 				RunOptions opts;
@@ -188,45 +190,53 @@ namespace DeepDungeon.Fsd.Dalamud
 				}
 				while (optionsVersion != _runOptionsProvider.Version);
 				if (!opts.OpenGold && !opts.OpenSilver && !opts.OpenBronze && !opts.BandedEnabled)
-                    return false;
+                    return RejectInteraction(attempt, "no-enabled-targets");
 				if (!evidence.Available)
-					return false;
+					return RejectInteraction(attempt, "object-evidence-unavailable");
 
 				if (!CanAttemptInteraction(aggressiveInteraction))
-					return false;
+					return RejectInteraction(attempt, "casting-or-zoning");
 
                 var player = Service.LocalPlayer;
                 if (player == null || player.IsDead)
-                    return false;
+                    return RejectInteraction(attempt, "player-unavailable-or-dead");
 
 				// Resolve only the chest owned by the active waypoint.
 				var maxDist = GetInteractionDistance();
-				if (!TryFindWaypointChestEvidence(evidence, attempt.Waypoint, attempt.EntityId, out var chestEvidence) ||
-				    attempt.EntityId != 0 && chestEvidence.Object.EntityId != attempt.EntityId ||
-				    !chestEvidence.Object.IsTargetable ||
-				    !IsAllowedChest(chestEvidence.Kind, opts))
-					return false;
+				if (!TryFindWaypointChestEvidence(evidence, attempt.Waypoint, attempt.EntityId, out var chestEvidence))
+					return RejectInteraction(attempt, "waypoint-target-missing");
+				if (!chestEvidence.Object.IsTargetable)
+					return RejectInteraction(attempt, "waypoint-target-not-targetable");
+				if (!IsAllowedChest(chestEvidence.Kind, opts))
+					return RejectInteraction(attempt, "waypoint-target-disabled");
 				if (!aggressiveInteraction && DateTime.UtcNow < attempt.NextInteractAt)
 					return false;
 				var best = ResolveCurrentObject(chestEvidence);
 				if (best == null || !best.IsTargetable || !IsAllowedChest(best, opts))
-					return false;
+					return RejectInteraction(attempt, "live-target-unavailable-or-disabled");
 
 				var dx = best.Position.X - player.Position.X;
 				var dz = best.Position.Z - player.Position.Z;
 				if (dx * dx + dz * dz > maxDist * maxDist)
-					return false;
+					return RejectInteraction(attempt, "horizontal-range-rejected", best);
 
 				// silver explosion safety
 				if (!CanStart(attempt, attempt.Waypoint))
-					return false;
+					return RejectInteraction(attempt, "silver-hp-or-waypoint-guard", best);
 
 				bool wasRetry = attempt.EntityId != 0;
 				var interactionStartedAtUtc = DateTime.UtcNow;
 				attempt.NextInteractAt = interactionStartedAtUtc.AddSeconds(ChestInteractionRetrySeconds);
-				var interacted = GameInteraction.InteractWith(best, maxDist, force: IsBanded(best));
-				if (!interacted)
-					return false;
+				var interacted = GameInteraction.InteractWith(best, maxDist, IsBanded(best), out var failure, out bool dispatched);
+                if (interactionStartedAtUtc >= attempt.NextNativeAttemptDiagnosticAt)
+                {
+                    attempt.NextNativeAttemptDiagnosticAt = interactionStartedAtUtc.AddSeconds(3);
+                    Service.Log.Info($"[NecromancerChest] native-attempt entity={best.EntityId}; kind={best.ObjectKind}; " +
+                        $"dispatched={dispatched}; nonzeroReturn={interacted}; reason={failure}; targetableAfter={best.IsTargetable}; " +
+                        $"distanceXZ={MathF.Sqrt(dx * dx + dz * dz):F2}; evidenceSequence={evidence.RefreshSequence}");
+                }
+				if (!dispatched)
+					return RejectInteraction(attempt, failure, best);
 
 				attempt.EntityId = best.EntityId;
 				attempt.InteractionStartedAtUtc = interactionStartedAtUtc;
@@ -241,6 +251,24 @@ namespace DeepDungeon.Fsd.Dalamud
 				Service.Log.Error($"[NecromancerChest] Interaction error: {ex}");
 				return false;
             }
+        }
+
+        private bool RejectInteraction(ChestInteractionAttempt attempt, string reason, IGameObject? chest = null)
+        {
+            var now = DateTime.UtcNow;
+            if (now < attempt.NextRejectionDiagnosticAt) return false;
+            attempt.NextRejectionDiagnosticAt = now.AddSeconds(3);
+            var player = Service.LocalPlayer;
+            var position = chest?.Position ?? attempt.Waypoint.Position;
+            var delta = player == null ? Vector3.Zero : position - player.Position;
+            var options = _runOptionsProvider.Current;
+            Service.Log.Info($"[NecromancerChest] interaction-rejected reason={reason}; type={attempt.Waypoint.Type}; " +
+                $"attemptEntity={attempt.EntityId}; targetEntity={chest?.EntityId}; targetKind={chest?.ObjectKind}; " +
+                $"targetGameObjectId={chest?.GameObjectId}; distanceXZ={MathF.Sqrt(delta.X * delta.X + delta.Z * delta.Z):F2}; " +
+                $"deltaY={delta.Y:F2}; maxDistance={GetInteractionDistance():F2}; " +
+                $"casting={Service.Condition[ConditionFlag.Casting]}; zoning={Service.Condition[ConditionFlag.BetweenAreas] || Service.Condition[ConditionFlag.BetweenAreas51]}; " +
+                $"aggressive={_configuration.AggressiveChestInteraction}; gold={options.OpenGold}; silver={options.OpenSilver}; bronze={options.OpenBronze}");
+            return false;
         }
 
 		private static bool TryFindWaypointChestEvidence(

@@ -225,7 +225,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 					}
 
 					if ((_attachedScenario.RequiresDutyCompletionEvent && !_context.DutyCompletionObserved) ||
-					    _context.DutyFailureObserved)
+					    (_context.DutyFailureObserved && !_attachedScenario.RecoversDutyFailure))
 					{
 						string status = "Deep Dungeon run ended without a valid completion event; loop will not be counted.";
 						_context.StatusLine = status;
@@ -241,7 +241,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 						return;
 					}
 
-					if (_multiLoopDriver.ShouldStopAfterCurrentRun(_dutyState))
+					if (_attachedScenario.CountsAsCycle && _multiLoopDriver.ShouldStopAfterCurrentRun(_dutyState))
 					{
 						string stopReason = _multiLoopDriver.LastStopReason;
 						if (!string.IsNullOrWhiteSpace(stopReason))
@@ -265,10 +265,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 					}
 					else if (_attachedScenario.ShouldLoop)
 					{
-						_multiLoopDriver.IncrementLoop();
+						if (_attachedScenario.CountsAsCycle) _multiLoopDriver.IncrementLoop();
 						Service.Log.Info($"[RunHost] Loop complete. Progress: ({_multiLoopDriver.CompletedLoops}/{(_multiLoopDriver.InfiniteLoop ? "∞" : _multiLoopDriver.TargetLoops)})");
 
-						_floorController.CloseRunRecording("fsd-loop-complete", new
+						_floorController.CloseRunRecording(_attachedScenario.CountsAsCycle ? "fsd-loop-complete"
+                            : _attachedScenario.RecoversDutyFailure ? "fsd-restart-after-failure" : "fsd-floorset-continued", new
 						{
 							scenario = _attachedScenario.Name,
 							completedLoops = _multiLoopDriver.CompletedLoops,
@@ -403,7 +404,14 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		if (player == null || !player.IsDead)
 			return;
 
-		_context.MarkDutyFailed();
+        _context.MarkDutyFailed();
+        if (_context.FarmingPlan?.Mode == FarmingMode.DeepProgression)
+        {
+            _context.RunOptions.Update(o => o.LeaveMode = LeaveMode.Immediate);
+            _context.StatusLine = "攻略死亡；退本後清理本任務存檔並從第一層重開。";
+            _floorController.CancelActiveMovement();
+            return;
+        }
 		string status = "Deep Dungeon run failed: player died; manual leave required.";
 		_context.StatusLine = status;
 		_context.StatusIsError = true;
@@ -435,9 +443,27 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 	}
 
 		public string CurrentScenarioName => _attachedScenario?.Name ?? string.Empty;
+        public void SetFarmingTargets(bool hoard, bool gold, bool silver, bool bronze)
+        {
+            if (_attachedScenario is not Scenarios.FarmingScenario farming) return;
+            if (!FarmingTargetPolicy.IsValid(farming.Session.Plan.Mode, new(hoard, gold, silver, bronze))) return;
+            farming.Session.BandedEnabled = hoard;
+            farming.Session.OpenGold = gold;
+            farming.Session.OpenSilver = silver;
+            farming.Session.OpenBronze = bronze;
+            _context?.RunOptions.Update(o => { o.BandedEnabled = hoard; o.OpenGold = gold; o.OpenSilver = silver; o.OpenBronze = bronze; });
+        }
+        public void SetCycleTargets(int cycles, bool infinite)
+        {
+            _multiLoopDriver?.SetTargets(cycles, infinite);
+        }
 		public int CompletedLoops => _multiLoopDriver?.CompletedLoops ?? 0;
 		public int TargetLoops => _multiLoopDriver?.TargetLoops ?? 0;
 		public bool Infinite => _multiLoopDriver?.InfiniteLoop ?? false;
+        public string CycleUnit => _context?.FarmingPlan?.CycleUnit ?? "採集輪數";
+        public int FarmingFailures => (_attachedScenario as Scenarios.FarmingScenario)?.Session.Failures ?? 0;
+        public int HoardDiscoveries => (_attachedScenario as Scenarios.FarmingScenario)?.Session.Discoveries ?? 0;
+        public string PreparedSaveDescription => _context?.PreparedSaveDescription ?? string.Empty;
 		public string CurrentStatus => _context?.StatusLine ?? string.Empty;
 		public bool CurrentStatusIsError => _context?.StatusIsError ?? false;
 		public string LastStatus => _lastStatus;
@@ -649,7 +675,14 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 			if (context.StatusIsError)
 				return;
 
-			context.MarkDutyFailed();
+            context.MarkDutyFailed();
+            if (context.FarmingPlan?.Mode == FarmingMode.DeepProgression)
+            {
+                context.RunOptions.Update(o => o.LeaveMode = LeaveMode.Immediate);
+                context.StatusLine = "攻略失敗；退本後從第一層重開。";
+                _floorController.CancelActiveMovement();
+                return;
+            }
 			context.StatusLine = status;
 			context.StatusIsError = true;
 			_lastStatus = status;
