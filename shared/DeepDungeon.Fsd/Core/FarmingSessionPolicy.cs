@@ -8,6 +8,10 @@ public readonly record struct FarmingSessionDecision(bool CountCycle, int NextFl
 
 public static class FarmingSessionPolicy
 {
+    public static bool ReachedStopBoundary(FarmingPlan plan, in FarmingAttemptResult result) =>
+        plan.Mode == FarmingMode.DeepProgression && plan.StopAfterFloor is { } limit &&
+        result.DutyCompleted && !result.DutyFailed && !result.Aborted && result.EntryFloor + 9 >= limit;
+
     public static FarmingSessionDecision Decide(FarmingPlan plan, in FarmingAttemptResult result)
     {
         bool ownsSave = plan.SaveUse == SaveUse.Create;

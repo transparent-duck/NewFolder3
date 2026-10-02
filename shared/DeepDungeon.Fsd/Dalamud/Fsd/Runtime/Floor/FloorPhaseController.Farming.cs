@@ -36,7 +36,8 @@ public sealed partial class FloorPhaseController
         {
             bool chestWorkComplete = _executor.IsHoardWorkResolved && _executor.PlannedRouteCount == 0 &&
                 _executor.IsComplete && !_activeWaypoint.HasValue;
-            bool canSkip = DeepDungeonFloorItemUsePolicy.CanUsePtIncense(dd->DeepDungeonBanId) &&
+            bool canSkip = EntryIncenseWindowOpen(runtime) &&
+                DeepDungeonFloorItemUsePolicy.CanUsePtIncense(dd->DeepDungeonBanId) &&
                 !runtime.NaturalPoisonfruitAttempted && !runtime.NaturalMazerootAttemptedOrAdopted &&
                 (GetStoneCountAvailableForFloorUse(1) > 0 || GetStoneCountAvailableForFloorUse(2) > 0);
             bool passageItemPending = runtime.PendingFloorItemUse is

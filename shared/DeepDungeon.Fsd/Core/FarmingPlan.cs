@@ -15,6 +15,8 @@ public sealed record FarmingPlan(
         FarmingMode.HoardDiscovery => "寶藏發現成就",
         _ => "死靈術士(beta)"
     };
+    // Optional run-only diagnostic boundary; normal progression still climbs to 100.
+    public int? StopAfterFloor { get; init; }
     public bool ReusesSave => Mode is FarmingMode.Aetherpool or FarmingMode.HoardDiscovery;
     public bool ShowsDetailedMap => Mode == FarmingMode.Hoard && BandedEnabled;
     public string CycleUnit => Mode == FarmingMode.DeepProgression ? "登頂次數" : Mode == FarmingMode.Hoard ? "挖寶輪數" : "採集輪數";

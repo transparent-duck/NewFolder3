@@ -20,6 +20,7 @@ internal sealed class PreparedSaveFlow
     public int SourceFloor => _session.Pinned?.StartFloor ?? 0;
     public int SourceSlot => _session.Pinned?.Index ?? -1;
     private bool _clickedOccupiedSlot;
+    private bool _waitingForNavigation;
 
     public PreparedSaveFlow(PreparedSaveBinding session, bool verifyOnly = false)
     {
@@ -149,6 +150,20 @@ internal sealed class PreparedSaveFlow
         float distance = Vector3.Distance(player.Position, npc.Position);
         if (distance > NpcInteractionGuard.MaxInteractDistance)
         {
+            if (!moveHelper.VNav.NavmeshReady())
+            {
+                context.StatusLine = "PT：等待入口地圖導航載入。";
+                if (!_waitingForNavigation)
+                    Service.Log.Info("[PreparedSaveFlow] Waiting for overworld navmesh before NPC navigation");
+                _waitingForNavigation = true;
+                Delay();
+                return false;
+            }
+            if (_waitingForNavigation)
+            {
+                Service.Log.Info("[PreparedSaveFlow] Overworld navmesh ready; resuming NPC navigation");
+                _waitingForNavigation = false;
+            }
             var state = _navigation?.Navigate(
                 npc.Position,
                 player.Position,

@@ -132,8 +132,17 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             _restDone = true;
         }
         _aborted |= ctx.AttemptAborted;
-        var decision = FarmingSessionPolicy.Decide(session.Plan, new FarmingAttemptResult(
-            _entryFloor, ctx.DutyCompletionObserved, ctx.DutyFailureObserved, ctx.HarvestComplete, _aborted));
+        var result = new FarmingAttemptResult(
+            _entryFloor, ctx.DutyCompletionObserved, ctx.DutyFailureObserved, ctx.HarvestComplete, _aborted);
+        if (FarmingSessionPolicy.ReachedStopBoundary(session.Plan, result))
+        {
+            _aborted = true; // Stop the host before it can construct the next entry attempt.
+            _complete = true;
+            ctx.StatusLine = $"已通過 {session.Plan.StopAfterFloor} 層；停止並保留存檔，等待驗收。";
+            Service.Log.Info($"[Farming] Progression stop boundary reached: cleared={_entryFloor + 9}, next={_entryFloor + 10}, ownedSlot={session.OwnedSlot}");
+            return;
+        }
+        var decision = FarmingSessionPolicy.Decide(session.Plan, result);
         if (session.Plan.ReusesSave)
         {
             _verification ??= new PreparedSaveFlow(session.Source, verifyOnly: true);

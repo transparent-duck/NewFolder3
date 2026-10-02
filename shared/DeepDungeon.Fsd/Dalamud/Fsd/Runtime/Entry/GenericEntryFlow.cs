@@ -379,6 +379,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 				var distance = Vector3.Distance(player.Position, npc.Position);
 				if (distance > NpcInteractionGuard.MaxInteractDistance)
 				{
+					if (!moveHelper.VNav.NavmeshReady())
+                    {
+                        SetStatus($"{_dungeon.Name}: waiting for entry navmesh");
+                        return;
+                    }
 					var navState = _npcNavHelper?.Navigate(npc.Position, player.Position, NpcInteractionGuard.MaxInteractDistance - 0.4f) ?? NavigationState.Failed;
 					SetStatus(navState is NavigationState.Failed or NavigationState.StuckGiveUp
 						? $"{_dungeon.Name}: NPC navigation failed ({distance:F1}m)"

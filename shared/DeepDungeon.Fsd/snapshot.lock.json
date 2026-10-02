@@ -59,12 +59,16 @@
       "sha256": "a29846427c0a99e49a6d5878f40980ac49479fba31a0ba436df9cd7e3b0ecc68"
     },
     {
+      "path": "Core/FarmingItemPolicy.cs",
+      "sha256": "8fd3d4c0091149f2b12c4993a7c969fdaeea09540ba23879c802d9ecb42b0b3d"
+    },
+    {
       "path": "Core/FarmingPlan.cs",
-      "sha256": "058e0ab6e55fbde194785294e006df2b31ff6c53b891a1eef2361378f432062e"
+      "sha256": "4026606a34c254bd677621f153bf7e369cf27c8d9776f6e0d0044f63188d7053"
     },
     {
       "path": "Core/FarmingSessionPolicy.cs",
-      "sha256": "82f192739fdd7902c346e26a02c6b09b5a08067b2a9a223f9554a46e1938e067"
+      "sha256": "8e484e617e91376880747b66be303a42b99380d570d71e0afa6fac078264e79d"
     },
     {
       "path": "Core/FloorEvidenceJournalContracts.cs",
@@ -144,7 +148,7 @@
     },
     {
       "path": "Core/NaturalPassageAccelerationPolicy.cs",
-      "sha256": "45a178e9988b97847aff493454686984f5610eb0ee253589653efcb3f8949bf7"
+      "sha256": "302c8f75d511f9653137ef50cb07d16f21cab76af580b65f1894c75bb529f508"
     },
     {
       "path": "Core/NaturalRevealInventoryPolicy.cs",
@@ -268,7 +272,7 @@
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Farming.cs",
-      "sha256": "22aae8e3dfd6915461cd84049a80510b9e4395db504a28485fd4faaaaca9c3f0"
+      "sha256": "3a27f9a1da3f0cc4d766d9e9a1e7809ef7a4c4f5b19a1675b57f31c9416abebe"
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.OutsideDuty.cs",
@@ -380,7 +384,7 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Entry/GenericEntryFlow.cs",
-      "sha256": "cc265e779bc2c1b6c840585511f76f464c04623e321784fbf44742ceaa21228a"
+      "sha256": "c5a2948b7c627f4067bdfc56e60c5852b542c22d16afb67cc08f79ce7dce0c39"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Entry/LeaveDutyFlow.cs",
@@ -396,7 +400,7 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Entry/PreparedSaveFlow.cs",
-      "sha256": "ab42d3764012975b75acbdfe2b9024c290d8a926ecb5d20c1a21e28dbfc9e56b"
+      "sha256": "0d83be71cc19371e104740cb986a0b31c70bcc42b0077044e2c57d30bf5ade05"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/EnemyChaseHelper.cs",
@@ -420,11 +424,15 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.cs",
-      "sha256": "1b17cfca88fc79db0d3b8758df74666519adb6a254f7d22fbca4ec12772027ad"
+      "sha256": "75b1c78383dc2f0440a199a05ab4d9135007e28fc57e3d32a040269926fb9cec"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.Farming.cs",
-      "sha256": "6a0ea8bbfa9b8ee7c541e026654f9106a1f219a43042dd676965a8cc8ff98cf7"
+      "sha256": "8f7c87085763b9bfd8a576ddc40d3b908697b34f88947997bd73d8e4234869b9"
+    },
+    {
+      "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.Items.cs",
+      "sha256": "45684c2480072b2ebf2f445f0e4767150d512656b8714c9d438abeec6cebe804"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.Passage.cs",
@@ -444,7 +452,7 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.Search.cs",
-      "sha256": "3248514de6c928580b6cd09be8cde324174282f5ba2a4ef1e60e1f0c1ee3cad5"
+      "sha256": "a5d205d675e3f5d2961c1e695d2b54de1207e89cfb07ecd64652f44f7b134518"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/Pt30DivineFavorFlashHelper.cs",
@@ -548,7 +556,7 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Scenarios/FarmingScenario.cs",
-      "sha256": "9cb705af9877344400eda3ffab98ef1448cd800ff36ec91f6403fd108c7ffa61"
+      "sha256": "a144adec9b8fc0d92ddc7349e7d07c4c3e47748b61063517251353882809f429"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Scenarios/FarmingSession.cs",
@@ -576,7 +584,7 @@
     },
     {
       "path": "Dalamud/FsdApplication.cs",
-      "sha256": "f3f8d9ae5e543de24ed590bf72098b010f490a7ad970ee2682c5a2c263442910"
+      "sha256": "32cff75f63901fcaae92492af73e8972db000b1d506fb552b3f1edbadcf295b5"
     },
     {
       "path": "Dalamud/FsdSkillCatalog.cs",
@@ -604,7 +612,7 @@
     },
     {
       "path": "Dalamud/Navigation/VNav.cs",
-      "sha256": "77298cc299c2c95abb1ff58ee3b4136f7a4ab8fc30d0f1ba94aa50976918fb9f"
+      "sha256": "76941e0722bfaa1293dc7c12b4518f7a177b7e53385b02e68dd4a3073817d245"
     },
     {
       "path": "Dalamud/Properties/AssemblyInfo.cs",

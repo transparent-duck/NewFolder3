@@ -162,8 +162,14 @@ internal partial class FsdEngine
         }
     }
 
-    public bool StartSelectedFarming(out string error)
+    public bool StartSelectedFarming(out string error, int? stopAfterFloor = null)
     {
+        if (stopAfterFloor.HasValue && (_configuration.Farming.Mode != FarmingMode.DeepProgression ||
+            stopAfterFloor.Value is < 10 or > 100 || stopAfterFloor.Value % 10 != 0 || _fsfScenarioIndex == 2))
+        {
+            error = "停止層數只支援死靈術士模式，且必須為 10 至 100 的十層邊界。";
+            return false;
+        }
         if (_fsfScenarioIndex == 2)
         {
             var survey = new ControlledPtSurveySession();
@@ -176,15 +182,22 @@ internal partial class FsdEngine
         bool prepared = settings.Mode is FarmingMode.Aetherpool or FarmingMode.HoardDiscovery;
         return TryStartFarming(settings.Mode, prepared ? SaveUse.Prepared : SaveUse.Create,
             settings.Mode == FarmingMode.DeepProgression ? 1 : _fsfScenarioIndex == 0 ? 21 : 31,
-            p.Cycles, p.Infinite, p.BandedEnabled == true, p.OpenGold, p.OpenSilver, p.OpenBronze, out error);
+            p.Cycles, p.Infinite, p.BandedEnabled == true, p.OpenGold, p.OpenSilver, p.OpenBronze, out error, stopAfterFloor);
     }
 
     public bool TryStartFarming(FarmingMode mode, SaveUse saveUse, int startFloor, int cycles, bool infinite,
-        bool hoard, bool gold, bool silver, bool bronze, out string error)
+        bool hoard, bool gold, bool silver, bool bronze, out string error, int? stopAfterFloor = null)
     {
+        if (stopAfterFloor.HasValue && (mode != FarmingMode.DeepProgression ||
+            stopAfterFloor.Value is < 10 or > 100 || stopAfterFloor.Value % 10 != 0))
+        {
+            error = "停止層數只支援死靈術士模式，且必須為 10 至 100 的十層邊界。";
+            return false;
+        }
         if (!FarmingPlan.TryCreate(mode, saveUse, startFloor, cycles, infinite, hoard, gold, silver, bronze,
                 out var plan, out error)) return false;
-        var session = new FarmingSession(plan!);
+        plan = plan! with { StopAfterFloor = stopAfterFloor };
+        var session = new FarmingSession(plan);
         string? key = plan!.ShowsDetailedMap ? startFloor == 21
             ? DetailedMapScenarioCatalog.PilgrimsTraverse21To30.Key
             : DetailedMapScenarioCatalog.PilgrimsTraverse31To40.Key : null;

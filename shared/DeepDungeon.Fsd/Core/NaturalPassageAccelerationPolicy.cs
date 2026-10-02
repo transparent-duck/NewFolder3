@@ -2,9 +2,7 @@ namespace DeepDungeon.Fsd.Core;
 
 public readonly record struct NaturalPassageAccelerationSnapshot(
     bool ControlledSurveyActive,
-    FloorObjectiveKind PrimaryObjective,
-    bool ActivePairCapture,
-    bool JointScanComplete,
+    bool EntryWindowOpen,
     bool PassageOpen,
     int PoisonfruitStock,
     bool PoisonfruitAttemptedThisFloor,
@@ -28,8 +26,7 @@ public static class NaturalPassageAccelerationPolicy
         in NaturalPassageAccelerationSnapshot snapshot)
     {
         if (snapshot.ControlledSurveyActive ||
-            snapshot.PrimaryObjective != FloorObjectiveKind.ActivatePassage ||
-            snapshot.ActivePairCapture && !snapshot.JointScanComplete ||
+            !snapshot.EntryWindowOpen ||
             snapshot.PassageOpen ||
             !snapshot.CanDispatch ||
             !snapshot.PassageDispatchSafe ||

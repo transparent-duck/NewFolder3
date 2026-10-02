@@ -590,14 +590,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			}
 
 			var objective = CurrentObjectiveDecision.PrimaryObjective;
-			if (_floorRuntime is { } ordinaryRuntime &&
-			    TryUseNaturalPassageAcceleration(
-				    dd,
-				    ordinaryRuntime,
-				    objective))
-			{
-				return;
-			}
 			if (!EnsureObjectiveExecution(objective))
 				return;
 			if (TryActivateVisibleBandedObjective(dd))
@@ -2348,6 +2340,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			    !DeepDungeonFloorItemUsePolicy.CanUsePtIncense(
 				    dd->DeepDungeonBanId) ||
 			    !CanAttemptPomanderUse() ||
+			    _floorRuntime == null || !EntryIncenseWindowOpen(_floorRuntime) ||
+			    _floorRuntime.NaturalPoisonfruitAttempted ||
 			    GetStoneCountAvailableForFloorUse(2) <= 0)
 			{
 				return false;
@@ -2401,22 +2395,18 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 		private unsafe bool TryUseNaturalPassageAcceleration(
 			InstanceContentDeepDungeon* dd,
-			FloorRuntime runtime,
-			FloorObjectiveKind primaryObjective)
+			FloorRuntime runtime)
 		{
 			if (_ctx?.ControlledPtSurvey != null ||
 			    !DungeonCatalog.SupportsNaturalPtStones(dd->DeepDungeonId) ||
 			    !DeepDungeonFloorItemUsePolicy.CanUsePtIncense(
 				    dd->DeepDungeonBanId) ||
-			    primaryObjective != FloorObjectiveKind.ActivatePassage ||
+			    !EntryIncenseWindowOpen(runtime) ||
 			    _ctx?.Duty.PassageOpen == true)
 			{
 				return false;
 			}
 
-			bool activePairCapture =
-				runtime.EvidenceSession?.Bundle.AcquisitionMode ==
-				FloorEvidenceAcquisitionMode.AutomaticCommunitySurvey;
 			int poisonfruitStock = GetStoneCountAvailableForFloorUse(1);
 			int mazerootStock = GetStoneCountAvailableForFloorUse(2);
 			bool canDispatch = CanAttemptPomanderUse();
@@ -2426,9 +2416,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			var action = NaturalPassageAccelerationPolicy.Decide(
 				new NaturalPassageAccelerationSnapshot(
 					ControlledSurveyActive: _ctx?.ControlledPtSurvey != null,
-					PrimaryObjective: primaryObjective,
-					ActivePairCapture: activePairCapture,
-					JointScanComplete: runtime.NaturalJointScanComplete,
+					EntryWindowOpen: EntryIncenseWindowOpen(runtime),
 					PassageOpen: _ctx?.Duty.PassageOpen == true,
 					PoisonfruitStock: poisonfruitStock,
 					PoisonfruitAttemptedThisFloor:
@@ -2473,6 +2461,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			    !DeepDungeonFloorItemUsePolicy.CanUsePtIncense(
 				    dd->DeepDungeonBanId) ||
 			    !CanAttemptPomanderUse() ||
+			    _floorRuntime == null || !EntryIncenseWindowOpen(_floorRuntime) ||
+			    _floorRuntime.NaturalPoisonfruitAttempted ||
 			    GetStoneCountAvailableForFloorUse(2) <= 0)
 			{
 				return false;
@@ -3231,6 +3221,20 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 				_executor!.ResetForFloor(dd, SnapshotRunOptions());
 				PlanningState.LastKnownHoardCount = dd->HoardCount;
+                if (_floorRuntime is { } entryRuntime && EntryIncenseWindowOpen(entryRuntime) &&
+                    _ctx!.Duty.PassageOpen != true && !entryRuntime.NaturalPoisonfruitAttempted &&
+                    !entryRuntime.NaturalMazerootAttemptedOrAdopted &&
+                    DeepDungeonFloorItemUsePolicy.CanUsePtIncense(dd->DeepDungeonBanId) &&
+                    (GetStoneCountAvailableForFloorUse(1) > 0 || GetStoneCountAvailableForFloorUse(2) > 0))
+                {
+                    if (entryRuntime.PendingFloorItemUse != null || !CanAttemptPomanderUse())
+                    {
+                        _status = "Preparing entry incense before exploration";
+                        return;
+                    }
+                    if (TryUseNaturalPassageAcceleration(dd, entryRuntime))
+                        return;
+                }
 				TryUseFloorInitPomander(dd);
 				if (_floorRuntime?.PendingFloorItemUse is
 				    {
@@ -4246,6 +4250,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 			if (Service.Condition[ConditionFlag.InCombat])
 			{
+                TryMaintainBossBuffs(dd);
 				if (!BossNavigationResolved)
 				{
 					_navHelper?.Cancel();
@@ -4273,6 +4278,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				return;
 			}
 
+            TryMaintainBossBuffs(dd);
 			if (BossNavigationResolved)
 			{
 				var currentTarget = Service.TargetManager.Target as IBattleChara;

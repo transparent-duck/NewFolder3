@@ -89,7 +89,7 @@ namespace DeepDungeon.Fsd.Dalamud.moveHelper
 			return null;
         }
 
-        private static bool NavmeshReady()
+        public static bool NavmeshReady()
         {
             try
             {

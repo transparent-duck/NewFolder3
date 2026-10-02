@@ -2192,8 +2192,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				IntuitionUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.IntuitionPomanderSlotIndex),
 				SightUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.SightPomanderSlotIndex),
 				AffluenceUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.AffluencePomanderSlotIndex),
-				StrengthUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.StrengthPomanderSlotIndex),
-				SteelUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.SteelPomanderSlotIndex),
+				StrengthUsable = pomandersUsableThisFloor && CombatBuffUsable(FloorInitPlanner.StrengthPomanderSlotIndex),
+				SteelUsable = pomandersUsableThisFloor && CombatBuffUsable(FloorInitPlanner.SteelPomanderSlotIndex),
 				PurityUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.PurityPomanderSlotIndex),
 				SerenityUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.SerenityPomanderSlotIndex),
 				RaisingUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.RaisingPomanderSlotIndex),
@@ -2216,8 +2216,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			{
 				CanAttemptPomanderUse = true,
 				AffluenceUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.AffluencePomanderSlotIndex),
-				StrengthUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.StrengthPomanderSlotIndex),
-				SteelUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.SteelPomanderSlotIndex),
+				StrengthUsable = CombatBuffUsable(FloorInitPlanner.StrengthPomanderSlotIndex, allowStatusOverlap),
+				SteelUsable = CombatBuffUsable(FloorInitPlanner.SteelPomanderSlotIndex, allowStatusOverlap),
 				PurityUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.PurityPomanderSlotIndex),
 				SerenityUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.SerenityPomanderSlotIndex),
 				RaisingUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.RaisingPomanderSlotIndex),
@@ -2354,10 +2354,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			return false;
 		}
 
-		private bool CanAttemptPomanderUse()
+		private bool CanAttemptPomanderUse(bool allowCombat = false)
 		{
 			if (_floorRuntime?.PendingFloorItemUse != null ||
-			    Service.Condition[ConditionFlag.InCombat] ||
+			    (!allowCombat && Service.Condition[ConditionFlag.InCombat]) ||
 			    Service.Condition[ConditionFlag.Casting] ||
 			    Service.Condition[ConditionFlag.BetweenAreas] ||
 			    Service.Condition[ConditionFlag.BetweenAreas51])
@@ -2401,7 +2401,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			var runtime = _floorRuntime;
 			if (runtime == null ||
 			    runtime.IsDisposed ||
-			    !CanAttemptPomanderUse() ||
+			    !CanAttemptPomanderUse(allowCombat: _ctx?.Duty.IsBossFloor == true &&
+                    slotIndex is FloorInitPlanner.StrengthPomanderSlotIndex or FloorInitPlanner.SteelPomanderSlotIndex) ||
 			    !DeepDungeonFloorItemUsePolicy.CanUsePomanders(
 				    dd->DeepDungeonBanId) ||
 			    !IsPomanderAvailableForFloorUse(slotIndex))

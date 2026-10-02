@@ -87,7 +87,9 @@ public sealed class FsdApplication : IFsdApplication
         _module.ActiveDetailedMapReleaseId;
     public DeepDungeonStateSnapshot CurrentDeepDungeonState => _module.CurrentDeepDungeonState;
 
-    public object Start()
+    public object Start() => Start(null);
+
+    public object Start(int? stopAfterFloor)
     {
         ThrowIfDisposed();
         if (_settings.NecromancerFsdScenarioIndex == 2)
@@ -106,7 +108,7 @@ public sealed class FsdApplication : IFsdApplication
                 _settings.NecromancerFsdLoopInfinite,
                 "start-controlled-pt-capture");
         }
-        bool started = _module.StartSelectedFarming(out string error);
+        bool started = _module.StartSelectedFarming(out string error, stopAfterFloor);
         return new { ok = started, error };
     }
 
