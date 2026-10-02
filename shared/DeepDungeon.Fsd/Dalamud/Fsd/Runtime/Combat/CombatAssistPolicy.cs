@@ -1,4 +1,6 @@
 using System;
+using System.Numerics;
+using global::Dalamud.Plugin.Ipc;
 using global::Dalamud.Game.ClientState.Conditions;
 using global::Dalamud.Game.ClientState.Objects.Types;
 using DeepDungeon.Fsd.Dalamud.Runtime;
@@ -94,7 +96,7 @@ internal sealed class CombatAssistPolicy
 					if (configuration.NecromancerBandedAutoSelect)
 					{
 						IBattleChara? target = isBossFloor
-							? CombatTargetingHelpers.PickHostileLowestHP(engageRange, onlyInRange: true, mustBeInCombat: true, minHpExclusive: 1, IsAllowedCombatTarget)
+							? PickBossTarget(context, IsAllowedCombatTarget)
 							: CombatTargetingHelpers.PickHostileHighestHP(engageRange, onlyInRange: true, mustBeInCombat: true, IsAllowedCombatTarget);
 						
 					if (target != null)
@@ -104,7 +106,7 @@ internal sealed class CombatAssistPolicy
 
 					string tname = target?.Name?.TextValue ?? "無目標";
 					status = isBossFloor 
-						? "Assist: Passage open - finishing combat (lowest HP)"
+						? "Assist: Passage open - finishing combat (lowest max HP, central)"
 						: "Assist: Passage open - finishing combat (highest HP)";
 						selectStatus = target != null
 							? $"Finishing combat →{tname}"
@@ -161,7 +163,7 @@ internal sealed class CombatAssistPolicy
 					if (inCombat)
 					{
 						IBattleChara? target = isBossFloor
-							? CombatTargetingHelpers.PickHostileLowestHP(engageRange, onlyInRange: true, mustBeInCombat: true, minHpExclusive: 1, IsAllowedCombatTarget)
+							? PickBossTarget(context, IsAllowedCombatTarget)
 							: CombatTargetingHelpers.PickHostileHighestHP(engageRange, onlyInRange: true, mustBeInCombat: true, IsAllowedCombatTarget);
 					if (target != null)
 					{
@@ -171,10 +173,10 @@ internal sealed class CombatAssistPolicy
 			string tname = target?.Name?.TextValue ?? "無目標";
 			if (isBossFloor)
 				{
-					status = "Assist: In combat (最低HP目標)";
+					status = "Assist: In combat (最低血量上限、中央目標)";
 					selectStatus = target != null
-						? $"In combat (lowest HP) →{tname}"
-						: "In combat (lowest HP) →no target";
+						? $"In combat (lowest max HP, central) →{tname}"
+						: "In combat (lowest max HP, central) →no target";
 				}
 				else
 				{
@@ -299,6 +301,55 @@ internal sealed class CombatAssistPolicy
 		_cachedEngageRange = ResolveEngageRange(sid);
 		return _cachedEngageRange;
 	}
+
+    private ICallGateSubscriber<Vector2>? _arenaCenterIpc;
+    private DateTime _nextArenaCenterReadAt;
+    private int _arenaFloor = -1;
+    private Vector2 _arenaCenter;
+    private string _arenaCenterSource = "add-centroid";
+    private ulong _lastBossTargetId;
+
+    private IBattleChara? PickBossTarget(RunContext? context, Func<IBattleChara, bool> predicate)
+    {
+        var now = DateTime.UtcNow;
+        int floor = context?.Duty.Floor ?? 0;
+        if (_arenaFloor != floor || now >= _nextArenaCenterReadAt)
+        {
+            _arenaFloor = floor;
+            _nextArenaCenterReadAt = now.AddSeconds(1);
+            bool hasArenaCenter = false;
+            try
+            {
+                _arenaCenterIpc ??= Service.PluginInterface.GetIpcSubscriber<Vector2>("BossMod.Hints.ArenaCenter");
+                if (_arenaCenterIpc.HasFunction)
+                {
+                    var center = _arenaCenterIpc.InvokeFunc();
+                    var player = Service.LocalPlayer;
+                    if (player != null && float.IsFinite(center.X) && float.IsFinite(center.Y) &&
+                        Vector2.DistanceSquared(center, new Vector2(player.Position.X, player.Position.Z)) <= 100 * 100)
+                    {
+                        _arenaCenter = center;
+                        _arenaCenterSource = "BMR-arena";
+                        hasArenaCenter = true;
+                    }
+                }
+            }
+            catch { /* Optional IPC: custom movement providers use the add-group centroid. */ }
+            if (!hasArenaCenter)
+            {
+                _arenaCenter = CombatTargetingHelpers.BossTargetFallbackCenter(predicate);
+                _arenaCenterSource = "add-centroid";
+            }
+        }
+        var target = CombatTargetingHelpers.PickBossTarget(_arenaCenter, predicate);
+        ulong id = target?.GameObjectId ?? 0;
+        if (id != _lastBossTargetId)
+        {
+            _lastBossTargetId = id;
+            Service.Log.Info($"[CombatAssist] Boss target floor={floor}, id={id}, hp={target?.CurrentHp}, maxHp={target?.MaxHp}, position={target?.Position}, center={_arenaCenter}, centerSource={_arenaCenterSource}, priority=lowest-max-hp-then-center");
+        }
+        return target;
+    }
 
 	private static float ResolveEngageRange(uint sid)
 	{

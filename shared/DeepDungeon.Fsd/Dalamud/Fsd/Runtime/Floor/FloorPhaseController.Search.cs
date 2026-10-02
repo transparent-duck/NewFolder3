@@ -2230,7 +2230,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				AllowStatusOverlap = allowStatusOverlap,
 				FlightUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.FlightPomanderSlotIndex),
 				FortuneUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.FortunePomanderSlotIndex),
-				HasteUsable = dd != null && dd->DeepDungeonId == 4 && IsPomanderAvailableForFloorUse(FloorInitPlanner.HastePomanderSlotIndex),
+				HasteUsable = dd != null && dd->DeepDungeonId == 4 && CombatBuffUsable(FloorInitPlanner.HastePomanderSlotIndex, allowStatusOverlap),
 				FlightActive = _pomanderManager.IsActive(FloorInitPlanner.FlightPomanderSlotIndex),
 				FortuneActive = _pomanderManager.IsActive(FloorInitPlanner.FortunePomanderSlotIndex),
 				HasHasteStatus = _pomanderManager.IsActive(FloorInitPlanner.HastePomanderSlotIndex) || HasLocalPlayerStatus(PtHasteStatusId),
@@ -2402,7 +2402,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			if (runtime == null ||
 			    runtime.IsDisposed ||
 			    !CanAttemptPomanderUse(allowCombat: _ctx?.Duty.IsBossFloor == true &&
-                    slotIndex is FloorInitPlanner.StrengthPomanderSlotIndex or FloorInitPlanner.SteelPomanderSlotIndex) ||
+                    slotIndex is FloorInitPlanner.StrengthPomanderSlotIndex or FloorInitPlanner.SteelPomanderSlotIndex or FloorInitPlanner.HastePomanderSlotIndex) ||
 			    !DeepDungeonFloorItemUsePolicy.CanUsePomanders(
 				    dd->DeepDungeonBanId) ||
 			    !IsPomanderAvailableForFloorUse(slotIndex))

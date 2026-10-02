@@ -3894,6 +3894,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			public PendingIntuitionState PendingIntuition { get; } = new();
 			public PendingFloorItemUse? PendingFloorItemUse { get; private set; }
 			public bool BossNavigationResolved { get; set; }
+            public DateTime NextBossDiagnosticAtUtc { get; set; }
 			public FloorSearchState SearchState { get; } = new();
 			public FloorObjectEvidenceTracker ObjectEvidence { get; }
 			public RunFloorTelemetryTrace? RunTelemetry { get; }
@@ -4242,6 +4243,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				return;
 			}
 
+            RecordBossCombatSnapshot();
 			bool externalMovement = _ctx?.Configuration.BossMechanicsActive == true;
 			if (externalMovement)
 				_pt30DivineFavorFlashHelper?.Reset();

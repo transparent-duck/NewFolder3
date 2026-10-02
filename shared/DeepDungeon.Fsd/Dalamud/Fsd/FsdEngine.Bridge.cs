@@ -627,6 +627,7 @@ namespace DeepDungeon.Fsd.Dalamud
 				leaveAfterMinutes = activeRunOptions?.LeaveAfterMinutes ?? 0,
 				inDuty = status?.inDuty ?? dd != null,
 				playerDead = player?.IsDead ?? false,
+                playerHp = player?.CurrentHp, playerMaxHp = player?.MaxHp, playerJobId = player?.ClassJob.RowId,
 				inCombat = Service.Condition[ConditionFlag.InCombat],
 				vnavRunning = DeepDungeon.Fsd.Dalamud.moveHelper.VNav.Path.IsRunning(),
 				vnavWaypoints = DeepDungeon.Fsd.Dalamud.moveHelper.VNav.Path.NumWaypoints(),

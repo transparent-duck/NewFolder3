@@ -18,7 +18,7 @@ public readonly record struct FarmingItemPolicy(CombatBuffUse CombatBuffs, bool 
         stock > 0 && (CombatBuffs switch
         {
             CombatBuffUse.Eager => true,
-            CombatBuffUse.ReserveForBoss => bossFloor || stock >= 3 || overcapRelief,
+            CombatBuffUse.ReserveForBoss => bossFloor || overcapRelief,
             _ => false
         });
 

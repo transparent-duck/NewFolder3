@@ -1,4 +1,6 @@
 using System;
+using System.Numerics;
+using DeepDungeon.Fsd.Core;
 using global::Dalamud.Game.ClientState.Objects.Types;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
@@ -130,58 +132,56 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
             return best;
         }
 
-        public static unsafe IBattleChara? PickHostileLowestHP(float range, bool onlyInRange, bool mustBeInCombat, long minHpExclusive, Func<IBattleChara, bool>? predicate = null)
+        // Optional BMR arena data is sampled by the caller, not queried inside the object scan.
+        public static IBattleChara? PickBossTarget(Vector2 center, Func<IBattleChara, bool>? predicate)
         {
-            float r2 = range * range;
             var player = Service.LocalPlayer;
-            if (player == null)
-                return null;
-
+            if (player == null) return null;
             IBattleChara? best = null;
-            long bestHp = long.MaxValue;
-
+            BossTargetPriority bestPriority = default;
             foreach (var obj in Service.GameObjects)
             {
-                if (obj is IBattleNpc bnpc
-                    && obj.ObjectKind == global::Dalamud.Game.ClientState.Objects.Enums.ObjectKind.BattleNpc
-                    && (global::Dalamud.Game.ClientState.Objects.Enums.BattleNpcSubKind)obj.SubKind == global::Dalamud.Game.ClientState.Objects.Enums.BattleNpcSubKind.Combatant
-                    && bnpc.IsTargetable && !bnpc.IsDead)
+                if (obj is not IBattleNpc npc || !IsBossCandidate(npc, player.Position, predicate)) continue;
+                var delta = new Vector2(npc.Position.X, npc.Position.Z) - center;
+                var priority = new BossTargetPriority(npc.MaxHp, delta.LengthSquared(), npc.GameObjectId);
+                if (best == null || priority.Precedes(bestPriority))
                 {
-                    if (mustBeInCombat)
-                    {
-                        try
-                        {
-                            var ptr = (Character*)bnpc.Address;
-                            if (ptr == null || !ptr->InCombat)
-                                continue;
-                        }
-                        catch
-                        {
-                            continue;
-                        }
-                    }
-
-                    if (onlyInRange)
-                    {
-                        var dx = obj.Position.X - player.Position.X;
-                        var dz = obj.Position.Z - player.Position.Z;
-                        if (dx * dx + dz * dz > r2)
-                            continue;
-                    }
-
-                    if (predicate != null && !predicate(bnpc))
-                        continue;
-
-                    long hp = bnpc.CurrentHp;
-                    if (hp > minHpExclusive && hp < bestHp)
-                    {
-                        bestHp = hp;
-                        best = bnpc;
-                    }
+                    best = npc;
+                    bestPriority = priority;
                 }
             }
-
             return best;
+        }
+
+        public static Vector2 BossTargetFallbackCenter(Func<IBattleChara, bool>? predicate)
+        {
+            var player = Service.LocalPlayer;
+            if (player == null) return default;
+            uint minMaxHp = uint.MaxValue;
+            Vector2 sum = default;
+            int count = 0;
+            foreach (var obj in Service.GameObjects)
+            {
+                if (obj is not IBattleNpc npc || !IsBossCandidate(npc, player.Position, predicate)) continue;
+                if (npc.MaxHp > minMaxHp) continue;
+                if (npc.MaxHp < minMaxHp) { minMaxHp = npc.MaxHp; sum = default; count = 0; }
+                sum += new Vector2(npc.Position.X, npc.Position.Z);
+                count++;
+            }
+            return count > 0 ? sum / count : new Vector2(player.Position.X, player.Position.Z);
+        }
+
+        private static unsafe bool IsBossCandidate(IBattleNpc npc, Vector3 playerPosition, Func<IBattleChara, bool>? predicate)
+        {
+            if (!npc.IsTargetable || npc.IsDead || npc.CurrentHp <= 1 || npc.MaxHp == 0 ||
+                (global::Dalamud.Game.ClientState.Objects.Enums.BattleNpcSubKind)npc.SubKind !=
+                    global::Dalamud.Game.ClientState.Objects.Enums.BattleNpcSubKind.Combatant ||
+                predicate != null && !predicate(npc)) return false;
+            var delta = new Vector2(npc.Position.X - playerPosition.X, npc.Position.Z - playerPosition.Z);
+            // Select across the boss room so BMR can approach an add outside the current spell range.
+            if (delta.LengthSquared() > 60 * 60) return false;
+            var native = (Character*)npc.Address;
+            return native != null && native->InCombat;
         }
 
 		public static unsafe IBattleChara? PickAggroedHostile(float range, out bool withinRange, ulong preferredGameObjectId = 0)

@@ -88,7 +88,7 @@ namespace DeepDungeon.Fsd.Core
                 FloorInitPlanner.StrengthPomanderSlotIndex => snapshot.StrengthUsable && (snapshot.AllowStatusOverlap || !snapshot.HasStrengthStatus),
                 FloorInitPlanner.SteelPomanderSlotIndex => snapshot.SteelUsable && (snapshot.AllowStatusOverlap || !snapshot.HasSteelStatus),
                 FloorInitPlanner.RaisingPomanderSlotIndex => snapshot.RaisingUsable && !snapshot.RaisingActive,
-                FloorInitPlanner.HastePomanderSlotIndex => snapshot.HasteUsable && !snapshot.HasHasteStatus,
+                FloorInitPlanner.HastePomanderSlotIndex => snapshot.HasteUsable && (snapshot.AllowStatusOverlap || !snapshot.HasHasteStatus),
                 FloorInitPlanner.FlightPomanderSlotIndex => snapshot.FlightUsable && !snapshot.FlightActive && snapshot.NextFloorIsMob,
                 FloorInitPlanner.FortunePomanderSlotIndex => snapshot.FortuneUsable && !snapshot.FortuneActive,
                 _ => false

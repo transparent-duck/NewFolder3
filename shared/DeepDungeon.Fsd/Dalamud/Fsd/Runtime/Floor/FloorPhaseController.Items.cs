@@ -33,6 +33,9 @@ public sealed partial class FloorPhaseController
             TryUsePomander(FloorInitPlanner.SteelPomanderSlotIndex, dd, "boss steel refresh")) return;
         if (CombatBuffUsable(FloorInitPlanner.StrengthPomanderSlotIndex) &&
             FarmingItemPolicy.NeedsBossRefresh(LocalStatusRemaining(StrengthStatusId)))
-            TryUsePomander(FloorInitPlanner.StrengthPomanderSlotIndex, dd, "boss strength refresh");
+            if (TryUsePomander(FloorInitPlanner.StrengthPomanderSlotIndex, dd, "boss strength refresh")) return;
+        if (dd->DeepDungeonId == 4 && CombatBuffUsable(FloorInitPlanner.HastePomanderSlotIndex) &&
+            FarmingItemPolicy.NeedsBossRefresh(LocalStatusRemaining(PtHasteStatusId)))
+            TryUsePomander(FloorInitPlanner.HastePomanderSlotIndex, dd, "boss haste refresh");
     }
 }

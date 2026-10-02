@@ -3,6 +3,10 @@
   "engineVersion": "2.0.0",
   "files": [
     {
+      "path": "Core/BossTargetPriority.cs",
+      "sha256": "adb177abb6e8dc85a988e88b6ab447a57818e000c0c47687081a19c9f75d0c28"
+    },
+    {
       "path": "Core/ControlledPtSurveyPolicy.cs",
       "sha256": "f4cca2158071fe1fc03e4bf072163fbc83e6170fa814a1b2ac7e726d9e02016a"
     },
@@ -60,7 +64,7 @@
     },
     {
       "path": "Core/FarmingItemPolicy.cs",
-      "sha256": "8fd3d4c0091149f2b12c4993a7c969fdaeea09540ba23879c802d9ecb42b0b3d"
+      "sha256": "157950cbb148a376978da34c2b8d6d4169ff416b3f35666f68f41caa2c7808a0"
     },
     {
       "path": "Core/FarmingPlan.cs",
@@ -108,7 +112,7 @@
     },
     {
       "path": "Core/GeneralAutoPomanderPlanner.cs",
-      "sha256": "0b62500f1998a74bc3615c7669d860f79a650281ad6d10feaa4a3a08d503b1c7"
+      "sha256": "90058e5de856f676ef8daad1d6ac37557ffee173a2dbca435d8fd6b8b3bc88e8"
     },
     {
       "path": "Core/GeneralAutoPomanderSnapshot.cs",
@@ -260,7 +264,7 @@
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Bridge.cs",
-      "sha256": "90d8e4e88c955d4b63b309b01ee40c9eae137f197063107e1c3c558e9538fd84"
+      "sha256": "0a2049a05971e47aae4eb2c2c2cf9265898074ecaa35a2aa7597133ef00207e2"
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Companions.cs",
@@ -360,7 +364,7 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Combat/CombatAssistPolicy.cs",
-      "sha256": "cdaaccd17d95575ff5a083da6aa4b7cd80a25841eda2c2ff8bf4d89edea9a4b9"
+      "sha256": "b2dd7cf8e2409779b255b2f197aea42cb5014c9e9ff7a16445dd873b0346e01c"
     },
     {
       "path": "Dalamud/Fsd/Runtime/DeepDungeonRunLogExporter.cs",
@@ -423,8 +427,12 @@
       "sha256": "d994052332930860e2df4fe05b55d1afc49b264a1ab0c2ef3d012f740887f0d0"
     },
     {
+      "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.BossTelemetry.cs",
+      "sha256": "1791af62fc611c8a1d4cdec1fd161b73f8a707ff7eec4389ba1725d93196a080"
+    },
+    {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.cs",
-      "sha256": "75b1c78383dc2f0440a199a05ab4d9135007e28fc57e3d32a040269926fb9cec"
+      "sha256": "e668197353186670649875416446464666e09197c0b10b9ab74c16ca5fe2a6b8"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.Farming.cs",
@@ -432,7 +440,7 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.Items.cs",
-      "sha256": "45684c2480072b2ebf2f445f0e4767150d512656b8714c9d438abeec6cebe804"
+      "sha256": "bfc7568f227a146e488b90ec1ace66bb82f0a3485a9619dc82becf45f55f492c"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.Passage.cs",
@@ -452,7 +460,7 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.Search.cs",
-      "sha256": "a5d205d675e3f5d2961c1e695d2b54de1207e89cfb07ecd64652f44f7b134518"
+      "sha256": "680e2bf87e2452c11b77541e9eb789be9a60627f5525110486bd2c7a5616e311"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/Pt30DivineFavorFlashHelper.cs",
@@ -476,7 +484,7 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Helpers/CombatTargetingHelpers.cs",
-      "sha256": "b16d3861f39eab3daf7e9b46618f9bd11444e1868536d3669224493de7b20a40"
+      "sha256": "35b2580b9d1275ca9b0690330713c26969596bb89a8ebf161bc0bf1e0f15283a"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Helpers/DutyTransitionUtil.cs",
