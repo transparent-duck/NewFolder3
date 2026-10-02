@@ -6,6 +6,7 @@ using DeepDungeon.Fsd.Core;
 using global::Dalamud.Game.ClientState.Conditions;
 using global::Dalamud.Game.ClientState.Objects.SubKinds;
 using DeepDungeon.Fsd.Dalamud.GameState;
+using DeepDungeon.Fsd.Dalamud.Runtime.Helpers;
 using DeepDungeon.Fsd.Dalamud.Map;
 using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
 using DeepDungeon.Fsd.Dalamud.Runtime.Search;
@@ -2359,6 +2360,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			if (_floorRuntime?.PendingFloorItemUse != null ||
 			    (!allowCombat && Service.Condition[ConditionFlag.InCombat]) ||
 			    Service.Condition[ConditionFlag.Casting] ||
+                Service.LocalPlayer?.IsCasting == true ||
+                !PomanderManager.CanDispatchItemRequest() ||
 			    Service.Condition[ConditionFlag.BetweenAreas] ||
 			    Service.Condition[ConditionFlag.BetweenAreas51])
 			{

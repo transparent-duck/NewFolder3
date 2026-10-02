@@ -1,5 +1,6 @@
 using System;
 using DeepDungeon.Fsd.Dalamud;
+using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.Game.InstanceContent;
 
 namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
@@ -12,13 +13,21 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 		private static readonly TimeSpan FailureLogInterval = TimeSpan.FromSeconds(5);
 		private DateTime _nextFailureLogAtUtc = DateTime.MinValue;
 
+        // Both native item requests reject any positive animation lock, even between spell casts.
+        // A busy frame is not a dispatched attempt and must not consume the confirmation retry budget.
+        public static unsafe bool CanDispatchItemRequest()
+        {
+            var manager = ActionManager.Instance();
+            return manager != null && manager->AnimationLock <= 0;
+        }
+
 		/// <summary>
 		/// Returns whether the native request was dispatched. The native method is
 		/// void, so this does not prove that the server accepted or consumed it.
 		/// </summary>
 		public unsafe bool Use(uint pomanderSlotIndex)
 		{
-			if (!TryGetDeepDungeon(nameof(Use), out var dd))
+			if (!CanDispatchItemRequest() || !TryGetDeepDungeon(nameof(Use), out var dd))
 				return false;
 
 			dd->UsePomander(pomanderSlotIndex);
@@ -88,7 +97,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 		/// </summary>
 		public unsafe bool UseStone(byte stoneId)
 		{
-			if (!TryGetDeepDungeon(nameof(UseStone), out var dd))
+			if (!CanDispatchItemRequest() || !TryGetDeepDungeon(nameof(UseStone), out var dd))
 				return false;
 
 			var stones = dd->Magicite;
