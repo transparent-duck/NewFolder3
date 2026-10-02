@@ -743,6 +743,12 @@ namespace DeepDungeon.Fsd.Dalamud
 			bool supported = scenarioKey != null;
 			bool serviceConfigured = _detailedMapHostOptions.HasOnlineCatalogService;
 			bool enabled = supported && serviceConfigured && _configuration.UseDetailedMap;
+			DetailedMapCatalogStatusSnapshot? status =
+				supported && serviceConfigured && _configuration.UseDetailedMap
+					? _detailedMapCatalogManager.GetStatus(
+						enabled: true,
+						scenarioKey)
+					: null;
 
 			ImGui.Spacing();
 			ImGui.BeginDisabled(!supported || !serviceConfigured);
@@ -778,6 +784,17 @@ namespace DeepDungeon.Fsd.Dalamud
 				ImGui.PopTextWrapPos();
 				ImGui.EndTooltip();
 			}
+			if (enabled && status?.RetryAvailable == true)
+			{
+				ImGui.SameLine();
+				if (ImGui.SmallButton("重試下載##fsdDetailedMapRetry"))
+				{
+					_detailedMapCatalogManager.RetryUpdate(
+						enabled: true,
+						selectedScenarioKey: scenarioKey,
+						runActive: runActive);
+				}
+			}
 
 			if (!serviceConfigured)
 			{
@@ -788,29 +805,26 @@ namespace DeepDungeon.Fsd.Dalamud
 			if (!supported || !_configuration.UseDetailedMap)
 				return;
 
-			DetailedMapCatalogStatusSnapshot status =
-				_detailedMapCatalogManager.GetStatus(
-					enabled: true,
-					scenarioKey);
+			DetailedMapCatalogStatusSnapshot detailedMapStatus = status!.Value;
 			ImGui.TextDisabled(
-				status.ReleaseId == null
+				detailedMapStatus.ReleaseId == null
 					? "資料版本: 不可用"
-					: $"數據版本: {status.ReleaseId}");
-			if (status.CandidateCount > 0)
+					: $"數據版本: {detailedMapStatus.ReleaseId}");
+			if (detailedMapStatus.CandidateCount > 0)
 			{
 				double coverage =
-					(double)status.KnownSuccessorCount /
-					status.CandidateCount *
+					(double)detailedMapStatus.KnownSuccessorCount /
+					detailedMapStatus.CandidateCount *
 					100d;
 				ImGui.TextDisabled(
-					$"詳細寶藏數據: {status.KnownSuccessorCount}/{status.CandidateCount} ({coverage:F1}%)");
+					$"詳細寶藏數據: {detailedMapStatus.KnownSuccessorCount}/{detailedMapStatus.CandidateCount} ({coverage:F1}%)");
 			}
-			if (!status.HasValidCatalog ||
-			    status.Checking ||
-			    status.Message.Contains("failed", StringComparison.OrdinalIgnoreCase) ||
-			    status.Message.Contains("invalid", StringComparison.OrdinalIgnoreCase))
+			if (!detailedMapStatus.HasValidCatalog ||
+			    detailedMapStatus.Checking ||
+			    detailedMapStatus.Message.Contains("failed", StringComparison.OrdinalIgnoreCase) ||
+			    detailedMapStatus.Message.Contains("invalid", StringComparison.OrdinalIgnoreCase))
 			{
-				ImGui.TextWrapped(status.Message);
+				ImGui.TextWrapped(detailedMapStatus.Message);
 			}
 		}
 

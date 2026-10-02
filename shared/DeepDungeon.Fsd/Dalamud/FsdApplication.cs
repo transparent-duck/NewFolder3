@@ -45,6 +45,7 @@ public sealed class FsdApplication : IFsdApplication
             _settings = settingsStore.Load()
                 ?? throw new InvalidOperationException("The FSD settings store returned null.");
             _settings.AttachStore(settingsStore);
+            _settings.BossMechanics ??= new();
             FsdSettingsValidator.ValidateOrThrow(_settings);
             lease = new FsdExecutionLease($"{hostIdentity}/{hostVersion}");
             _lease = lease;
@@ -147,6 +148,7 @@ public sealed class FsdApplication : IFsdApplication
 
     public void DrawDeepDungeonFormalPanel() { ThrowIfDisposed(); _module.DrawDeepDungeonFormalPanel(); }
     public void DrawGeneralAssistantSettings() { ThrowIfDisposed(); _module.DrawGeneralAssistantSettings(); }
+    public void DrawCompanionSettings() { ThrowIfDisposed(); _module.DrawCompanionSettings(); }
     public void DrawDeepDungeonDebugPanel() { ThrowIfDisposed(); _module.DrawDeepDungeonDebugPanel(); }
     public object GetMobPilotSnapshot() { ThrowIfDisposed(); return _module.GetMobPilotSnapshot(); }
     public object GetPilgrimsTraverseFsdPreflight(int startFloor) { ThrowIfDisposed(); return _module.GetPilgrimsTraverseFsdPreflight(startFloor); }

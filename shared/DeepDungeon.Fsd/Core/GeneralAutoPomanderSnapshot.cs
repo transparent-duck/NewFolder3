@@ -9,6 +9,13 @@ namespace DeepDungeon.Fsd.Core
         public bool PurityUsable { get; init; }
         public bool SerenityUsable { get; init; }
         public bool RaisingUsable { get; init; }
+        public bool FlightUsable { get; init; }
+        public bool FortuneUsable { get; init; }
+        public bool HasteUsable { get; init; }
+        public bool FlightActive { get; init; }
+        public bool FortuneActive { get; init; }
+        public bool HasHasteStatus { get; init; }
+        public bool NextFloorIsMob { get; init; }
         public bool AffluenceActive { get; init; }
         public bool RaisingActive { get; init; }
         public bool HasStrengthStatus { get; init; }

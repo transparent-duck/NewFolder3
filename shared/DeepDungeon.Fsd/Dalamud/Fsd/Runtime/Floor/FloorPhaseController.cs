@@ -135,6 +135,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		{
 			Automatic,
 			GoldChestOvercap,
+			SilverChestOvercap,
 			ControlledStrength,
 			NaturalReveal,
 			ControlledReveal,
@@ -3364,6 +3365,9 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				case "GoldChestOvercapObserved":
 					HandleGoldChestOvercapObserved(info.GoldChestOvercapSlotIndex);
 					break;
+				case "SilverChestOvercapObserved":
+					HandleSilverChestOvercapObserved(info.SilverChestOvercapDemicloneRowId);
+					break;
 				case "LogMessage7272":
 					PendingIntuition.TryMarkResolved(info.EvidenceAttemptId);
 					if (info.EvidenceAccepted)
@@ -4218,7 +4222,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				return;
 			}
 
-			_pt30DivineFavorFlashHelper?.Update(dd);
+			bool externalMovement = _ctx?.Configuration.BossMechanicsActive == true;
+			if (externalMovement)
+				_pt30DivineFavorFlashHelper?.Reset();
+			else
+				_pt30DivineFavorFlashHelper?.Update(dd);
 
 			if (Service.Condition[ConditionFlag.InCombat])
 			{
@@ -4238,7 +4246,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			var boss = Runtime.Helpers.CombatTargetingHelpers.PickNearestHostile(60f, out _);
 			if (boss == null)
 			{
-				if (_pt30DivineFavorFlashHelper?.TryUpdateBossEngageMovement(dd, player.Position, out var pt30EngageStatus) == true)
+				if (!externalMovement && _pt30DivineFavorFlashHelper?.TryUpdateBossEngageMovement(dd, player.Position, out var pt30EngageStatus) == true)
 				{
 					_navHelper?.Cancel();
 					_status = pt30EngageStatus;
@@ -4271,7 +4279,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				});
 			}
 
-			if (_pt30DivineFavorFlashHelper?.TryUpdateBossEngageMovement(dd, player.Position, out var pt30BossEngageStatus) == true)
+			if (!externalMovement && _pt30DivineFavorFlashHelper?.TryUpdateBossEngageMovement(dd, player.Position, out var pt30BossEngageStatus) == true)
 			{
 				_navHelper?.Cancel();
 				_status = pt30BossEngageStatus;

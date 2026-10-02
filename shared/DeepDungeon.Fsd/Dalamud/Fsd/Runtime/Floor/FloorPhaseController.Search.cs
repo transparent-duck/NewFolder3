@@ -10,11 +10,13 @@ using DeepDungeon.Fsd.Dalamud.Map;
 using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
 using DeepDungeon.Fsd.Dalamud.Runtime.Search;
 using FFXIVClientStructs.FFXIV.Client.Game.InstanceContent;
+using FFXIVClientStructs.FFXIV.Client.Game.Event;
 
 namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 {
 	public sealed partial class FloorPhaseController
 	{
+		private const uint PtHasteStatusId = 4718;
 		private enum SearchExecutionKind
 		{
 			PlannedRoom,
@@ -800,6 +802,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 			if (TryHandleGoldChestOvercap(dd, player))
 				return;
+			if (TryHandleSilverChestOvercap(dd, player))
+				return;
 			if (TryUpdateChestReapproach(dd, player))
 				return;
 
@@ -1003,6 +1007,61 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				entityId = attempt.EntityId,
 				slotIndex = slotIndex.Value
 			});
+		}
+
+		private unsafe void HandleSilverChestOvercapObserved(uint? demicloneRowId)
+		{
+			var efw = EventFramework.Instance();
+			var dd = efw != null ? efw->GetInstanceContentDeepDungeon() : null;
+			var attempt = ActiveChestAttempt;
+			if (dd == null || dd->DeepDungeonId != 4 ||
+			    _floorRuntime is not { IsDisposed: false } runtime || runtime.Floor != dd->Floor ||
+			    _activeWaypoint?.Type != RoomObjectiveType.ChestSilver ||
+			    attempt == null || attempt.EntityId == 0 ||
+			    _taskRunner?.Phase != TaskPhase.WaitingPost ||
+			    !demicloneRowId.HasValue)
+				return;
+			attempt.PendingSilverOvercapDemicloneRowId = demicloneRowId;
+			RecordReplayEvent("silver-chest-overcap-correlated", new
+			{
+				floor = runtime.Floor, floorGeneration = runtime.Generation,
+				entityId = attempt.EntityId, demicloneRowId
+			});
+		}
+
+		private unsafe bool TryHandleSilverChestOvercap(InstanceContentDeepDungeon* dd, IPlayerCharacter player)
+		{
+			var attempt = ActiveChestAttempt;
+			if (attempt?.PendingSilverOvercapDemicloneRowId == null ||
+			    _activeWaypoint?.Type != RoomObjectiveType.ChestSilver)
+				return false;
+			if (_floorRuntime?.PendingFloorItemUse != null)
+				return true;
+			// All three incense types share this inventory. Use Serenity only to make space.
+			int count = _pomanderManager.GetStoneCount(1) + _pomanderManager.GetStoneCount(2) + _pomanderManager.GetStoneCount(3);
+			var decision = SilverChestOvercapPolicy.Decide(count,
+				GetStoneCountAvailableForFloorUse(3) > 0,
+				DeepDungeonFloorItemUsePolicy.CanUsePtIncense(dd->DeepDungeonBanId));
+			if (decision == SilverChestOvercapDecision.RetryChest)
+			{
+				attempt.PendingSilverOvercapDemicloneRowId = null;
+				attempt.NextInteractAt = DateTime.MinValue;
+				return false;
+			}
+			if (decision == SilverChestOvercapDecision.UseSerenityIncense &&
+			    _taskRunner!.ElapsedSeconds < _ctx!.ChestInteraction.GetOpenTimeoutSeconds(_activeWaypoint!.Value))
+			{
+				if (!CanAttemptPomanderUse() ||
+				    TryDispatchFloorStone(3, dd, "silver overcap relief (serenity incense)", FloorItemUsePurpose.SilverChestOvercap))
+					return true;
+			}
+			Service.Log.Info("[FloorPhase] Silver incense overcap cannot be relieved, skipping chest");
+			attempt.PendingSilverOvercapDemicloneRowId = null;
+			var phase = _taskRunner!.Phase;
+			double elapsed = _taskRunner.ElapsedSeconds;
+			_taskRunner.Reset();
+			HandleTaskSkip(dd, player, "SilverChestOvercapSkip", WaypointOutcomeKind.PolicySkipped, elapsed, phase);
+			return true;
 		}
 
 		private void ConfigureTaskForWaypoint(RoomWaypoint waypoint)
@@ -2102,6 +2161,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		{
 			if (_ctx?.ControlledPtSurvey != null)
 				return;
+			if (ActiveChestAttempt is { PendingGoldOvercapSlotIndex: not null } or { PendingSilverOvercapDemicloneRowId: not null })
+				return;
 
 			var decision = GeneralAutoPomanderPlanner.Decide(BuildGeneralAutoPomanderSnapshot(allowStatusOverlap: false, HasHarmfulFloorEffect(dd)));
 			if (decision.ShouldUse &&
@@ -2144,11 +2205,15 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			};
 		}
 
-		private GeneralAutoPomanderSnapshot BuildGeneralAutoPomanderSnapshot(bool allowStatusOverlap, bool hasHarmfulFloorEffect = false)
+		private unsafe GeneralAutoPomanderSnapshot BuildGeneralAutoPomanderSnapshot(bool allowStatusOverlap, bool hasHarmfulFloorEffect = false)
 		{
+			if (!CanAttemptPomanderUse())
+				return default;
+			var efw = EventFramework.Instance();
+			var dd = efw != null ? efw->GetInstanceContentDeepDungeon() : null;
 			return new GeneralAutoPomanderSnapshot
 			{
-				CanAttemptPomanderUse = CanAttemptPomanderUse(),
+				CanAttemptPomanderUse = true,
 				AffluenceUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.AffluencePomanderSlotIndex),
 				StrengthUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.StrengthPomanderSlotIndex),
 				SteelUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.SteelPomanderSlotIndex),
@@ -2161,7 +2226,14 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				HasSteelStatus = HasLocalPlayerStatus(SteelStatusId),
 				HasCurseStatus = HasLocalPlayerStatus(DeepDungeonCurseStatusId),
 				HasHarmfulFloorEffect = hasHarmfulFloorEffect,
-				AllowStatusOverlap = allowStatusOverlap
+				AllowStatusOverlap = allowStatusOverlap,
+				FlightUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.FlightPomanderSlotIndex),
+				FortuneUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.FortunePomanderSlotIndex),
+				HasteUsable = dd != null && dd->DeepDungeonId == 4 && IsPomanderAvailableForFloorUse(FloorInitPlanner.HastePomanderSlotIndex),
+				FlightActive = _pomanderManager.IsActive(FloorInitPlanner.FlightPomanderSlotIndex),
+				FortuneActive = _pomanderManager.IsActive(FloorInitPlanner.FortunePomanderSlotIndex),
+				HasHasteStatus = _pomanderManager.IsActive(FloorInitPlanner.HastePomanderSlotIndex) || HasLocalPlayerStatus(PtHasteStatusId),
+				NextFloorIsMob = dd != null && !DeepDungeonHelper.IsBossFloor(dd->DeepDungeonId, (byte)(dd->Floor + 1))
 			};
 		}
 
@@ -2189,7 +2261,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			}
 		}
 
-		private bool ShouldUseGoldChestOvercapPomander(uint slotIndex)
+		private unsafe bool ShouldUseGoldChestOvercapPomander(uint slotIndex)
 		{
 			if (_chatWatchers == null || _executor == null)
 			{
@@ -2587,6 +2659,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			else
 			{
 				byte stoneId = (byte)pending.Key.ItemId;
+				if (pending.Purpose == FloorItemUsePurpose.SilverChestOvercap &&
+				    ActiveChestAttempt is { PendingSilverOvercapDemicloneRowId: not null } chestAttempt)
+				{
+					chestAttempt.PendingSilverOvercapDemicloneRowId = null;
+					chestAttempt.NextInteractAt = DateTime.MinValue;
+				}
 				switch (pending.Purpose)
 				{
 					case FloorItemUsePurpose.NaturalReveal:

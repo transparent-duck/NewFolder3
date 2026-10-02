@@ -63,6 +63,13 @@ namespace DeepDungeon.Fsd.Core
                 };
             }
 
+            if (ShouldUseSlot(snapshot, FloorInitPlanner.HastePomanderSlotIndex))
+                return new GeneralAutoPomanderDecision { SlotIndex = FloorInitPlanner.HastePomanderSlotIndex, Reason = "auto haste" };
+            if (ShouldUseSlot(snapshot, FloorInitPlanner.FlightPomanderSlotIndex))
+                return new GeneralAutoPomanderDecision { SlotIndex = FloorInitPlanner.FlightPomanderSlotIndex, Reason = "auto flight" };
+            if (ShouldUseSlot(snapshot, FloorInitPlanner.FortunePomanderSlotIndex))
+                return new GeneralAutoPomanderDecision { SlotIndex = FloorInitPlanner.FortunePomanderSlotIndex, Reason = "auto fortune" };
+
             return default;
         }
 
@@ -81,6 +88,9 @@ namespace DeepDungeon.Fsd.Core
                 FloorInitPlanner.StrengthPomanderSlotIndex => snapshot.StrengthUsable && (snapshot.AllowStatusOverlap || !snapshot.HasStrengthStatus),
                 FloorInitPlanner.SteelPomanderSlotIndex => snapshot.SteelUsable && (snapshot.AllowStatusOverlap || !snapshot.HasSteelStatus),
                 FloorInitPlanner.RaisingPomanderSlotIndex => snapshot.RaisingUsable && !snapshot.RaisingActive,
+                FloorInitPlanner.HastePomanderSlotIndex => snapshot.HasteUsable && !snapshot.HasHasteStatus,
+                FloorInitPlanner.FlightPomanderSlotIndex => snapshot.FlightUsable && !snapshot.FlightActive && snapshot.NextFloorIsMob,
+                FloorInitPlanner.FortunePomanderSlotIndex => snapshot.FortuneUsable && !snapshot.FortuneActive,
                 _ => false
             };
         }

@@ -6,8 +6,11 @@ namespace DeepDungeon.Fsd.Core
         public const uint StrengthPomanderSlotIndex = 2;
         public const uint SteelPomanderSlotIndex = 3;
         public const uint AffluencePomanderSlotIndex = 4;
+        public const uint FlightPomanderSlotIndex = 5;
         public const uint PurityPomanderSlotIndex = 7;
+        public const uint FortunePomanderSlotIndex = 8;
         public const uint SerenityPomanderSlotIndex = 10;
+        public const uint HastePomanderSlotIndex = 11; // Pilgrim's Traverse only.
         public const uint IntuitionPomanderSlotIndex = 13;
         public const uint RaisingPomanderSlotIndex = 14;
 

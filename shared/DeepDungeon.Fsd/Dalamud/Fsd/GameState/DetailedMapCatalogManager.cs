@@ -79,6 +79,7 @@ internal readonly record struct DetailedMapCatalogStatusSnapshot(
     int KnownSuccessorCount,
     int CandidateCount,
     DateTime? LastSuccessfulCheckUtc,
+    bool RetryAvailable,
     string Message);
 
 internal sealed class DetailedMapCatalogManager : IDisposable
@@ -92,9 +93,6 @@ internal sealed class DetailedMapCatalogManager : IDisposable
     private const int MaximumHoardYieldBytes = 4 * 1024 * 1024;
     private static readonly TimeSpan SuccessfulCheckCooldown =
         TimeSpan.FromHours(24);
-    private static readonly TimeSpan FailedCheckRetryDelay =
-        TimeSpan.FromMinutes(5);
-
     private static readonly JsonSerializerOptions LocalJsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -118,7 +116,7 @@ internal sealed class DetailedMapCatalogManager : IDisposable
     private Task<CatalogCheckResult>? _checkTask;
     private string? _checkScenarioKey;
     private DateTime? _lastSuccessfulCheckUtc;
-    private DateTime _nextFailedCheckRetryUtc = DateTime.MinValue;
+    private bool _manualRetryRequested;
     private string? _latestEtag;
     private string _localLoadError = string.Empty;
     private string _hoardYieldLoadError = string.Empty;
@@ -232,28 +230,27 @@ internal sealed class DetailedMapCatalogManager : IDisposable
 
         if (!enabled)
         {
-            if (_lastEnabled)
-                _nextFailedCheckRetryUtc = DateTime.MinValue;
+            _manualRetryRequested = false;
             _lastEnabled = false;
             if (_deleteCatalogsWhenDisabled && _activeRun == null)
                 DeleteDownloadedCatalogs();
             return;
         }
 
-        if (!_lastEnabled)
-            _nextFailedCheckRetryUtc = DateTime.MinValue;
         _lastEnabled = true;
-
+        bool automaticCheckAllowed =
+            string.IsNullOrWhiteSpace(_lastCheckError) &&
+            ShouldCheckForUpdate();
         if (_catalogBaseUri == null ||
             _httpClient == null ||
             !IsSupportedScenario(selectedScenarioKey) ||
             _checkTask != null ||
-            DateTime.UtcNow < _nextFailedCheckRetryUtc ||
-            !ShouldCheckForUpdate())
+            (!_manualRetryRequested && !automaticCheckAllowed))
         {
             return;
         }
 
+        _manualRetryRequested = false;
         bool installedReleaseComplete = IsInstalledReleaseComplete(
             _currentCatalog,
             _currentHoardYield);
@@ -263,6 +260,17 @@ internal sealed class DetailedMapCatalogManager : IDisposable
             installedReleaseComplete ? _installedPointer : null,
             installedReleaseComplete ? _latestEtag : null,
             CancellationToken.None);
+    }
+
+    internal void RetryUpdate(
+        bool enabled,
+        string? selectedScenarioKey,
+        bool runActive)
+    {
+        ThrowIfDisposed();
+        if (_checkTask == null)
+            _manualRetryRequested = true;
+        Update(enabled, selectedScenarioKey, runActive);
     }
 
     internal bool TryAcquireRunSnapshot(
@@ -386,6 +394,7 @@ internal sealed class DetailedMapCatalogManager : IDisposable
             knownSuccessors,
             candidates,
             _lastSuccessfulCheckUtc,
+            _checkTask == null && !string.IsNullOrWhiteSpace(_lastCheckError),
             message);
     }
 
@@ -426,8 +435,6 @@ internal sealed class DetailedMapCatalogManager : IDisposable
         catch (Exception error)
         {
             _lastCheckError = error.Message;
-            _nextFailedCheckRetryUtc =
-                DateTime.UtcNow + FailedCheckRetryDelay;
             Service.Log.Error(
                 $"[DetailedMapCatalog] Update check failed: {error}");
             return;
@@ -462,7 +469,6 @@ internal sealed class DetailedMapCatalogManager : IDisposable
             _latestEtag = result.Etag ?? _latestEtag;
             _lastSuccessfulCheckUtc = DateTime.UtcNow;
             _lastCheckError = string.Empty;
-            _nextFailedCheckRetryUtc = DateTime.MinValue;
             SaveCheckState();
             Service.Log.Info(
                 result.Kind == CatalogCheckResultKind.Updated
@@ -475,8 +481,6 @@ internal sealed class DetailedMapCatalogManager : IDisposable
             InvalidDataException)
         {
             _lastCheckError = error.Message;
-            _nextFailedCheckRetryUtc =
-                DateTime.UtcNow + FailedCheckRetryDelay;
             Service.Log.Error(
                 $"[DetailedMapCatalog] Failed to install verified catalog: {error}");
         }
@@ -1112,7 +1116,7 @@ internal sealed class DetailedMapCatalogManager : IDisposable
         _catalogRoot = GetScenarioRoot(_loadedScenarioKey);
         ClearLocalCatalogState();
         _lastCheckError = string.Empty;
-        _nextFailedCheckRetryUtc = DateTime.MinValue;
+        _manualRetryRequested = false;
         LoadCheckState();
         ReloadInstalledCatalog();
     }

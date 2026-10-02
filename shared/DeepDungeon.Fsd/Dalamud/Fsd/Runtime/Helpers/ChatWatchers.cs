@@ -23,7 +23,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 			long EvidenceAttemptId,
 			IntuitionEvidenceExpectationKind EvidenceExpectationKind,
 			byte EvidenceSourceFloor,
-			byte EvidenceTargetFloor);
+			byte EvidenceTargetFloor,
+			uint? SilverChestOvercapDemicloneRowId);
 
 		private readonly NativeDeepDungeonLogMessageSource _logMessageSource;
 		private readonly Action<NativeDeepDungeonLogMessage> _logMessageHandler;
@@ -186,6 +187,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 					if (message.ParameterCount > 0 && TryMapGoldChestOvercapSlot(message.Value1, out var slotIndex))
 						NotifyStateChanged("GoldChestOvercapObserved", goldChestOvercapSlotIndex: slotIndex);
 					break;
+				case 10287:
+					if (message.ParameterCount > 0 && message.Value1 is 4 or 5)
+						NotifyStateChanged("SilverChestOvercapObserved", silverChestOvercapDemicloneRowId: message.Value1);
+					break;
 				case 7256:
 					SightLogSequence++;
 					SightState = SightUseStateMachine.MarkConfirmed(SightState);
@@ -272,7 +277,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 		private void NotifyStateChanged(
 			string reason,
 			EvidenceReceipt evidence = default,
-			uint? goldChestOvercapSlotIndex = null)
+			uint? goldChestOvercapSlotIndex = null,
+			uint? silverChestOvercapDemicloneRowId = null)
 		{
 			StateChanged?.Invoke(new StateChangedInfo(
 				reason,
@@ -288,7 +294,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 				evidence.AttemptId,
 				evidence.ExpectationKind,
 				evidence.SourceFloor,
-				evidence.TargetFloor));
+				evidence.TargetFloor,
+				silverChestOvercapDemicloneRowId));
 		}
 
 		private static unsafe bool TryMapGoldChestOvercapSlot(uint rawPomanderId, out uint slotIndex)

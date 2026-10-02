@@ -7,6 +7,11 @@ public sealed class FsdSettings
     [JsonIgnore]
     private IFsdSettingsStore? _store;
 
+    public FsdBossMechanicsSettings BossMechanics { get; set; } = new();
+
+    [JsonIgnore, NonSerialized]
+    public bool BossMechanicsActive;
+
     public bool AutoUseRecoveryPotion { get; set; }
     public int RecoveryPotionHpThresholdPercent { get; set; } = 90;
     public bool NecromancerAutoOpenGoldChest { get; set; }

@@ -197,6 +197,8 @@ namespace DeepDungeon.Fsd.Dalamud
 			}
 
 			_ddHost.StopFsd();
+			if (!_ddHost.FsdActive)
+				_bossMechanics.Stop();
 			if (_ddHost.FsdActive)
 			{
 				return new

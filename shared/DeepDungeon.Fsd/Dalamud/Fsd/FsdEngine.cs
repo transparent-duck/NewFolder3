@@ -28,6 +28,7 @@ namespace DeepDungeon.Fsd.Dalamud
         private readonly FsdStartAuthorizationCallback? _tryAuthorizeFsdStart;
         private readonly Func<string?>? _fsdStartDenialNoticeProvider;
         private readonly NativeDeepDungeonLogMessageSource _logMessageSource;
+        private readonly FsdBossMechanicsController _bossMechanics = new(DispatchCompanionCommand);
         
 		private RunHost? _ddHost = null;
         private int _fsfScenarioIndex = 1;
@@ -281,7 +282,11 @@ namespace DeepDungeon.Fsd.Dalamud
             RefreshDeepDungeonStateSnapshot();
 
             // Tick the host to allow entry flows outside duty (FSD mode)
+            _bossMechanics.Update(IsRunActive, _currentDeepDungeonState, _configuration.BossMechanics);
+            _configuration.BossMechanicsActive = _bossMechanics.IsEnabled;
             _ddHost?.Update(framework);
+            _bossMechanics.Update(IsRunActive, _currentDeepDungeonState, _configuration.BossMechanics);
+            _configuration.BossMechanicsActive = _bossMechanics.IsEnabled;
             if (_detailedMapCatalogManager.ActiveRunSnapshot != null &&
                 _ddHost?.FsdActive != true)
             {
@@ -502,6 +507,7 @@ namespace DeepDungeon.Fsd.Dalamud
 
         public void Dispose()
         {
+            _bossMechanics.Stop();
             Service.ClientState.TerritoryChanged -= OnTerritoryChanged;
             ResetRoomPresentation();
             _detailedMapCatalogManager.ReleaseRunSnapshot();
@@ -524,6 +530,34 @@ namespace DeepDungeon.Fsd.Dalamud
             _recoveryPotion = null;
             if (_executionLease.IsHeld)
                 _executionLease.Release();
+        }
+
+        private static bool DispatchCompanionCommand(string command)
+        {
+            // One slash command only: never let a field accidentally send chat.
+            string trimmed = command.Trim();
+            if (!trimmed.StartsWith('/') || trimmed.IndexOfAny(['\r', '\n', '\0']) >= 0)
+            {
+                Service.Log.Warning("[FSD] Rejected invalid companion command.");
+                return false;
+            }
+            try
+            {
+                if (Service.CommandManager.ProcessCommand(trimmed))
+                    return true;
+                if (trimmed is "/bmrai on" or "/bmrai off")
+                {
+                    Service.Log.Warning("[FSD] Bossmod Reborn command is unavailable.");
+                    return false;
+                }
+                OmenTools.OmenService.ChatManager.Instance().SendMessage(trimmed);
+                return true;
+            }
+            catch (Exception error)
+            {
+                Service.Log.Error($"[FSD] Companion command failed: {error}");
+                return false;
+            }
         }
     }
 }

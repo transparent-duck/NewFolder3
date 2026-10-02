@@ -100,6 +100,7 @@ public sealed unsafe class NativeDeepDungeonLogMessageSource : IDisposable
             case 7272:
             case 7273:
             case 7274:
+            case 10287:
             case 11251:
                 break;
             default:

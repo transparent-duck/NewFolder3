@@ -27,6 +27,7 @@ namespace DeepDungeon.Fsd.Dalamud
 		internal bool Reapproaching;
 		internal bool AcceptanceRecorded;
 		internal uint? PendingGoldOvercapSlotIndex;
+		internal uint? PendingSilverOvercapDemicloneRowId;
 	}
 
 	internal readonly record struct ChestLifecycleSnapshot(
