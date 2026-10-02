@@ -68,7 +68,7 @@
     },
     {
       "path": "Core/FarmingPlan.cs",
-      "sha256": "4026606a34c254bd677621f153bf7e369cf27c8d9776f6e0d0044f63188d7053"
+      "sha256": "6601c07efa90fa04639415c6e2cc581446319e9d168013018e0f393c65706e8c"
     },
     {
       "path": "Core/FarmingSessionPolicy.cs",
@@ -185,6 +185,10 @@
     {
       "path": "Core/Pt30BossGeometry.cs",
       "sha256": "1c047954a478f287210bd66edcb0b15b7970ba5765e031a3f9f5ac75a3e0569a"
+    },
+    {
+      "path": "Core/Pt50QuicksandRecoveryPolicy.cs",
+      "sha256": "4fc2996472a3073541947723c4f3377a429bb6814bd8f7eb32553f0a3a4afefb"
     },
     {
       "path": "Core/ReadyFloorIntuitionPlanner.cs",
@@ -304,7 +308,7 @@
     },
     {
       "path": "Dalamud/Fsd/GameState/DeepDungeonUi.cs",
-      "sha256": "ee302f86788a08269b712fbf36c2afbc8d91de8c1057c80c988f69b64d23ec12"
+      "sha256": "4cfb645340bc73d1f1c729387ba926274c97d2dd82d1eb7cac23232a0d43235b"
     },
     {
       "path": "Dalamud/Fsd/GameState/DetailedMapCatalogManager.cs",
@@ -428,11 +432,11 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.BossTelemetry.cs",
-      "sha256": "9824a0ef036dfd1922a630d0e6b1024e0205c54b330da660173d2b28a14ab595"
+      "sha256": "5978913cb9700a8e547382a4cf6a4d86cfa05c1e91940ba6d13e01a3417ba7b5"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.cs",
-      "sha256": "5ea8433489439faacb0b9a84e34fb32cfb07b57a37a2672466714d83c7405c57"
+      "sha256": "75748a392471f24b4d6c284ae209e97c7aab3b9d781319001c5552c6f05bef13"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.Farming.cs",
@@ -465,6 +469,10 @@
     {
       "path": "Dalamud/Fsd/Runtime/Floor/Pt30DivineFavorFlashHelper.cs",
       "sha256": "4c8e8c112adc9dbc6a32cb2ace914c9b7b2411bea213b6cba8471e2d99fc85c1"
+    },
+    {
+      "path": "Dalamud/Fsd/Runtime/Floor/Pt50QuicksandRecoveryHelper.cs",
+      "sha256": "bb5ca21042de18dc323721108d69c44b164a8990f57c36d09fa75b835289089e"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/RunFloorTelemetryTrace.cs",

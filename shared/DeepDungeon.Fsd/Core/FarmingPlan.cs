@@ -72,6 +72,10 @@ public readonly record struct SaveSlotSnapshot(int Index, bool Empty, int StartF
 
 public static class SaveSlotUiPolicy
 {
+    public static bool IsBlockingMessage(string label, string? failedLabel, string? completedLabel) =>
+        (!string.IsNullOrWhiteSpace(failedLabel) && label == failedLabel) ||
+        (!string.IsNullOrWhiteSpace(completedLabel) && label == completedLabel);
+
     public static bool TryParse(int index, string? progress, string? emptyLabel, string identity,
         bool enabled, out SaveSlotSnapshot slot, out string error)
     {

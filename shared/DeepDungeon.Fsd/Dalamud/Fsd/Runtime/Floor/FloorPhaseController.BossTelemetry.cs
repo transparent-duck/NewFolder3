@@ -58,6 +58,7 @@ public sealed partial class FloorPhaseController
             targetId = Service.TargetManager.Target?.GameObjectId ?? 0,
             mechanicsActive = _ctx?.Configuration.BossMechanicsActive == true,
             pt30OrbitActive = _pt30DivineFavorFlashHelper?.IsDivineFavorMovementActive == true,
+            pt50RecoveryActive = _pt50QuicksandRecoveryHelper?.IsActive == true,
             pendingItem = runtime.PendingFloorItemUse?.Key,
             strengthStock = _pomanderManager.GetCount(2), steelStock = _pomanderManager.GetCount(3), hasteStock = _pomanderManager.GetCount(11),
             strengthUsable = _pomanderManager.IsUsable(2), steelUsable = _pomanderManager.IsUsable(3),

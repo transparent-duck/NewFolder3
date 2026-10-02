@@ -361,6 +361,9 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
                 string? emptyLabel = Service.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Addon>()?
                     .GetRow(10404).Text.ExtractText();
                 if (string.IsNullOrWhiteSpace(emptyLabel)) return ReportSaveReadFailure(save, "empty-label-unavailable", out error);
+                var addonSheet = Service.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Addon>();
+                string? failedLabel = addonSheet?.GetRow(10499).Text.ExtractText().Trim();
+                string? completedLabel = addonSheet?.GetRow(10497).Text.ExtractText().Trim();
                 var result = new List<SaveSlotSnapshot>(count);
                 for (int i = 0; i < count; i++)
                 {
@@ -375,6 +378,7 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
                     var text = textNode->GetAsAtkTextNode();
                     if (text == null) return ReportSaveReadFailure(save, $"progress-{i}-not-text", out error);
                     var identity = new List<string>();
+                    bool entryBlocked = false;
                     for (int nodeIndex = 0; nodeIndex < renderer->UldManager.NodeListCount; nodeIndex++)
                     {
                         var node = renderer->UldManager.NodeList[nodeIndex];
@@ -382,17 +386,22 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
                         var identityNode = node->GetAsAtkTextNode();
                         if (identityNode == null) continue;
                         string label = identityNode->NodeText.ExtractText().Trim();
+                        if (SaveSlotUiPolicy.IsBlockingMessage(label, failedLabel, completedLabel))
+                        {
+                            entryBlocked = true;
+                            continue;
+                        }
                         if (label.Length > 0 && label.Any(char.IsLetter) && !label.Any(char.IsDigit)) identity.Add(label);
                     }
                     if (!SaveSlotUiPolicy.TryParse(i, text->NodeText.ExtractText(), emptyLabel,
-                        string.Join("|", identity), !list->GetItemDisabledState(i), out var slot, out var parseError))
+                        string.Join("|", identity), !list->GetItemDisabledState(i) && !entryBlocked, out var slot, out var parseError))
                         return ReportSaveReadFailure(save, parseError, out error);
                     result.Add(slot);
                 }
                 slots = result;
                 error = string.Empty;
                 var snapshot = $"listNodeId={listNodeId}; count={count}; " + string.Join("; ",
-                    result.Select(slot => $"slot={slot.Index},empty={slot.Empty},enterable={slot.Enterable},progress='{slot.Progress}'"));
+                    result.Select(slot => $"slot={slot.Index},empty={slot.Empty},enterable={slot.Enterable},progress='{slot.Progress}',identity='{slot.Identity}'"));
                 if (!string.Equals(snapshot, _lastSaveReadSnapshot, StringComparison.Ordinal))
                 {
                     _lastSaveReadSnapshot = snapshot;
