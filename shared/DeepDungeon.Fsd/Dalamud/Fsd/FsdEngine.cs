@@ -284,6 +284,8 @@ namespace DeepDungeon.Fsd.Dalamud
             // Tick the host to allow entry flows outside duty (FSD mode)
             UpdateCompanionControls();
             _configuration.BossMechanicsActive = _bossMechanics.IsEnabled;
+            if (_ddHost?.Context is { } movementContext)
+                movementContext.SetBossMovementOverride ??= SetBossMovementOverride;
             _ddHost?.Update(framework);
             UpdateCompanionControls();
             _configuration.BossMechanicsActive = _bossMechanics.IsEnabled;

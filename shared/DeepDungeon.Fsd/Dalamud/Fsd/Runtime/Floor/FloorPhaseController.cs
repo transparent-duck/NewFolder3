@@ -267,7 +267,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			ResetPermissionBlocks();
 			ResetEngagedTargetProgress();
 			_pt30DivineFavorFlashHelper?.Dispose();
-			_pt30DivineFavorFlashHelper = new Pt30DivineFavorFlashHelper();
+			_pt30DivineFavorFlashHelper = new Pt30DivineFavorFlashHelper(active =>
+                _ctx?.SetBossMovementOverride?.Invoke(active) ?? _ctx?.Configuration.BossMechanicsActive != true);
 			ResetPatrolPlan();
 			_runRecorder = new DeepDungeonRunRecorder(BuildRecorderSessionName());
 			try
@@ -4245,10 +4246,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
             RecordBossCombatSnapshot();
 			bool externalMovement = _ctx?.Configuration.BossMechanicsActive == true;
-			if (externalMovement)
-				_pt30DivineFavorFlashHelper?.Reset();
-			else
-				_pt30DivineFavorFlashHelper?.Update(dd);
+			_pt30DivineFavorFlashHelper?.Update(dd);
 
 			if (Service.Condition[ConditionFlag.InCombat])
 			{

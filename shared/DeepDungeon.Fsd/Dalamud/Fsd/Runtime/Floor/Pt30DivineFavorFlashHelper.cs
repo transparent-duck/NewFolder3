@@ -30,11 +30,14 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		private Vector3 _lastOrbitSamplePosition;
 		private int _orbitDirection;
 		private bool _disposed;
+		private readonly Func<bool, bool> _setMovementOverride;
+		private bool _ownsMovementOverride;
 
 		public bool IsDivineFavorMovementActive => IsDivineFavorOrbitActive(DateTime.UtcNow) && _movementInputController.Enabled;
 
-		public Pt30DivineFavorFlashHelper()
+		public Pt30DivineFavorFlashHelper(Func<bool, bool> setMovementOverride)
 		{
+			_setMovementOverride = setMovementOverride;
 			_movementInputController.IsAutoMove = false;
 			if (_movementInputController.Enabled)
 				_movementInputController.Enabled = false;
@@ -132,6 +135,16 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				if (actionId != DivineFavorVisualActionId && actionId != DivineFavorFirstActionId)
 					continue;
 
+				if (!_setMovementOverride(true))
+				{
+					if (now - _lastOrbitFailureLogAt >= OrbitFailureLogInterval)
+					{
+						_lastOrbitFailureLogAt = now;
+						Service.Log.Warning("[FloorPhase] PT30 orbit denied: external movement disable failed");
+					}
+					return;
+				}
+				_ownsMovementOverride = true;
 				var duration = actionId == DivineFavorVisualActionId
 					? DivineFavorVisualOrbitDuration
 					: DivineFavorFirstOrbitDuration;
@@ -204,6 +217,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			_lastOrbitDirectionReverseAt = DateTime.MinValue;
 			_orbitDirection = 0;
 			StopMovement();
+			if (_ownsMovementOverride)
+			{
+				_ownsMovementOverride = false;
+				_setMovementOverride(false);
+				Service.Log.Info("[FloorPhase] PT30 Divine Favor orbit ended; releasing movement to mode policy");
+			}
 		}
 
 		private void StopMovement()

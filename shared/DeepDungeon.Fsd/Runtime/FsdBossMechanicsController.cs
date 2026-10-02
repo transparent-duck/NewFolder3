@@ -9,11 +9,26 @@ public sealed class FsdBossMechanicsController
     private bool _hasPolicy;
     private bool _runWasActive;
     private bool _desiredEnabled;
+    private bool _internalMovementOverride;
     private string _enableCommand = string.Empty;
     private string _disableCommand = string.Empty;
 
     public FsdBossMechanicsController(Func<string, bool> dispatch) => _dispatch = dispatch;
     public bool IsEnabled { get; private set; }
+
+    // Acquire synchronously before internal movement starts. Failed disable keeps external ownership.
+    public bool SetInternalMovementOverride(bool active)
+    {
+        if (active == _internalMovementOverride) return true;
+        if (active && IsEnabled)
+        {
+            if (!Send(_disableCommand)) return false;
+            _desiredEnabled = IsEnabled = false;
+        }
+        _internalMovementOverride = active;
+        // Release does not enable directly: the next Update applies the current mode/run policy.
+        return true;
+    }
 
     public void Update(bool runActive, in DeepDungeonStateSnapshot state, FsdBossMechanicsSettings settings, FarmingMode? mode = null)
     {
@@ -41,7 +56,8 @@ public sealed class FsdBossMechanicsController
 
         string on = settings.GetEnableCommand() ?? string.Empty;
         string off = settings.GetDisableCommand() ?? string.Empty;
-        bool enabled = mode == FarmingMode.DeepProgression || state.FloorKind == DeepDungeonFloorKind.Boss;
+        bool enabled = !_internalMovementOverride &&
+            (mode == FarmingMode.DeepProgression || state.FloorKind == DeepDungeonFloorKind.Boss);
         bool changed = on != _enableCommand || off != _disableCommand;
         if (_hasPolicy && !changed && enabled == _desiredEnabled)
             return;
@@ -61,7 +77,7 @@ public sealed class FsdBossMechanicsController
             return;
         Send(_disableCommand);
         _hasPolicy = _desiredEnabled = IsEnabled = false;
-        _runWasActive = false;
+        _runWasActive = _internalMovementOverride = false;
     }
 
     private bool Send(string command) =>

@@ -45,10 +45,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 		private static readonly TimeSpan NoWindowReinteractDelay = TimeSpan.FromMilliseconds(2200);
 
 		public GenericDeleteSaveFlow(DungeonData dungeon, int slotIndex,
-            Func<IReadOnlyList<DeepDungeon.Fsd.Core.SaveSlotSnapshot>, string?>? validateSource = null)
+			Func<IReadOnlyList<DeepDungeon.Fsd.Core.SaveSlotSnapshot>, string?>? validateSource = null)
 		{
 			_dungeon = dungeon;
-            _validateSource = validateSource;
+			_validateSource = validateSource;
 			_slotIndex = slotIndex >= 0 ? slotIndex : throw new ArgumentOutOfRangeException(nameof(slotIndex));
 		}
 
@@ -150,8 +150,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 					return Fail($"{_dungeon.Name} Del: slot {(_slotIndex + 1)} is already empty");
 				}
 
-                string? sourceError = _validateSource?.Invoke(slots);
-                if (!string.IsNullOrEmpty(sourceError)) return Fail(sourceError);
+				string? sourceError = _validateSource?.Invoke(slots);
+				if (!string.IsNullOrEmpty(sourceError)) return Fail(sourceError);
 				SetStatus($"{_dungeon.Name} Del: clicking slot {(_slotIndex + 1)}");
 				// Use Agent with delete mode parameter
 				if (!DeepDungeonUi.ClickSaveSlotForDelete(_slotIndex))
@@ -259,6 +259,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 				var distance = Vector3.Distance(player.Position, npc.Position);
 				if (distance > NpcInteractionGuard.MaxInteractDistance)
 				{
+					if (!moveHelper.VNav.NavmeshReady())
+					{
+						SetStatus($"{_dungeon.Name} Del: waiting for navigation mesh");
+						return;
+					}
 					var navState = _npcNavHelper?.Navigate(npc.Position, player.Position, NpcInteractionGuard.MaxInteractDistance - 0.4f) ?? NavigationState.Failed;
 					SetStatus(navState is NavigationState.Failed or NavigationState.StuckGiveUp
 						? $"{_dungeon.Name} Del: NPC navigation failed ({distance:F1}m)"

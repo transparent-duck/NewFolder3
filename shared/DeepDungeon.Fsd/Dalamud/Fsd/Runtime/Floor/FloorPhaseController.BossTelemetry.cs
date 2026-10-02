@@ -32,7 +32,7 @@ public sealed partial class FloorPhaseController
             if (_bossForbiddenZonesIpc.HasFunction) forbiddenZones = _bossForbiddenZonesIpc.InvokeFunc();
         }
         catch { /* Optional diagnostic IPC must not interrupt a fight. */ }
-        return new { target, pathSafe, forbiddenZones };
+        return new { target = target.HasValue ? new { target.Value.X, target.Value.Y, target.Value.Z } : null, pathSafe, forbiddenZones };
     }
 
     private unsafe void RecordBossCombatSnapshot()
@@ -57,6 +57,7 @@ public sealed partial class FloorPhaseController
             movement = ReadBossMovementDiagnostics(player.Position),
             targetId = Service.TargetManager.Target?.GameObjectId ?? 0,
             mechanicsActive = _ctx?.Configuration.BossMechanicsActive == true,
+            pt30OrbitActive = _pt30DivineFavorFlashHelper?.IsDivineFavorMovementActive == true,
             pendingItem = runtime.PendingFloorItemUse?.Key,
             strengthStock = _pomanderManager.GetCount(2), steelStock = _pomanderManager.GetCount(3), hasteStock = _pomanderManager.GetCount(11),
             strengthUsable = _pomanderManager.IsUsable(2), steelUsable = _pomanderManager.IsUsable(3),

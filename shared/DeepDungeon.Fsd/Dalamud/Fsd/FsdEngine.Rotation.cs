@@ -9,6 +9,13 @@ internal partial class FsdEngine
     private static ICallGateSubscriber<string, object>? _rsrRotationMode;
     private static readonly DateTime[] RotationErrorRetryAt = new DateTime[5];
 
+    private bool SetBossMovementOverride(bool active)
+    {
+        bool accepted = _bossMechanics.SetInternalMovementOverride(active);
+        _configuration.BossMechanicsActive = _bossMechanics.IsEnabled;
+        return accepted;
+    }
+
     private void UpdateCompanionControls()
     {
         var mode = _ddHost?.Context?.FarmingPlan?.Mode;

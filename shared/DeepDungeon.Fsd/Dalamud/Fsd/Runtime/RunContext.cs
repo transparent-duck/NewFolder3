@@ -30,6 +30,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		internal readonly FsdChestInteraction ChestInteraction;
 		internal ControlledPtSurveySession? ControlledPtSurvey;
         internal DeepDungeon.Fsd.Core.FarmingPlan? FarmingPlan;
+        internal Func<bool, bool>? SetBossMovementOverride;
         internal bool HarvestComplete;
         internal bool AttemptAborted;
         internal string AttemptAbortReason = string.Empty;
