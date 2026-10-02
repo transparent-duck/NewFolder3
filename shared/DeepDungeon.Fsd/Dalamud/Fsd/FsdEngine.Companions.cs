@@ -1,5 +1,7 @@
 using global::Dalamud.Bindings.ImGui;
 using System.Numerics;
+using DeepDungeon.Fsd.Dalamud.GameState;
+using DeepDungeon.Fsd.Dalamud.Items;
 
 namespace DeepDungeon.Fsd.Dalamud;
 
@@ -10,6 +12,8 @@ internal partial class FsdEngine
     private bool _palacePalInstalled;
     private bool _ichingInstalled;
     private bool _bmrInstalled;
+    private readonly string[] _recoveryPotionNames = new string[DungeonCatalog.All.Length];
+    private readonly int?[] _recoveryPotionCounts = new int?[DungeonCatalog.All.Length];
 
     public void DrawCompanionSettings()
     {
@@ -23,6 +27,15 @@ internal partial class FsdEngine
                 _palacePalInstalled |= Matches(plugin.InternalName, "PalacePal");
                 _ichingInstalled |= Matches(plugin.InternalName, "I-Ching") || Matches(plugin.InternalName, "IChing") || Matches(plugin.Name, "I-Ching");
                 _bmrInstalled |= Matches(plugin.InternalName, "BossModReborn");
+            }
+            for (int i = 0; i < DungeonCatalog.All.Length; i++)
+            {
+                var dungeon = DungeonCatalog.All[i];
+                var item = ItemManager.GetOrRegister(dungeon.RecoveryPotionItemId);
+                _recoveryPotionNames[i] = item.IsValid ? item.Name : dungeon.RecoveryPotionName;
+                _recoveryPotionCounts[i] = Service.LocalPlayer != null &&
+                    DeepDungeonLootTracker.TryGetItemCount(dungeon.RecoveryPotionItemId, out int count, out _)
+                    ? count : null;
             }
         }
         var settings = _configuration.BossMechanics;
@@ -86,6 +99,33 @@ internal partial class FsdEngine
         }
         if (columns)
             ImGui.EndTable();
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+        ImGui.Text("恢復藥");
+        if (ImGui.BeginTable("##FsdRecoveryPotions", 2, ImGuiTableFlags.BordersInnerH | ImGuiTableFlags.SizingStretchProp))
+        {
+            ImGui.TableSetupColumn("##Potion", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("##Count", ImGuiTableColumnFlags.WidthFixed, ImGui.CalcTextSize("9999").X);
+            for (int i = 0; i < _recoveryPotionCounts.Length; i++)
+            {
+                ImGui.TableNextRow();
+                ImGui.TableSetColumnIndex(0);
+                ImGui.TextUnformatted(_recoveryPotionNames[i]);
+                ImGui.TableSetColumnIndex(1);
+                if (_recoveryPotionCounts[i] is int count)
+                {
+                    if (count < 20)
+                        ImGui.TextColored(new Vector4(0.95f, 0.45f, 0.45f, 1), count.ToString());
+                    else
+                        ImGui.TextUnformatted(count.ToString());
+                }
+                else
+                    ImGui.TextUnformatted("-");
+            }
+            ImGui.EndTable();
+        }
     }
 
     private static bool Matches(string value, string expected) =>
