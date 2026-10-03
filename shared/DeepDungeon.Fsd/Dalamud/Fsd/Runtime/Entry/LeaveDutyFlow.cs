@@ -66,8 +66,15 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 			MarkPresence("select", hasSelect);
 
 			// 1) If Abandon Yes/No is visible, confirm Yes
-			if (hasYesno && SeenStable("yesno", StabilityShort) && !IsOnCooldown("yesno"))
+			if (hasYesno)
 			{
+				// Preserve the native exit dialog while it stabilizes; requesting another
+				// leave here replaces PT100's save/reward confirmation with abandon.
+				if (!SeenStable("yesno", StabilityShort) || IsOnCooldown("yesno"))
+				{
+					_nextTry = DateTime.Now.AddMilliseconds(150);
+					return false;
+				}
 				if (_requireValidatedAbandonPrompt &&
 				    !DeepDungeonUi.IsAbandonDutyConfirmationPrompt(yesno, out var promptError))
 				{
