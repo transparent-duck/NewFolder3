@@ -56,7 +56,7 @@ public sealed class FsdBossMechanicsController
 
         string on = settings.GetEnableCommand() ?? string.Empty;
         string off = settings.GetDisableCommand() ?? string.Empty;
-        bool enabled = !_internalMovementOverride &&
+        bool enabled = !_internalMovementOverride && state.FloorKind != DeepDungeonFloorKind.Result &&
             (mode == FarmingMode.DeepProgression || state.FloorKind == DeepDungeonFloorKind.Boss);
         bool changed = on != _enableCommand || off != _disableCommand;
         if (_hasPolicy && !changed && enabled == _desiredEnabled)

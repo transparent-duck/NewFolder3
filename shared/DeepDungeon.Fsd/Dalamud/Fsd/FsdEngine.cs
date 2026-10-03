@@ -276,7 +276,7 @@ namespace DeepDungeon.Fsd.Dalamud
                 dutyStateOk = _dutyState.Update(framework);
                 if (dutyStateOk)
                 {
-                    try { _recoveryPotion?.Update(); } catch { }
+                    try { _recoveryPotion?.Update(_currentDeepDungeonState); } catch { }
                 }
             }
             RefreshDeepDungeonStateSnapshot();

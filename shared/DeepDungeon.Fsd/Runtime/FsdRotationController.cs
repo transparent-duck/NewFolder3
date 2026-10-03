@@ -25,7 +25,8 @@ public sealed class FsdRotationController(Func<FsdRotationProvider, FsdRotationS
             return;
         }
         if (state.IsTransitioning) return;
-        bool enabled = !suppressOutput && mode is not (FarmingMode.Aetherpool or FarmingMode.HoardDiscovery);
+        bool enabled = !suppressOutput && state.FloorKind != DeepDungeonFloorKind.Result &&
+            mode is not (FarmingMode.Aetherpool or FarmingMode.HoardDiscovery);
         string command = (enabled ? settings.CustomEnableCommand : settings.CustomDisableCommand) ?? string.Empty;
         bool force = !_active || DesiredEnabled != enabled || _provider != settings.Provider || _customCommand != command ||
             state.IsValid && (_dungeonId != state.DungeonId || _floor != state.Floor) ||

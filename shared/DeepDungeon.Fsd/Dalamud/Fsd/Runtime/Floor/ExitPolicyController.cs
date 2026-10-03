@@ -52,7 +52,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 						TriggerLeaveFlow();
 					break;
 				case LeaveMode.AfterFinishDungeon:
-					if (_ctx.DutyCompletionObserved && !_ctx.DutyFailureObserved)
+					if (_ctx.DutyCompletionObserved && !_ctx.DutyFailureObserved && !_ctx.TerminalRewardsRequired)
 					{
 						TriggerLeaveFlow();
 					}

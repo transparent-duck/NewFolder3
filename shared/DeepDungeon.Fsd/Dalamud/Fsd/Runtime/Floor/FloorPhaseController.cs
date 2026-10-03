@@ -234,6 +234,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		public void Initialize(RunContext context)
 		{
 			Dispose();
+            ResetResultRoom();
 			_ctx = context;
 			_chaseHelper.CanSelectNewTarget = context.CanSelectNewCombatTarget;
 			_ctx.ClearPreferredAggroTarget();
@@ -347,6 +348,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				}
 
 				bool requiresIntuitionState = !_ctx.Duty.IsBossFloor;
+                if (DeepDungeon.Fsd.Runtime.DeepDungeonFloorClassifier.Classify(dd->DeepDungeonId, dd->Floor) ==
+                    DeepDungeon.Fsd.Runtime.DeepDungeonFloorKind.Result)
+                {
+                    UpdateResultRoom();
+                    return;
+                }
 				bool nativeIntuitionActive = false;
 				bool nativeStateAvailable = !requiresIntuitionState ||
 				                            TryGetNativeIntuitionState(out nativeIntuitionActive);
@@ -4269,6 +4276,13 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			_pt30DivineFavorFlashHelper?.Update(dd);
             _pt50ChaseOutputGuard?.Update(dd, externalMovement &&
                 _ctx?.Configuration.BossMechanics.Provider == FsdBossMechanicsProvider.Bmr);
+            if (dd->DeepDungeonId == 4 && dd->Floor == 99 && externalMovement)
+            {
+                _navHelper?.Cancel();
+                TryMaintainBossBuffs(dd);
+                _status = "PT99 - external color/mechanic movement; dual-boss targeting active";
+                return;
+            }
 
 			if (Service.Condition[ConditionFlag.InCombat])
 			{

@@ -15,6 +15,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Combat
 /// </summary>
 internal sealed class CombatAssistPolicy
 	{
+        private readonly Pt99CombatController _pt99 = new();
+        internal DeepDungeon.Fsd.Core.Pt99TargetDecision Pt99Decision => _pt99.Decision;
 		private DateTime _nextAttractCastAt = DateTime.MinValue;
 		private bool _prevInCombat = false;
 		private uint _cachedEngageRangeSkillId = uint.MaxValue;
@@ -42,6 +44,14 @@ internal sealed class CombatAssistPolicy
 			var player = Service.LocalPlayer;
 			if (player == null || player.IsDead)
 				return;
+
+            if (context?.Duty is { DungeonId: 4, Floor: 99 })
+            {
+                _pt99.Tick(context, out status);
+                selectStatus = status;
+                attractStatus = "PT99 - external rotation only";
+                return;
+            }
 
 			bool inCombat = Service.Condition[ConditionFlag.InCombat];
 			float engageRange = GetCachedEngageRange(configuration);

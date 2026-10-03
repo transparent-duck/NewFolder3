@@ -22,7 +22,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 			_configuration = configuration;
 		}
 
-		public unsafe void Update()
+		public unsafe void Update(in DeepDungeonStateSnapshot state)
 		{
 			if (!_configuration.AutoUseRecoveryPotion) return;
 
@@ -36,10 +36,16 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 			if (now < _nextAttemptAtUtc) return;
 
 			var hpPercentage = (float)player.CurrentHp / player.MaxHp * 100f;
-			if (hpPercentage >= _configuration.RecoveryPotionHpThresholdPercent) return;
+            bool maintainDarkRecovery = state is { IsInDuty: true, DungeonId: 4, Floor: 99 } &&
+                Service.Condition[ConditionFlag.InCombat] &&
+                HasDarkEcho(player.StatusList);
+			if (!maintainDarkRecovery && hpPercentage >= _configuration.RecoveryPotionHpThresholdPercent) return;
 
 			if (HasActiveRecoveryBuff(player.StatusList))
-				return;
+            {
+                _nextAttemptAtUtc = now.AddMilliseconds(500);
+                return;
+            }
 
 			if (!DeepDungeonHelper.TryGetRecoveryPotionForCurrentDungeon(out var potionItemId, out _))
 				return;
@@ -78,5 +84,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 
 			return false;
 		}
+
+        private static bool HasDarkEcho(global::Dalamud.Game.ClientState.Statuses.StatusList statuses)
+        {
+            foreach (var status in statuses)
+                if (status.StatusId == DeepDungeon.Fsd.Core.Pt99TargetPolicy.DarkStatusId) return true;
+            return false;
+        }
 	}
 }

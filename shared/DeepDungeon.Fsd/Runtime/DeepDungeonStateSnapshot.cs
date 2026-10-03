@@ -4,7 +4,8 @@ public enum DeepDungeonFloorKind
 {
     Unknown,
     Mob,
-    Boss
+    Boss,
+    Result
 }
 
 public readonly record struct DeepDungeonStateSnapshot(

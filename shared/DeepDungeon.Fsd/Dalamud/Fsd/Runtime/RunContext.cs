@@ -35,6 +35,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
         internal Func<bool, bool>? SetBossMovementOverride;
         internal Action<bool>? SetBossRotationSuppressed;
         internal bool HarvestComplete;
+        internal bool TerminalRewardsRequired;
+        internal bool TerminalRoomObserved;
         internal bool AttemptAborted;
         internal string AttemptAbortReason = string.Empty;
         internal int HoardDiscoveries;
@@ -117,6 +119,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 
 	public void Dispose()
 	{
+		SetBossRotationSuppressed?.Invoke(false);
 		Cancel();
 		try { (Navigator as IDisposable)?.Dispose(); }
 		catch (Exception ex)

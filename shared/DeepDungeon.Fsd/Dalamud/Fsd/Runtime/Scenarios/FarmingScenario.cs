@@ -71,6 +71,7 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             }
             if (ctx.Duty.IsTransitioning || ctx.Duty.Floor == 0) return;
             _entryFloor = _prepared?.SourceFloor ?? session.NextFloor;
+            ctx.TerminalRewardsRequired = _entryFloor == 91;
             _entered = true;
             if (ctx.Duty.DungeonId != 4 || ctx.Duty.Floor != _entryFloor)
             {
@@ -124,6 +125,15 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             return;
         }
 
+        if (ctx.TerminalRewardsRequired && ctx.DutyCompletionObserved && !ctx.DutyFailureObserved)
+        {
+            ctx.StatusLine = ctx.TerminalRoomObserved
+                ? "最終獎勵房尚未完成驗收；FSD 已停止，請檢查100層獎勵紀錄。"
+                : "尚未觀測到最終獎勵房；FSD 已停止並保留現場，請檢查100層物件與獎勵。";
+            ctx.StatusIsError = true;
+            _complete = true;
+            return;
+        }
         _rest ??= new PilgrimsTraverseRestExitFlow(requireValidatedConfirmation: true);
         if (!_restDone)
         {

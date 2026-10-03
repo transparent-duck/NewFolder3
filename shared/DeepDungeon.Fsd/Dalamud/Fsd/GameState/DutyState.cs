@@ -136,7 +136,7 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
 					return;
 			}
 
-			CurrentFloorKind = isBoss ? DeepDungeonFloorKind.Boss : DeepDungeonFloorKind.Mob;
+			CurrentFloorKind = DeepDungeonFloorClassifier.Classify(dungeonId, floor);
 			_floorTypeClassified = true;
 		}
 

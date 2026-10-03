@@ -1,4 +1,5 @@
 using System;
+using DeepDungeon.Fsd.Runtime;
 using DeepDungeon.Fsd.Dalamud.GameState;
 using FFXIVClientStructs.FFXIV.Client.Game.InstanceContent;
 
@@ -33,18 +34,7 @@ namespace DeepDungeon.Fsd.Dalamud
 
         public static bool IsBossFloor(uint dungeonId, byte floor)
         {
-            switch (dungeonId)
-            {
-                case 1:
-                    return (floor % 10 == 0) && floor != 200;
-                case 2:
-                    return (floor % 10 == 0) && floor != 100;
-                case 3:
-                case 4:
-                    return (floor % 10 == 0 && floor != 100) || floor == 99;
-                default:
-                    return (floor % 10 == 0) && floor != 100 && floor != 200;
-            }
+            return DeepDungeonFloorClassifier.Classify(dungeonId, floor) == DeepDungeonFloorKind.Boss;
         }
 
         public static unsafe bool IsPassageOpen(InstanceContentDeepDungeon* dd)
