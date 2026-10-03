@@ -191,6 +191,10 @@
       "sha256": "f4feb7ac37ed5cf549ebdf76a8aa64d7631ccaf6fe0e2c91a2b2f77789628f60"
     },
     {
+      "path": "Core/Pt100AltarPolicy.cs",
+      "sha256": "7ace998d434c8ceb0facfefc0da0dd96b5c188e6f21fab6610a536211aa9c8ef"
+    },
+    {
       "path": "Core/Pt30BossGeometry.cs",
       "sha256": "1c047954a478f287210bd66edcb0b15b7970ba5765e031a3f9f5ac75a3e0569a"
     },
@@ -476,7 +480,7 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.Result.cs",
-      "sha256": "dfcaa66b4781ff61c2319c6dd3ad348c27584a84b17128e9a00c94163ad36c57"
+      "sha256": "c19a414b6094c57cb2a452db14250b624768ed7e458ed46260c9d7c3e1c5959b"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.RunFloorState.cs",
@@ -580,7 +584,7 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/RunContext.cs",
-      "sha256": "dcf8805c9b810a0645d49e61fcc746af1a4bbc62276be8b2b7a9525502a8eb1b"
+      "sha256": "af3e2c1371afe566a0e7b382193b173627cbb014317bbef20a3c4c620eeae701"
     },
     {
       "path": "Dalamud/Fsd/Runtime/RunHost.cs",

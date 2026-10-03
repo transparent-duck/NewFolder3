@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using DeepDungeon.Fsd.Core;
 using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
 using global::Dalamud.Game.ClientState.Conditions;
 using global::Dalamud.Game.ClientState.Objects.Enums;
@@ -16,9 +17,12 @@ public sealed partial class FloorPhaseController
     private IGameObject? _resultChest;
     private DateTime _resultNextTick, _resultStarted, _resultChestStarted, _resultNextInteract, _resultInteractedAt;
     private bool _resultEntered;
+    private ulong _resultAltarInteractedId;
+    private long _resultAltarCompletionBefore;
+    private bool _resultAltarComplete;
 
-    // The first live result room must establish reward/exit object identities before
-    // allowing automatic departure. Native completion at 99 alone cannot skip it.
+    // PT100 uses its observed altar event; native completion at 99 cannot skip it.
+    // The explicit diagnostic boundary still retains the room before interaction.
     private unsafe void UpdateResultRoom()
     {
         var context = _ctx;
@@ -57,6 +61,12 @@ public sealed partial class FloorPhaseController
             return;
         }
         if (Service.Condition[ConditionFlag.InCombat] || player.IsCasting) return;
+
+        if (context.Duty.DungeonId == 4 && context.Duty.Floor == 100)
+        {
+            UpdatePt100Altar(now);
+            return;
+        }
 
         // ObjectKind.Treasure is authoritative independently of translated names.
         // Event-object reward coffers need their first live identity/state capture.
@@ -128,7 +138,76 @@ public sealed partial class FloorPhaseController
         _resultOpened.Clear();
         _resultChest = null;
         _resultEntered = false;
+        _resultAltarInteractedId = 0;
+        _resultAltarCompletionBefore = 0;
+        _resultAltarComplete = false;
         _resultNextTick = _resultStarted = _resultChestStarted = _resultNextInteract = _resultInteractedAt = default;
+    }
+
+    private void UpdatePt100Altar(DateTime now)
+    {
+        var context = _ctx!;
+        var player = Service.LocalPlayer;
+        if (player == null || _resultAltarComplete) return;
+        var altar = Service.GameObjects.FirstOrDefault(obj => obj.ObjectKind == ObjectKind.EventObj &&
+            obj.BaseId == Pt100AltarPolicy.AltarBaseId);
+        if (altar != null && Pt100AltarPolicy.CanConfirm(_resultAltarInteractedId, altar.GameObjectId,
+            altar.IsTargetable, _resultAltarCompletionBefore, context.DutyCompletionSequence, context.DutyFailureObserved))
+        {
+            _resultAltarComplete = true;
+            _navHelper?.Cancel();
+            context.Navigator.CancelAll();
+            context.TerminalRewardsRequired = false;
+            context.StatusLine = _status = "100層祭壇互動完成；正常退本。";
+            RecordReplayEvent("result-altar-completed", new
+            {
+                altar.GameObjectId, altar.BaseId, before = _resultAltarCompletionBefore,
+                after = context.DutyCompletionSequence
+            });
+            Service.Log.Info("[ResultRoom] PT100 altar state transition and fresh duty completion confirmed; normal leave enabled, no exit-object interaction required.");
+            return;
+        }
+        if ((now - _resultStarted).TotalSeconds > 60)
+        {
+            StopResultReview("100層祭壇導航／完成確認逾時；已保留現場。", now);
+            return;
+        }
+        if (altar == null || !altar.IsTargetable)
+        {
+            _status = "100層：等待祭壇物件／完成事件";
+            return;
+        }
+        if (_resultAltarInteractedId != 0 && altar.GameObjectId != _resultAltarInteractedId)
+        {
+            StopResultReview("100層祭壇身份在互動後改變；已保留現場。", now);
+            return;
+        }
+        if (Service.Condition[ConditionFlag.OccupiedInEvent] ||
+            Service.Condition[ConditionFlag.OccupiedInQuestEvent] ||
+            Service.Condition[ConditionFlag.OccupiedInCutSceneEvent]) return;
+        var navigation = _navHelper!.Navigate(ResolvePassageWalkingPosition(altar.Position), player.Position, 2.5f);
+        context.StatusLine = _status = "100層：前往小型祭壇";
+        if (navigation is NavigationState.Failed or NavigationState.StuckGiveUp)
+        {
+            StopResultReview("100層祭壇導航失敗；已保留現場。", now);
+            return;
+        }
+        if (navigation != NavigationState.Arrived || now < _resultNextInteract) return;
+        _resultNextInteract = now.AddSeconds(3);
+        long completionBefore = context.DutyCompletionSequence;
+        GameInteraction.InteractWith(altar, 3f, false, out var failure, out bool dispatched);
+        if (dispatched)
+        {
+            if (_resultAltarInteractedId == 0)
+            {
+                _resultAltarInteractedId = altar.GameObjectId;
+                _resultAltarCompletionBefore = completionBefore;
+            }
+            _navHelper.Cancel();
+        }
+        RecordReplayEvent("result-altar-interaction", new { altar.GameObjectId, altar.BaseId,
+            dispatched, failure, completionBefore });
+        Service.Log.Info($"[ResultRoom] PT100 altar interaction: id={altar.GameObjectId}, dispatched={dispatched}, reason={failure}; awaiting altar state and native completion.");
     }
 
     private void StopResultReview(string message, DateTime now)

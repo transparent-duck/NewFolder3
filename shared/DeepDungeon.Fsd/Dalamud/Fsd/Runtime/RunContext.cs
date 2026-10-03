@@ -47,6 +47,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		public string StatusLine = string.Empty;
 		public bool StatusIsError = false;
 		public bool DutyCompletionObserved { get; private set; }
+		internal long DutyCompletionSequence { get; private set; }
 		public bool DutyFailureObserved { get; private set; }
 
 		private readonly object _preferredAggroLock = new();
@@ -110,6 +111,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		StatusIsError = false;
 		StatusLine = string.Empty;
 		DutyCompletionObserved = false;
+		DutyCompletionSequence = 0;
 		DutyFailureObserved = false;
 		
 		ClearSuppressedCombatTargets();
@@ -140,6 +142,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 			return;
 
 		DutyCompletionObserved = true;
+		DutyCompletionSequence++;
 	}
 
     internal bool TryHoldFailedAttempt(string reason)
