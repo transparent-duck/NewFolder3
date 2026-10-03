@@ -199,6 +199,10 @@
       "sha256": "8068b346384594ec888f24710f380bdda8e3710c10d11f78b997992827e7265b"
     },
     {
+      "path": "Core/Pt99TransitionPolicy.cs",
+      "sha256": "4f3478a6aaa59b4d877171c34b16d7591422a51565d11c98f70bb339a8160eec"
+    },
+    {
       "path": "Core/ReadyFloorIntuitionPlanner.cs",
       "sha256": "e81f20af93547452404f75ae108ce5fe35bc2ed88ee0b99a34b20d5af59a6ee9"
     },
@@ -448,7 +452,7 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.cs",
-      "sha256": "733bc13fa832f949255f378b1f8c78a1fcb9c4c88d65f8c05a23fceb3a21e9a3"
+      "sha256": "0f3c1859d6badf1d2b8583742b6d303f3e1d0067d55d55c801d096ae5d5f275b"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.Farming.cs",
@@ -485,6 +489,10 @@
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.Search.cs",
       "sha256": "7982b283f34615c0d55044c515f59f2acaf654fe4a88bfdee1e72ac737cb1466"
+    },
+    {
+      "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.TerminalTransfer.cs",
+      "sha256": "d95a409c74438458215f3edfea9412e9e026e13643ca718088f75c16e958820c"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/MobMechanicsMovementGuard.cs",

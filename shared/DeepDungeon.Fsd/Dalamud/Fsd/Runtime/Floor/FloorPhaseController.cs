@@ -4266,6 +4266,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				_pt50ChaseOutputGuard?.Reset();
 				return;
 			}
+            if (TryUpdatePt99ResultTransfer(dd)) return;
 			if (!RequireMovementPermission("boss objective", FloorObjectiveKind.DefeatBoss))
 			{
 				_pt30DivineFavorFlashHelper?.Reset();
