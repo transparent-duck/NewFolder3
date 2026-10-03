@@ -19,6 +19,8 @@ public sealed record FarmingPlan(
     public int? StopAfterFloor { get; init; }
     // Bridge-only checkpoint tests; UI challenge runs still start/restart at floor one.
     public bool UsesDiagnosticCheckpoints { get; init; }
+    // Run-only diagnostic option: retain the duty and save for in-place inspection.
+    public bool HoldOnFailure { get; init; }
     public bool ReusesSave => Mode is FarmingMode.Aetherpool or FarmingMode.HoardDiscovery;
     public bool ShowsDetailedMap => Mode == FarmingMode.Hoard && BandedEnabled;
     public string CycleUnit => Mode == FarmingMode.DeepProgression ? "登頂次數" : Mode == FarmingMode.Hoard ? "挖寶輪數" : "採集輪數";

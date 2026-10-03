@@ -162,7 +162,8 @@ internal partial class FsdEngine
         }
     }
 
-    public bool StartSelectedFarming(out string error, int? stopAfterFloor = null, int? diagnosticStartFloor = null)
+    public bool StartSelectedFarming(out string error, int? stopAfterFloor = null, int? diagnosticStartFloor = null,
+        int? resumeSlot = null, bool holdOnFailure = false)
     {
         if (stopAfterFloor.HasValue && (_configuration.Farming.Mode != FarmingMode.DeepProgression ||
             stopAfterFloor.Value is < 10 or > 100 || stopAfterFloor.Value % 10 != 0 || _fsfScenarioIndex == 2))
@@ -170,7 +171,7 @@ internal partial class FsdEngine
             error = "停止層數只支援死靈術士模式，且必須為 10 至 100 的十層邊界。";
             return false;
         }
-        if (diagnosticStartFloor.HasValue && _fsfScenarioIndex == 2)
+        if ((diagnosticStartFloor.HasValue || resumeSlot.HasValue || holdOnFailure) && _fsfScenarioIndex == 2)
         {
             error = "測試起點只支援死靈術士模式。";
             return false;
@@ -188,12 +189,12 @@ internal partial class FsdEngine
         return TryStartFarming(settings.Mode, prepared ? SaveUse.Prepared : SaveUse.Create,
             settings.Mode == FarmingMode.DeepProgression ? 1 : _fsfScenarioIndex == 0 ? 21 : 31,
             p.Cycles, p.Infinite, p.BandedEnabled == true, p.OpenGold, p.OpenSilver, p.OpenBronze,
-            out error, stopAfterFloor, diagnosticStartFloor);
+            out error, stopAfterFloor, diagnosticStartFloor, resumeSlot, holdOnFailure);
     }
 
     public bool TryStartFarming(FarmingMode mode, SaveUse saveUse, int startFloor, int cycles, bool infinite,
         bool hoard, bool gold, bool silver, bool bronze, out string error, int? stopAfterFloor = null,
-        int? diagnosticStartFloor = null)
+        int? diagnosticStartFloor = null, int? resumeSlot = null, bool holdOnFailure = false)
     {
         if (stopAfterFloor.HasValue && (mode != FarmingMode.DeepProgression ||
             stopAfterFloor.Value is < 10 or > 100 || stopAfterFloor.Value % 10 != 0))
@@ -203,16 +204,24 @@ internal partial class FsdEngine
         }
         if (!FarmingPlan.TryCreate(mode, saveUse, startFloor, cycles, infinite, hoard, gold, silver, bronze,
                 out var plan, out error)) return false;
+        if ((holdOnFailure || resumeSlot.HasValue) && (mode != FarmingMode.DeepProgression ||
+            !stopAfterFloor.HasValue || (resumeSlot.HasValue &&
+            (resumeSlot.Value < 0 || !diagnosticStartFloor.HasValue))))
+        {
+            error = "保留現場／續用槽位只支援有停止邊界的深層測試；續用槽位須指定預期起點。";
+            return false;
+        }
         if (diagnosticStartFloor is { } checkpoint && (mode != FarmingMode.DeepProgression ||
-            checkpoint is not (1 or 21 or 31 or 51 or 71) ||
+            (resumeSlot.HasValue ? checkpoint is < 1 or > 91 || checkpoint % 10 != 1
+                : checkpoint is not (1 or 21 or 31 or 51 or 71)) ||
             !stopAfterFloor.HasValue || stopAfterFloor.Value < checkpoint + 9))
         {
-            error = "測試起點只支援死靈術士的 1、21、31、51、71 層，並須指定起點之後的停止層數。";
+            error = "新建測試支援1／21／31／51／71層；指定續用槽位支援1至91層的十層組起點，均須指定組末或之後的停止層數。";
             return false;
         }
         plan = plan! with { StopAfterFloor = stopAfterFloor, StartFloor = diagnosticStartFloor ?? plan.StartFloor,
-            UsesDiagnosticCheckpoints = diagnosticStartFloor.HasValue };
-        var session = new FarmingSession(plan);
+            UsesDiagnosticCheckpoints = diagnosticStartFloor.HasValue, HoldOnFailure = holdOnFailure };
+        var session = new FarmingSession(plan) { OwnedSlot = resumeSlot ?? -1 };
         string? key = plan!.ShowsDetailedMap ? startFloor == 21
             ? DetailedMapScenarioCatalog.PilgrimsTraverse21To30.Key
             : DetailedMapScenarioCatalog.PilgrimsTraverse31To40.Key : null;

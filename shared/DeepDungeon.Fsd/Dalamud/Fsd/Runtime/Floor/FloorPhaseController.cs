@@ -4398,6 +4398,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
             if (_ctx?.FarmingPlan?.Mode == FarmingMode.DeepProgression)
             {
                 _ctx.MarkDutyFailed();
+                if (_ctx.TryHoldFailedAttempt("角色死亡"))
+                {
+                    CancelActiveMovement();
+                    return true;
+                }
                 _ctx.RunOptions.Update(o => o.LeaveMode = LeaveMode.Immediate);
                 CancelActiveMovement();
                 return true;

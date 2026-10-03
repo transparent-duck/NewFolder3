@@ -99,11 +99,13 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             if (ctx.AttemptAborted)
             {
                 _aborted = true;
+                if (ctx.TryHoldFailedAttempt(ctx.AttemptAbortReason)) return;
                 RequestLeave();
                 return;
             }
             if (ctx.DutyFailureObserved)
             {
+                if (ctx.TryHoldFailedAttempt("攻略失敗")) return;
                 if (session.Plan.Mode == FarmingMode.DeepProgression)
                 {
                     _recoverFailure = true;

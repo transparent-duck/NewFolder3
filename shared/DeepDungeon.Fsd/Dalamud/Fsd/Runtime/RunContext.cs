@@ -141,6 +141,16 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		DutyCompletionObserved = true;
 	}
 
+    internal bool TryHoldFailedAttempt(string reason)
+    {
+        if (FarmingPlan?.HoldOnFailure != true) return false;
+        StatusLine = $"{reason}；FSD 已停止，保留副本與存檔，等待現場觀察。";
+        StatusIsError = true;
+        Navigator.CancelAll();
+        Service.Log.Warning($"[Farming] Diagnostic attempt held: floor={Duty.Floor}, reason={reason}");
+        return true;
+    }
+
 	public void MarkDutyFailed()
 	{
 		DutyFailureObserved = true;

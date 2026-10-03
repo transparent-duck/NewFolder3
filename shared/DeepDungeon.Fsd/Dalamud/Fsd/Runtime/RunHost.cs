@@ -405,6 +405,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 			return;
 
         _context.MarkDutyFailed();
+        if (_context.TryHoldFailedAttempt("角色死亡"))
+        {
+            _floorController.CancelActiveMovement();
+            return;
+        }
         if (_context.FarmingPlan?.Mode == FarmingMode.DeepProgression)
         {
             _context.RunOptions.Update(o => o.LeaveMode = LeaveMode.Immediate);
@@ -676,6 +681,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 				return;
 
             context.MarkDutyFailed();
+            if (context.TryHoldFailedAttempt("攻略失敗"))
+            {
+                _floorController.CancelActiveMovement();
+                return;
+            }
             if (context.FarmingPlan?.Mode == FarmingMode.DeepProgression)
             {
                 context.RunOptions.Update(o => o.LeaveMode = LeaveMode.Immediate);
