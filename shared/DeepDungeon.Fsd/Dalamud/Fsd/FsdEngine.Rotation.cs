@@ -8,6 +8,7 @@ internal partial class FsdEngine
     private static ICallGateSubscriber<bool>? _wrathRotationState, _rsrRotationState, _promeRotationState, _promeRotationStop, _promeRotationStart;
     private static ICallGateSubscriber<string, object>? _rsrRotationMode;
     private static readonly DateTime[] RotationErrorRetryAt = new DateTime[5];
+    private bool _bossRotationSuppressed;
 
     private bool SetBossMovementOverride(bool active)
     {
@@ -18,6 +19,7 @@ internal partial class FsdEngine
 
     private void UpdateCompanionControls()
     {
+        if (!IsRunActive) _bossRotationSuppressed = false;
         var mode = _ddHost?.Context?.FarmingPlan?.Mode;
         _bossMechanics.Update(IsRunActive, _currentDeepDungeonState, _configuration.BossMechanics, mode);
         if (IsRunActive && !_configuration.Rotation.TryValidate(out var error))
@@ -26,7 +28,7 @@ internal partial class FsdEngine
             return;
         }
         _rotationControl.Update(IsRunActive, mode, _currentDeepDungeonState,
-            Service.Condition[ConditionFlag.InCombat], _configuration.Rotation, DateTime.UtcNow);
+            Service.Condition[ConditionFlag.InCombat], _configuration.Rotation, DateTime.UtcNow, _bossRotationSuppressed);
         if (IsRunActive && _rotationControl.FailedProvider is { } failed)
             StopForRotationError($"無法{(_rotationControl.DesiredEnabled ? "啟用" : "關閉")}輸出：{RotationProviderLabels[(int)failed - 1]}。");
     }

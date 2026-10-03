@@ -31,6 +31,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		internal ControlledPtSurveySession? ControlledPtSurvey;
         internal DeepDungeon.Fsd.Core.FarmingPlan? FarmingPlan;
         internal Func<bool, bool>? SetBossMovementOverride;
+        internal Action<bool>? SetBossRotationSuppressed;
         internal bool HarvestComplete;
         internal bool AttemptAborted;
         internal string AttemptAbortReason = string.Empty;

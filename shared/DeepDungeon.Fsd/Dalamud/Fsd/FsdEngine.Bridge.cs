@@ -699,6 +699,7 @@ namespace DeepDungeon.Fsd.Dalamud
                     rotationProvider = _configuration.Rotation.Provider.ToString(),
                     rotationSuppressionActive = IsRunActive && activeHost?.Context?.FarmingPlan?.ReusesSave == true,
                     rotationDesiredEnabled = IsRunActive ? _rotationControl.DesiredEnabled : (bool?)null,
+                    bossRotationSuppressed = IsRunActive && _bossRotationSuppressed,
                     rotationConfigurationError = TryValidateRotation(out var rotationError) ? null : rotationError,
                     rotationFailure = _rotationControl.FailedProvider?.ToString(),
                     rsr = ReadRotationState(FsdRotationProvider.RotationSolverReborn).ToString(),

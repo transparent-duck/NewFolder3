@@ -17,7 +17,7 @@ public sealed class FsdRotationController(Func<FsdRotationProvider, FsdRotationS
     public bool DesiredEnabled { get; private set; }
 
     public void Update(bool runActive, FarmingMode? mode, in DeepDungeonStateSnapshot state, bool inCombat,
-        FsdRotationSettings settings, DateTime nowUtc)
+        FsdRotationSettings settings, DateTime nowUtc, bool suppressOutput = false)
     {
         if (!runActive || !settings.TryValidate(out _))
         {
@@ -25,7 +25,7 @@ public sealed class FsdRotationController(Func<FsdRotationProvider, FsdRotationS
             return;
         }
         if (state.IsTransitioning) return;
-        bool enabled = mode is not (FarmingMode.Aetherpool or FarmingMode.HoardDiscovery);
+        bool enabled = !suppressOutput && mode is not (FarmingMode.Aetherpool or FarmingMode.HoardDiscovery);
         string command = (enabled ? settings.CustomEnableCommand : settings.CustomDisableCommand) ?? string.Empty;
         bool force = !_active || DesiredEnabled != enabled || _provider != settings.Provider || _customCommand != command ||
             state.IsValid && (_dungeonId != state.DungeonId || _floor != state.Floor) ||

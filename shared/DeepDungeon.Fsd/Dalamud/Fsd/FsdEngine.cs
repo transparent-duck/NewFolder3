@@ -285,7 +285,10 @@ namespace DeepDungeon.Fsd.Dalamud
             UpdateCompanionControls();
             _configuration.BossMechanicsActive = _bossMechanics.IsEnabled;
             if (_ddHost?.Context is { } movementContext)
+            {
                 movementContext.SetBossMovementOverride ??= SetBossMovementOverride;
+                movementContext.SetBossRotationSuppressed ??= suppressed => _bossRotationSuppressed = suppressed;
+            }
             _ddHost?.Update(framework);
             UpdateCompanionControls();
             _configuration.BossMechanicsActive = _bossMechanics.IsEnabled;
