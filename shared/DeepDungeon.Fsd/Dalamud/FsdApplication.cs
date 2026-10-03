@@ -89,11 +89,13 @@ public sealed class FsdApplication : IFsdApplication
 
     public object Start() => Start(null);
 
-    public object Start(int? stopAfterFloor)
+    public object Start(int? stopAfterFloor, int? diagnosticStartFloor = null)
     {
         ThrowIfDisposed();
         if (_settings.NecromancerFsdScenarioIndex == 2)
         {
+            if (diagnosticStartFloor.HasValue)
+                return new { ok = false, error = "Diagnostic checkpoints are unavailable for controlled survey capture." };
             if (!_detailedMapHostOptions.SupportsControlledPtSurvey)
             {
                 return new
@@ -108,7 +110,7 @@ public sealed class FsdApplication : IFsdApplication
                 _settings.NecromancerFsdLoopInfinite,
                 "start-controlled-pt-capture");
         }
-        bool started = _module.StartSelectedFarming(out string error, stopAfterFloor);
+        bool started = _module.StartSelectedFarming(out string error, stopAfterFloor, diagnosticStartFloor);
         return new { ok = started, error };
     }
 

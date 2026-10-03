@@ -47,7 +47,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		private DateTime _nextPomanderUseAt = DateTime.MinValue;
 		private bool _pomanderDispatchedThisUpdate;
 		private Pt30DivineFavorFlashHelper? _pt30DivineFavorFlashHelper;
-		private Pt50QuicksandRecoveryHelper? _pt50QuicksandRecoveryHelper;
 		private bool _wasTransitioning;
 		private byte _lastGraphPendingFloor = 255;
 		private uint _lastGraphPendingDungeonId;
@@ -270,9 +269,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			_pt30DivineFavorFlashHelper?.Dispose();
 			_pt30DivineFavorFlashHelper = new Pt30DivineFavorFlashHelper(active =>
                 _ctx?.SetBossMovementOverride?.Invoke(active) ?? _ctx?.Configuration.BossMechanicsActive != true);
-			_pt50QuicksandRecoveryHelper?.Dispose();
-			_pt50QuicksandRecoveryHelper = new Pt50QuicksandRecoveryHelper(active =>
-                _ctx?.SetBossMovementOverride?.Invoke(active) ?? _ctx?.Configuration.BossMechanicsActive != true);
 			ResetPatrolPlan();
 			_runRecorder = new DeepDungeonRunRecorder(BuildRecorderSessionName());
 			try
@@ -445,8 +441,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			}
 			_pt30DivineFavorFlashHelper?.Dispose();
 			_pt30DivineFavorFlashHelper = null;
-			_pt50QuicksandRecoveryHelper?.Dispose();
-			_pt50QuicksandRecoveryHelper = null;
 			_floorEvidenceJournal?.Dispose();
 			_floorEvidenceJournal = null;
 		}
@@ -496,7 +490,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				_navHelper?.Cancel();
 			_activeWaypoint = null;
 			_pt30DivineFavorFlashHelper?.Reset();
-			_pt50QuicksandRecoveryHelper?.Reset();
 		}
 
 		private bool RequireMovementPermission(
@@ -2764,7 +2757,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 					_chatWatchers?.ExpectInheritedIntuitionResult(dd->Floor) ?? 0;
 			}
 			_pt30DivineFavorFlashHelper?.Reset();
-			_pt50QuicksandRecoveryHelper?.Reset();
 			_status = isBossFloor ? "Boss floor" : $"Floor {_floorRuntime.Floor} - initializing";
 			RecordNativeIntuitionState("stable-floor-session-created", force: true, nativeStateAvailable: true, nativeIntuitionActive: _nativeIntuitionActive);
 			Service.Log.Info($"[FloorPhase] Floor changed to {_floorRuntime.Floor} (generation {_floorRuntime.Generation})");
@@ -2880,7 +2872,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			_lastGraphPendingFloor = 255;
 			_lastGraphPendingDungeonId = 0;
 			_pt30DivineFavorFlashHelper?.Reset();
-			_pt50QuicksandRecoveryHelper?.Reset();
 
 			RecordReplayEvent("floor-session-destroyed", new
 			{
@@ -4245,20 +4236,17 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				_status = "Boss floor - waiting for floor load to complete";
 				_navHelper?.Cancel();
 				_pt30DivineFavorFlashHelper?.Reset();
-				_pt50QuicksandRecoveryHelper?.Reset();
 				return;
 			}
 			if (!RequireMovementPermission("boss objective", FloorObjectiveKind.DefeatBoss))
 			{
 				_pt30DivineFavorFlashHelper?.Reset();
-				_pt50QuicksandRecoveryHelper?.Reset();
 				return;
 			}
 
             RecordBossCombatSnapshot();
 			bool externalMovement = _ctx?.Configuration.BossMechanicsActive == true;
 			_pt30DivineFavorFlashHelper?.Update(dd);
-			_pt50QuicksandRecoveryHelper?.Update(dd);
 
 			if (Service.Condition[ConditionFlag.InCombat])
 			{
@@ -4272,9 +4260,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 				_status = _pt30DivineFavorFlashHelper?.IsDivineFavorMovementActive == true
 					? "Boss floor - PT30 Divine Favor movement override active"
-					: _pt50QuicksandRecoveryHelper?.IsActive == true
-						? "Boss floor - PT50 sinking recovery active"
-						: "Boss floor - combat assist active";
+					: "Boss floor - combat assist active";
 				return;
 			}
 

@@ -68,11 +68,11 @@
     },
     {
       "path": "Core/FarmingPlan.cs",
-      "sha256": "6601c07efa90fa04639415c6e2cc581446319e9d168013018e0f393c65706e8c"
+      "sha256": "c04bc72afed948899bd2fcbb3146d667f492c2a8f9641bd0a0d1c4fef20541f8"
     },
     {
       "path": "Core/FarmingSessionPolicy.cs",
-      "sha256": "8e484e617e91376880747b66be303a42b99380d570d71e0afa6fac078264e79d"
+      "sha256": "ddbe02931f0202236bcf8bbb3cdbd93355bec8991d0120fdf1672830f32e2246"
     },
     {
       "path": "Core/FloorEvidenceJournalContracts.cs",
@@ -191,10 +191,6 @@
       "sha256": "1c047954a478f287210bd66edcb0b15b7970ba5765e031a3f9f5ac75a3e0569a"
     },
     {
-      "path": "Core/Pt50QuicksandRecoveryPolicy.cs",
-      "sha256": "4fc2996472a3073541947723c4f3377a429bb6814bd8f7eb32553f0a3a4afefb"
-    },
-    {
       "path": "Core/ReadyFloorIntuitionPlanner.cs",
       "sha256": "e81f20af93547452404f75ae108ce5fe35bc2ed88ee0b99a34b20d5af59a6ee9"
     },
@@ -284,7 +280,7 @@
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Farming.cs",
-      "sha256": "3a27f9a1da3f0cc4d766d9e9a1e7809ef7a4c4f5b19a1675b57f31c9416abebe"
+      "sha256": "2499a7bf22682b587a3cc57d669e3a7f1ff52877486612f4fd0706796d452adb"
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.OutsideDuty.cs",
@@ -320,7 +316,7 @@
     },
     {
       "path": "Dalamud/Fsd/GameState/DungeonCatalog.cs",
-      "sha256": "a97c6e05549a978f51a802942fc42efbc2b69ede084c23f164e7bb301004cdc2"
+      "sha256": "cee7c6a7f812d0496c3a14c9e37dbe7b2d7c8ad03b368014efd94695f9053145"
     },
     {
       "path": "Dalamud/Fsd/GameState/DungeonData.cs",
@@ -436,11 +432,11 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.BossTelemetry.cs",
-      "sha256": "5978913cb9700a8e547382a4cf6a4d86cfa05c1e91940ba6d13e01a3417ba7b5"
+      "sha256": "9824a0ef036dfd1922a630d0e6b1024e0205c54b330da660173d2b28a14ab595"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.cs",
-      "sha256": "75748a392471f24b4d6c284ae209e97c7aab3b9d781319001c5552c6f05bef13"
+      "sha256": "5ea8433489439faacb0b9a84e34fb32cfb07b57a37a2672466714d83c7405c57"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.Farming.cs",
@@ -473,10 +469,6 @@
     {
       "path": "Dalamud/Fsd/Runtime/Floor/Pt30DivineFavorFlashHelper.cs",
       "sha256": "4c8e8c112adc9dbc6a32cb2ace914c9b7b2411bea213b6cba8471e2d99fc85c1"
-    },
-    {
-      "path": "Dalamud/Fsd/Runtime/Floor/Pt50QuicksandRecoveryHelper.cs",
-      "sha256": "bb5ca21042de18dc323721108d69c44b164a8990f57c36d09fa75b835289089e"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/RunFloorTelemetryTrace.cs",
@@ -576,7 +568,7 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Scenarios/FarmingScenario.cs",
-      "sha256": "a144adec9b8fc0d92ddc7349e7d07c4c3e47748b61063517251353882809f429"
+      "sha256": "9340b047ac67ce03079a9b298f82b0c28b570e2122142197778d4ec067d0173f"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Scenarios/FarmingSession.cs",
@@ -604,7 +596,7 @@
     },
     {
       "path": "Dalamud/FsdApplication.cs",
-      "sha256": "32cff75f63901fcaae92492af73e8972db000b1d506fb552b3f1edbadcf295b5"
+      "sha256": "e4cade4340a248ef9be00ba415acc36e7ffa97b497abb7ebd43eafbd3f846d57"
     },
     {
       "path": "Dalamud/FsdSkillCatalog.cs",

@@ -181,7 +181,7 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             ctx.StatusIsError = true;
         }
         else
-            ctx.StatusLine = decision.RecoverFailure ? $"攻略失敗 {session.Failures} 次；從第 1 層重開。"
+            ctx.StatusLine = decision.RecoverFailure ? $"攻略失敗 {session.Failures} 次；從第 {session.NextFloor} 層重開。"
                 : decision.CountCycle ? "本輪完成；存檔收尾已驗證。"
                 : $"本組通關；將接續 {session.NextFloor} 層。";
         Service.Log.Info($"[Farming] mode={session.Plan.Mode}, entry={_entryFloor}, clear={ctx.DutyCompletionObserved}, failure={ctx.DutyFailureObserved}, harvest={ctx.HarvestComplete}, discoveries={ctx.HoardDiscoveries}, aborted={_aborted}, reason={ctx.AttemptAbortReason}, cycle={CountsAsCycle}, next={session.NextFloor}, deleteOwned={decision.DeleteOwnedSave}, source={session.Source.Description}");
