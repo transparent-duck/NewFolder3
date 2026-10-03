@@ -37,6 +37,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
         internal bool HarvestComplete;
         internal bool TerminalRewardsRequired;
         internal bool TerminalRoomObserved;
+        internal bool TerminalReviewRequested;
         internal bool AttemptAborted;
         internal string AttemptAbortReason = string.Empty;
         internal int HoardDiscoveries;

@@ -70,6 +70,12 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
         var ctx = _context;
         if (ctx == null || _complete) return;
         if (ctx.StatusIsError) { _complete = true; return; }
+        if (ctx.TerminalReviewRequested)
+        {
+            _aborted = true;
+            _complete = true;
+            return;
+        }
         if (!_entered)
         {
             if (!ctx.Duty.IsInDuty)

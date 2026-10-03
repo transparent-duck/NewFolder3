@@ -46,6 +46,16 @@ public sealed partial class FloorPhaseController
             });
             Service.Log.Info("[ResultRoom] Native result floor entered; random-room graph, combat and passage disabled.");
         }
+        if (context.FarmingPlan?.StopsForTerminalReview == true)
+        {
+            _navHelper?.Cancel();
+            context.Navigator.CancelAll();
+            context.TerminalReviewRequested = true;
+            context.StatusLine = _status = "已到達100層；停止並保留終局房間，等待地圖／獎勵物件驗收。";
+            RecordReplayEvent("result-room-diagnostic-stop", new { floor = context.Duty.Floor, opened = _resultOpened.Count });
+            Service.Log.Info("[ResultRoom] Diagnostic boundary reached: floor=100; retained room before reward navigation/interaction.");
+            return;
+        }
         if (Service.Condition[ConditionFlag.InCombat] || player.IsCasting) return;
 
         // ObjectKind.Treasure is authoritative independently of translated names.
