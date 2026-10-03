@@ -436,7 +436,7 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.cs",
-      "sha256": "bd202d9ad4554e3f942b6fe0052abeb4fa0516f4f0f1cd5628e6f4dac22b66ad"
+      "sha256": "8255c7cd6a82b08b0ad9fc727b19bddfe09bf69d08057b7916c8276fff21644d"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.Farming.cs",
@@ -445,6 +445,10 @@
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.Items.cs",
       "sha256": "bfc7568f227a146e488b90ec1ace66bb82f0a3485a9619dc82becf45f55f492c"
+    },
+    {
+      "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.MobMechanics.cs",
+      "sha256": "ab0437f0ee26efe1d33c5da64febd25f263bf77297eca2f1da6f2d437a0b9797"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.Passage.cs",
@@ -467,6 +471,10 @@
       "sha256": "05a5c9f5c7b9b0d7023afc0ade0d8dab2d723fc5df0e5ef246767c7bfd723e93"
     },
     {
+      "path": "Dalamud/Fsd/Runtime/Floor/MobMechanicsMovementGuard.cs",
+      "sha256": "04434ba6b58621359d9ca263a7d4b0dbafbcce709e0cfe0ecd4685daf442a658"
+    },
+    {
       "path": "Dalamud/Fsd/Runtime/Floor/Pt30DivineFavorFlashHelper.cs",
       "sha256": "4c8e8c112adc9dbc6a32cb2ace914c9b7b2411bea213b6cba8471e2d99fc85c1"
     },
@@ -484,7 +492,7 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/WaypointTaskRunner.cs",
-      "sha256": "82336de067b9516cb80a5d157727b13863122bea12376427a65906b113ebb330"
+      "sha256": "d39ea915f5a0f43238f0035417b92d850a04ddf3b8b84c321f3fd0caa11d62ef"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Helpers/ChatWatchers.cs",

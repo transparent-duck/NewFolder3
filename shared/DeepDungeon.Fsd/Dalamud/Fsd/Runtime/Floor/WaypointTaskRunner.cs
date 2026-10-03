@@ -32,6 +32,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		private readonly NavigationHelper _navHelper;
 		private TaskPhase _phase = TaskPhase.Idle;
 		private DateTime _phaseEntryTime;
+        private DateTime? _suspendedAt;
+        private readonly Func<DateTime> _clock;
 
 		private Vector3 _target;
 		private float _arrivalRadius;
@@ -40,9 +42,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		private Func<double, bool> _postCondition = null!;
 		private float _postTimeoutSeconds;
 
-		public WaypointTaskRunner(NavigationHelper navHelper)
+		public WaypointTaskRunner(NavigationHelper navHelper, Func<DateTime>? clock = null)
 		{
 			_navHelper = navHelper;
+            _clock = clock ?? (() => DateTime.Now);
 		}
 
 		public TaskPhase Phase => _phase;
@@ -50,7 +53,17 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 		public double ElapsedSeconds => _phase == TaskPhase.Idle
 			? 0
-			: (DateTime.Now - _phaseEntryTime).TotalSeconds;
+			: ((_suspendedAt ?? _clock()) - _phaseEntryTime).TotalSeconds;
+
+        public void SetSuspended(bool suspended)
+        {
+            if (suspended && !_suspendedAt.HasValue) _suspendedAt = _clock();
+            else if (!suspended && _suspendedAt.HasValue)
+            {
+                _phaseEntryTime += _clock() - _suspendedAt.Value;
+                _suspendedAt = null;
+            }
+        }
 
 		public void Configure(
 			Vector3 target,
@@ -61,6 +74,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			float postTimeoutSeconds)
 		{
 			_target = target;
+            _suspendedAt = null;
 			_arrivalRadius = arrivalRadius;
 			_preCondition = preCondition;
 			_preTimeoutSeconds = preTimeoutSeconds;
@@ -73,6 +87,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 		public TaskResult Update(Vector3 playerPos)
 		{
+            if (_suspendedAt.HasValue) return TaskResult.InProgress;
 			return _phase switch
 			{
 				TaskPhase.Traveling => UpdateTraveling(playerPos),
@@ -85,6 +100,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		public void Reset(bool cancelNavigation = true)
 		{
 			_phase = TaskPhase.Idle;
+            _suspendedAt = null;
 			if (cancelNavigation)
 				_navHelper.Cancel();
 		}
@@ -129,7 +145,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				return TaskResult.InProgress;
 			}
 
-			double elapsed = (DateTime.Now - _phaseEntryTime).TotalSeconds;
+			double elapsed = ElapsedSeconds;
 			if (elapsed >= _preTimeoutSeconds)
 			{
 				_phase = TaskPhase.Idle;
@@ -141,7 +157,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 		private TaskResult UpdateWaitingPost()
 		{
-			double elapsed = (DateTime.Now - _phaseEntryTime).TotalSeconds;
+			double elapsed = ElapsedSeconds;
 
 			if (_postCondition(elapsed))
 			{
@@ -161,7 +177,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		private void SetPhase(TaskPhase phase)
 		{
 			_phase = phase;
-			_phaseEntryTime = DateTime.Now;
+			_phaseEntryTime = _clock();
 		}
 	}
 }

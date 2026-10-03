@@ -548,6 +548,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 		private unsafe void UpdateFloorActive(InstanceContentDeepDungeon* dd)
 		{
+            if (YieldToMobMechanics())
+            {
+                if (Service.LocalPlayer is { } player && ShouldRunGeneralTick()) SyncLiveRunOptions(dd, player);
+                return;
+            }
 			if (_ctx?.ControlledPtSurvey != null &&
 			    _floorRuntime is { ControlledPositiveMessagePendingIndicator: true } indicatorRuntime)
 			{
@@ -3904,6 +3909,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			public PendingFloorItemUse? PendingFloorItemUse { get; private set; }
 			public bool BossNavigationResolved { get; set; }
             public DateTime NextBossDiagnosticAtUtc { get; set; }
+            public MobMechanicsMovementGuard MobMechanicsGuard { get; } = new();
+            public bool MobMechanicsYielding { get; set; }
+            public DateTime NextMobMechanicsCheckUtc { get; set; }
+            public DateTime NextMobMechanicsDiagnosticUtc { get; set; }
 			public FloorSearchState SearchState { get; } = new();
 			public FloorObjectEvidenceTracker ObjectEvidence { get; }
 			public RunFloorTelemetryTrace? RunTelemetry { get; }
