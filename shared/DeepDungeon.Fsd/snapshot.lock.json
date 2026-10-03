@@ -175,6 +175,10 @@
       "sha256": "a493e509986ea77bf0baa043ac592e38ba749e515adaa481a3bb47cd41fd82f5"
     },
     {
+      "path": "Core/PassageNavigationPolicy.cs",
+      "sha256": "e0be2878f92cd4c9cc53670f781089f45908d5accc61a623a0093d91ea736870"
+    },
+    {
       "path": "Core/PassageWorkPlanner.cs",
       "sha256": "76f67a940dff8cca1484d22fc2da80a42fc187d9d583d928c46008927365e233"
     },
@@ -448,11 +452,11 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.Passage.cs",
-      "sha256": "e70faf608a4c6a76ea15035f7c30bb207ba676f534a4e6886a92d723e2e376eb"
+      "sha256": "39498826f4c968ddd0b98e22ab37766b066bf944afa19234eee52397ba572b14"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.Patrol.cs",
-      "sha256": "a1584d5798cc0c9076a1267a90d47b052402dab916ca11c06f90ff59232119fc"
+      "sha256": "43ec8273e810512b250f9225e68742c9087c735066e7daf67581748f3869b25a"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.RunFloorState.cs",

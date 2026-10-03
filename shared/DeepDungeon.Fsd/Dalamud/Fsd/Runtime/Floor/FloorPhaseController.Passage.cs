@@ -1,4 +1,6 @@
 using System;
+using System.Numerics;
+using global::Dalamud.Plugin.Ipc;
 using global::Dalamud.Game.ClientState.Objects.SubKinds;
 using DeepDungeon.Fsd.Core;
 using DeepDungeon.Fsd.Dalamud.GameState;
@@ -9,6 +11,39 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 {
 	public sealed partial class FloorPhaseController
 	{
+		private ICallGateSubscriber<Vector3, float, float, Vector3?>? _passageMeshPoint;
+		private Vector3 _passageActorPosition, _passageWalkPosition;
+		private long _passageProjectionGeneration = -1;
+		private DateTime _nextPassageProjectionAt;
+		private bool _passageProjectionAccepted;
+
+		private Vector3 ResolvePassageWalkingPosition(Vector3 actor)
+		{
+			long generation = _floorRuntime?.Generation ?? -1;
+			if (generation != _passageProjectionGeneration || Vector3.DistanceSquared(actor, _passageActorPosition) > 0.01f)
+			{
+				_passageProjectionGeneration = generation;
+				_passageActorPosition = _passageWalkPosition = actor;
+				_passageProjectionAccepted = false;
+				_nextPassageProjectionAt = DateTime.MinValue;
+			}
+			if (_passageProjectionAccepted || DateTime.UtcNow < _nextPassageProjectionAt) return _passageWalkPosition;
+			_nextPassageProjectionAt = DateTime.UtcNow.AddSeconds(1);
+			try
+			{
+				_passageMeshPoint ??= Service.PluginInterface.GetIpcSubscriber<Vector3, float, float, Vector3?>("vnavmesh.Query.Mesh.NearestPoint");
+				if (_passageMeshPoint.HasFunction && PassageNavigationPolicy.TryProjectActor(actor,
+					_passageMeshPoint.InvokeFunc(actor, 0.25f, 4f), out var projected))
+				{
+					_passageWalkPosition = projected;
+					_passageProjectionAccepted = true;
+					Service.Log.Info($"[FloorPhase] Passage walking destination: actor={actor}, mesh={projected}, generation={generation}");
+				}
+			}
+			catch { /* Keep the actor destination if optional projection is unavailable. */ }
+			return _passageWalkPosition;
+		}
+
 		private unsafe void UpdatePassageNavigation(InstanceContentDeepDungeon* dd)
 		{
 			var player = Service.LocalPlayer;
@@ -35,7 +70,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			}
 
 			int playerRoom = RoomGraph.GetLocalPlayerRoomIndex(dd);
-			int? targetRoom = (!usedActor && passageRoomIndex >= 0) ? passageRoomIndex : null;
+			// Knowing the actor does not make a failing cross-room path reachable.
+			// Keep the room graph fallback until inside its room, then approach the exact walking point.
+			int? targetRoom = PassageNavigationPolicy.RoutingRoom(usedActor, passageRoomIndex, playerRoom);
+			if (usedActor) dest = ResolvePassageWalkingPosition(dest);
 
 			var result = _navDriver!.Drive(dest, player.Position, 0.5f, dd, playerRoom, targetRoom);
 

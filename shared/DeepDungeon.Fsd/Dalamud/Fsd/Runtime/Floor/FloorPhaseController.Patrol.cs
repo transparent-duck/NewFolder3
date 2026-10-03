@@ -299,7 +299,13 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				result,
 				usedActor,
 				passageRoomIndex,
-				playerRoom
+				playerRoom,
+				playerPosition = Service.LocalPlayer is { } player ? new { player.Position.X, player.Position.Y, player.Position.Z } : null,
+				actorPosition = usedActor ? new { _passageActorPosition.X, _passageActorPosition.Y, _passageActorPosition.Z } : null,
+				walkingPosition = usedActor ? new { _passageWalkPosition.X, _passageWalkPosition.Y, _passageWalkPosition.Z } : null,
+				projected = usedActor && _passageProjectionAccepted,
+				pathRunning = moveHelper.VNav.Path.IsRunning(),
+				pathfindPending = moveHelper.VNav.SimpleMove.PathfindInProgress()
 			});
 		}
 
