@@ -37,6 +37,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 
 			var hpPercentage = (float)player.CurrentHp / player.MaxHp * 100f;
             bool maintainDarkRecovery = state is { IsInDuty: true, DungeonId: 4, Floor: 99 } &&
+                _configuration.BossMechanics.UsesBmrBossHandling() &&
                 Service.Condition[ConditionFlag.InCombat] &&
                 HasDarkEcho(player.StatusList);
 			if (!maintainDarkRecovery && hpPercentage >= _configuration.RecoveryPotionHpThresholdPercent) return;

@@ -4276,10 +4276,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
             RecordBossCombatSnapshot();
 			bool externalMovement = _ctx?.Configuration.BossMechanicsActive == true;
-			_pt30DivineFavorFlashHelper?.Update(dd);
-            _pt50ChaseOutputGuard?.Update(dd, externalMovement &&
-                _ctx?.Configuration.BossMechanics.Provider == FsdBossMechanicsProvider.Bmr);
-            if (dd->DeepDungeonId == 4 && dd->Floor == 99 && externalMovement)
+            bool bmrBossHandling = _ctx?.Configuration.BossMechanics.UsesBmrBossHandling() == true;
+            if (bmrBossHandling) _pt30DivineFavorFlashHelper?.Update(dd);
+            else _pt30DivineFavorFlashHelper?.Reset();
+            _pt50ChaseOutputGuard?.Update(dd, externalMovement && bmrBossHandling);
+            if (dd->DeepDungeonId == 4 && dd->Floor == 99 && externalMovement && bmrBossHandling)
             {
                 _navHelper?.Cancel();
                 TryMaintainBossBuffs(dd);
@@ -4306,7 +4307,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			var boss = Runtime.Helpers.CombatTargetingHelpers.PickNearestHostile(60f, out _);
 			if (boss == null)
 			{
-				if (!externalMovement && _pt30DivineFavorFlashHelper?.TryUpdateBossEngageMovement(dd, player.Position, out var pt30EngageStatus) == true)
+				if (bmrBossHandling && !externalMovement && _pt30DivineFavorFlashHelper?.TryUpdateBossEngageMovement(dd, player.Position, out var pt30EngageStatus) == true)
 				{
 					_navHelper?.Cancel();
 					_status = pt30EngageStatus;
@@ -4340,7 +4341,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				});
 			}
 
-			if (!externalMovement && _pt30DivineFavorFlashHelper?.TryUpdateBossEngageMovement(dd, player.Position, out var pt30BossEngageStatus) == true)
+			if (bmrBossHandling && !externalMovement && _pt30DivineFavorFlashHelper?.TryUpdateBossEngageMovement(dd, player.Position, out var pt30BossEngageStatus) == true)
 			{
 				_navHelper?.Cancel();
 				_status = pt30BossEngageStatus;

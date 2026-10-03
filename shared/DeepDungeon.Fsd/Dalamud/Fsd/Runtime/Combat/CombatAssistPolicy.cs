@@ -45,13 +45,15 @@ internal sealed class CombatAssistPolicy
 			if (player == null || player.IsDead)
 				return;
 
-            if (context?.Duty is { DungeonId: 4, Floor: 99 })
+            if (configuration.BossMechanics.UsesBmrBossHandling() &&
+                context?.Duty is { DungeonId: 4, Floor: 99 })
             {
                 _pt99.Tick(context, out status);
                 selectStatus = status;
                 attractStatus = "PT99 - external rotation only";
                 return;
             }
+            _pt99.Reset(context);
 
 			bool inCombat = Service.Condition[ConditionFlag.InCombat];
 			float engageRange = GetCachedEngageRange(configuration);
@@ -329,6 +331,7 @@ internal sealed class CombatAssistPolicy
     private ICallGateSubscriber<Vector2>? _arenaCenterIpc;
     private DateTime _nextArenaCenterReadAt;
     private int _arenaFloor = -1;
+    private bool _arenaUsesBmr;
     private Vector2 _arenaCenter;
     private string _arenaCenterSource = "add-centroid";
     private ulong _lastBossTargetId;
@@ -337,15 +340,16 @@ internal sealed class CombatAssistPolicy
     {
         var now = DateTime.UtcNow;
         int floor = context?.Duty.Floor ?? 0;
-        if (_arenaFloor != floor || now >= _nextArenaCenterReadAt)
+        bool useBmr = context?.Configuration.BossMechanics.UsesBmrBossHandling() == true;
+        if (_arenaFloor != floor || _arenaUsesBmr != useBmr || now >= _nextArenaCenterReadAt)
         {
             _arenaFloor = floor;
+            _arenaUsesBmr = useBmr;
             _nextArenaCenterReadAt = now.AddSeconds(1);
             bool hasArenaCenter = false;
             try
             {
-                _arenaCenterIpc ??= Service.PluginInterface.GetIpcSubscriber<Vector2>("BossMod.Hints.ArenaCenter");
-                if (_arenaCenterIpc.HasFunction)
+                if (useBmr && (_arenaCenterIpc ??= Service.PluginInterface.GetIpcSubscriber<Vector2>("BossMod.Hints.ArenaCenter")).HasFunction)
                 {
                     var center = _arenaCenterIpc.InvokeFunc();
                     var player = Service.LocalPlayer;

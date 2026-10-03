@@ -12,6 +12,7 @@ internal partial class FsdEngine
 
     private bool SetBossMovementOverride(bool active)
     {
+        if (active && !_configuration.BossMechanics.UsesBmrBossHandling()) return false;
         bool accepted = _bossMechanics.SetInternalMovementOverride(active);
         _configuration.BossMechanicsActive = _bossMechanics.IsEnabled;
         return accepted;
@@ -19,7 +20,7 @@ internal partial class FsdEngine
 
     private void UpdateCompanionControls()
     {
-        if (!IsRunActive) _bossRotationSuppressed = false;
+        if (!IsRunActive || !_configuration.BossMechanics.UsesBmrBossHandling()) _bossRotationSuppressed = false;
         var mode = _ddHost?.Context?.FarmingPlan?.Mode;
         _bossMechanics.Update(IsRunActive, _currentDeepDungeonState, _configuration.BossMechanics, mode);
         if (IsRunActive && !_configuration.Rotation.TryValidate(out var error))

@@ -14,6 +14,16 @@ internal sealed class Pt99CombatController
     private IBattleChara? _target;
     internal Pt99TargetDecision Decision { get; private set; }
 
+    internal void Reset(RunContext? context)
+    {
+        if (_suppressed) context?.SetBossRotationSuppressed?.Invoke(false);
+        _suppressed = false;
+        _target = null;
+        _lastKind = null;
+        _nextScan = _nextLog = default;
+        Decision = default;
+    }
+
     internal void Tick(RunContext context, out string status)
     {
         var player = Service.LocalPlayer;

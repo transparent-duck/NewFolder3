@@ -10,6 +10,7 @@ public sealed class FsdBossMechanicsController
     private bool _runWasActive;
     private bool _desiredEnabled;
     private bool _internalMovementOverride;
+    private FsdBossMechanicsProvider _provider;
     private string _enableCommand = string.Empty;
     private string _disableCommand = string.Empty;
 
@@ -19,6 +20,7 @@ public sealed class FsdBossMechanicsController
     // Acquire synchronously before internal movement starts. Failed disable keeps external ownership.
     public bool SetInternalMovementOverride(bool active)
     {
+        if (active && _provider != FsdBossMechanicsProvider.Bmr) return false;
         if (active == _internalMovementOverride) return true;
         if (active && IsEnabled)
         {
@@ -32,6 +34,8 @@ public sealed class FsdBossMechanicsController
 
     public void Update(bool runActive, in DeepDungeonStateSnapshot state, FsdBossMechanicsSettings settings, FarmingMode? mode = null)
     {
+        _provider = settings.Provider;
+        if (!settings.UsesBmrBossHandling()) _internalMovementOverride = false;
         if (!runActive)
         {
             Stop();

@@ -14,6 +14,7 @@ internal partial class FsdEngine
     private static readonly string[] FarmingModeWithSurveyLabels =
         ["挖寶藏", "強化／陶片", "寶藏發現成就", "死靈術士(beta)", "受控採集（研究）"];
     private static readonly string[] HoardFloorsetLabels = ["21–30 層", "31–40 層"];
+    private static readonly string[] FarmingDungeonLabels = ["朝聖交錯路"];
 
     private bool IsFixedFloorsetHoard => _fsfScenarioIndex != 2 &&
         _configuration.Farming.Mode == FarmingMode.Hoard &&
@@ -24,8 +25,10 @@ internal partial class FsdEngine
 
     private void DrawFarmingSelection(bool running)
     {
-        ImGui.TextDisabled("地宮：朝聖交錯路");
         ImGui.BeginDisabled(running);
+        int dungeon = 0;
+        ImGui.SetNextItemWidth(260);
+        ImGui.Combo("地宮##fsdDungeon", ref dungeon, FarmingDungeonLabels, FarmingDungeonLabels.Length);
         var settings = _configuration.Farming;
         int mode = _fsfScenarioIndex == 2 ? 4 : (int)settings.Mode;
         var labels = _detailedMapHostOptions.SupportsControlledPtSurvey ? FarmingModeWithSurveyLabels : FarmingModeLabels;
