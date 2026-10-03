@@ -368,7 +368,7 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Combat/CombatAssistPolicy.cs",
-      "sha256": "b2dd7cf8e2409779b255b2f197aea42cb5014c9e9ff7a16445dd873b0346e01c"
+      "sha256": "51aeb87e39c618541f06f18d21fdcb2f0b57d913748b47dc0a5be9bb41ac2fb9"
     },
     {
       "path": "Dalamud/Fsd/Runtime/DeepDungeonRunLogExporter.cs",
@@ -452,7 +452,7 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.Patrol.cs",
-      "sha256": "43ec8273e810512b250f9225e68742c9087c735066e7daf67581748f3869b25a"
+      "sha256": "4818a32fec67d578140c557d3636efba67d0427496bedf41d7bf68501e5e1a78"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.RunFloorState.cs",

@@ -89,6 +89,17 @@ internal sealed class CombatAssistPolicy
 				return selected;
 			}
 
+			IBattleChara? PickMobCombatTarget()
+			{
+				// Keep reachable targets first, but retain a distant aggro target for BMR to approach.
+				// Stationary/ranged enemies do not necessarily follow us into spell range.
+				var target = CombatTargetingHelpers.PickHostileHighestHP(engageRange, onlyInRange: true,
+					mustBeInCombat: true, IsAllowedCombatTarget);
+				if (target != null) return target;
+				var distant = CombatTargetingHelpers.PickAggroedHostile(float.MaxValue, out _, preferredAggroId);
+				return distant != null && IsAllowedCombatTarget(distant) ? distant : null;
+			}
+
 			if (passageOpen)
 			{
 				if (inCombat)
@@ -97,7 +108,7 @@ internal sealed class CombatAssistPolicy
 					{
 						IBattleChara? target = isBossFloor
 							? PickBossTarget(context, IsAllowedCombatTarget)
-							: CombatTargetingHelpers.PickHostileHighestHP(engageRange, onlyInRange: true, mustBeInCombat: true, IsAllowedCombatTarget);
+							: PickMobCombatTarget();
 						
 					if (target != null)
 					{
@@ -164,7 +175,7 @@ internal sealed class CombatAssistPolicy
 					{
 						IBattleChara? target = isBossFloor
 							? PickBossTarget(context, IsAllowedCombatTarget)
-							: CombatTargetingHelpers.PickHostileHighestHP(engageRange, onlyInRange: true, mustBeInCombat: true, IsAllowedCombatTarget);
+							: PickMobCombatTarget();
 					if (target != null)
 					{
 						try { Service.TargetManager.Target = target; } catch { }
@@ -291,7 +302,7 @@ internal sealed class CombatAssistPolicy
 	/// <summary>
 	/// Computes the cast range of the configured attract skill.
 	/// </summary>
-	private float GetCachedEngageRange(FsdSettings configuration)
+	internal float GetCachedEngageRange(FsdSettings configuration)
 	{
 		uint sid = configuration.NecromancerBandedAttractSkillId;
 		if (sid == _cachedEngageRangeSkillId)

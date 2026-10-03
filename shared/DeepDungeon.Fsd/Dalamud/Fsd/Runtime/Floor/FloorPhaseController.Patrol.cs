@@ -99,7 +99,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				}
 
 				bool engaged = targetSpecificAggro;
-				if (engaged || casting || withinLiveTargetHoldRange)
+				float attackRange = _ctx.CombatAssist.GetCachedEngageRange(_ctx.Configuration);
+				var targetDelta = new Vector2(target.Value.LivePosition.X - player.Position.X,
+					target.Value.LivePosition.Z - player.Position.Z);
+				bool engagedInRange = engaged && targetDelta.LengthSquared() <= attackRange * attackRange;
+				if (engagedInRange || casting || withinLiveTargetHoldRange)
 				{
 					_chaseHelper.CompleteCurrentLeg();
 					_status = engaged
@@ -344,7 +348,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		private unsafe bool TryRecoverStalledEngage(InstanceContentDeepDungeon* dd, EnemyChaseTarget target, IPlayerCharacter player)
 		{
 			var current = CombatTargetingHelpers.GetBattleCharaByGameObjectId(target.GameObjectId);
-			if (current == null)
+			if (current == null || current.IsDead || current.CurrentHp == 0)
 			{
 				ResetEngagedTargetProgress();
 				return false;
@@ -631,8 +635,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				return true;
 			}
 
-			int playerRoom = RoomGraph.GetLocalPlayerRoomIndex(dd);
-			if (playerRoom < 0 || !TryResolveRoomDestination(dd, playerRoom, out var dest))
+			// Crossing into the enemy's room can restore line of sight; our own room may be behind a wall.
+			var rooms = _floorRuntime?.NormalGraph?.ReachableRooms;
+			int targetRoom = rooms == null ? -1 : RoomGraph.GetRoomIndexForPosition(dd, current.Position, rooms, -1);
+			if (targetRoom < 0 || !TryResolveRoomDestination(dd, targetRoom, out var dest))
 			{
 				SuppressStalledEngageTarget(dd, targetId, "room-center-unavailable", current, current.Position);
 				return true;
@@ -645,21 +651,9 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 					_status = "Recentering in room after stalled engage";
 					return true;
 				case NavigationState.Arrived:
-					RecordReplayEvent("clearing-engage-recenter-completed", new
-					{
-						floor = dd->Floor,
-						targetId,
-						reason = "arrived-room-center",
-						playerRoom,
-						currentHp = current.CurrentHp,
-						lastProgressHp = _engagedTargetProgressHp,
-						x = dest.X,
-						y = dest.Y,
-						z = dest.Z
-					});
-					_status = "Recentered, retrying hostile";
-					ResetEngagedTargetProgress();
-					return false;
+					// Arrival is not combat progress. Keep the recovery deadline until damage resumes.
+					_status = "Recentered, waiting for hostile HP progress";
+					return true;
 				case NavigationState.StuckRepathing:
 					_status = $"Recentering in room after stalled engage ({_navHelper.StuckRetryCount}/3)";
 					return true;
