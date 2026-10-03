@@ -2,6 +2,7 @@ using System;
 using DeepDungeon.Fsd.Runtime;
 using DeepDungeon.Fsd.Dalamud;
 using DeepDungeon.Fsd.Dalamud.Actions;
+using DeepDungeon.Fsd.Dalamud.GameState;
 using global::Dalamud.Game.ClientState.Conditions;
 
 namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
@@ -21,7 +22,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 			_configuration = configuration;
 		}
 
-		public void Update()
+		public unsafe void Update()
 		{
 			if (!_configuration.AutoUseRecoveryPotion) return;
 
@@ -49,7 +50,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 				if (now >= _nextUnavailableLogAtUtc)
 				{
 					_nextUnavailableLogAtUtc = now.AddSeconds(5);
-					Service.Log.Debug($"[RecoveryPotion] Potion {potionItemId} is not ready for use");
+                    var manager = FFXIVClientStructs.FFXIV.Client.Game.ActionManager.Instance();
+                    int? count = DeepDungeonLootTracker.TryGetItemCount(potionItemId, out int stock, out _) ? stock : null;
+                    uint? status = manager != null ? manager->GetActionStatus(FFXIVClientStructs.FFXIV.Client.Game.ActionType.Item, potionItemId) : null;
+                    bool offCooldown = manager != null && manager->IsActionOffCooldown(FFXIVClientStructs.FFXIV.Client.Game.ActionType.Item, potionItemId);
+                    Service.Log.Debug($"[RecoveryPotion] Potion {potionItemId} is not ready for use; stock={count}; status={status}; nativeOffCooldown={offCooldown}");
 				}
 				return;
 			}

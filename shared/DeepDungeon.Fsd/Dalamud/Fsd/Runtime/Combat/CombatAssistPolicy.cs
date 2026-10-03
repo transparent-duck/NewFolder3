@@ -55,13 +55,14 @@ internal sealed class CombatAssistPolicy
 			ulong preferredAggroId = 0;
 			bool hasPreferredAggro = context?.TryGetPreferredAggroTarget(out preferredAggroId) ?? false;
 			bool IsAllowedCombatTarget(IBattleChara target) => context?.IsCombatTargetSuppressed(target.GameObjectId) != true;
+			bool IsAllowedNewTarget(IBattleChara target) => IsAllowedCombatTarget(target) && context?.IsNewCombatTargetAllowed(target) != false;
 			IBattleChara? preferredOocTarget = null;
 			bool preferredOocTargetWithinRange = false;
 			if (!inCombat && hasPreferredAggro)
 			{
 				var candidate = CombatTargetingHelpers.GetBattleCharaByGameObjectId(preferredAggroId);
 				if (candidate is { IsTargetable: true, IsDead: false } &&
-				    IsAllowedCombatTarget(candidate))
+				    IsAllowedNewTarget(candidate))
 				{
 					preferredOocTarget = candidate;
 					var dx = candidate.Position.X - player.Position.X;
@@ -139,7 +140,7 @@ internal sealed class CombatAssistPolicy
 				else
 				{
 					var nearestHostile = TryPickPreferredAggro(engageRange * 2.5f, out bool withinRange)
-					                     ?? CombatTargetingHelpers.PickNearestHostile(engageRange * 2f, out withinRange);
+					                     ?? CombatTargetingHelpers.PickNearestHostile(engageRange * 2f, out withinRange, IsAllowedNewTarget);
 					
 					if (nearestHostile != null && !withinRange)
 					{
@@ -207,7 +208,7 @@ internal sealed class CombatAssistPolicy
 					}
 					else
 					{
-						target = CombatTargetingHelpers.PickNearestHostile(engageRange, out withinRange);
+						target = CombatTargetingHelpers.PickNearestHostile(engageRange, out withinRange, IsAllowedNewTarget);
 					}
 					if (target != null)
 					{
@@ -222,6 +223,8 @@ internal sealed class CombatAssistPolicy
 				else
 				{
 					status = "Assist: OOC no target in range";
+						if (Service.TargetManager.Target is IBattleChara previous && !IsAllowedNewTarget(previous))
+							Service.TargetManager.Target = null;
 					selectStatus = "No hostile in range";
 				}
 					}
@@ -243,7 +246,7 @@ internal sealed class CombatAssistPolicy
 						{
 							tgt = Service.TargetManager.Target;
 							targetOk = false;
-							if (tgt is IBattleChara tbc && !tbc.IsDead)
+							if (tgt is IBattleChara tbc && !tbc.IsDead && IsAllowedNewTarget(tbc))
 							{
 								var dx = tgt.Position.X - player.Position.X;
 								var dz = tgt.Position.Z - player.Position.Z;
@@ -258,7 +261,7 @@ internal sealed class CombatAssistPolicy
 							}
 							else
 							{
-								var pick = CombatTargetingHelpers.PickNearestHostile(engageRange, out bool withinRange);
+								var pick = CombatTargetingHelpers.PickNearestHostile(engageRange, out bool withinRange, IsAllowedNewTarget);
 								if (pick != null && withinRange)
 								{
 									try { Service.TargetManager.Target = pick; } catch { }

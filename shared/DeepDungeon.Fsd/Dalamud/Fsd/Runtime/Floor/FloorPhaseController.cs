@@ -235,6 +235,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		{
 			Dispose();
 			_ctx = context;
+			_chaseHelper.CanSelectNewTarget = context.CanSelectNewCombatTarget;
 			_ctx.ClearPreferredAggroTarget();
 			_navHelper = new NavigationHelper(_ctx.Navigator);
 			_navDriver = new NavigationDriver(_navHelper);

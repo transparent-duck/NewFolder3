@@ -7,6 +7,7 @@ using DeepDungeon.Fsd.Dalamud.Runtime.Combat;
 using DeepDungeon.Fsd.Dalamud.Runtime.Helpers;
 using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
 using DeepDungeon.Fsd.Dalamud.Runtime.Scenarios;
+using global::Dalamud.Game.ClientState.Objects.Types;
 
 namespace DeepDungeon.Fsd.Dalamud.Runtime
 {
@@ -21,6 +22,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 
 		// Services
 		public readonly DutyState Duty;
+		internal readonly Func<IBattleChara, bool> CanSelectNewCombatTarget;
 		public readonly DeepDungeonUi Ui;
 		public readonly SaveSlotManager SaveSlots;
 		public readonly INavigator Navigator;
@@ -60,6 +62,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 			throw new ArgumentNullException(nameof(detailedMap));
 		CancellationSource = new CancellationTokenSource();
 			Duty = dutyState;
+			CanSelectNewCombatTarget = IsNewCombatTargetAllowed;
 			Ui = new DeepDungeonUi();
 			SaveSlots = new SaveSlotManager();
 			Navigator = new NavigatorVNavAdapter();
@@ -78,6 +81,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		}
 
 	public CancellationToken Token => CancellationSource.Token;
+
+    // Existing hate is an obligation, even for a mob we would not voluntarily pull.
+    internal bool IsNewCombatTargetAllowed(IBattleChara target) =>
+        DeepDungeon.Fsd.Core.MobPullPolicy.CanInitiate(FarmingPlan?.Mode, Duty.DungeonId, Duty.Floor, target.NameId) ||
+        Floor.EnemyChaseHelper.IsAggroedToPlayer(target.GameObjectId);
 
 	public void Cancel()
 	{

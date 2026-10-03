@@ -11,6 +11,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 	internal sealed class EnemyChaseHelper
 	{
 		private ulong _currentTargetId;
+		public Func<IBattleChara, bool>? CanSelectNewTarget;
+		private readonly HashSet<uint> _reportedAvoidedNames = new();
 		private Vector3 _legEndpoint;
 		private bool _hasLegEndpoint;
 		private int _lastTopologyPlayerRoomIndex = -1;
@@ -56,7 +58,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			if (_currentTargetId != 0 && !IsDeprioritized(_currentTargetId))
 			{
 				var existing = CombatTargetingHelpers.GetBattleCharaByGameObjectId(_currentTargetId);
-				if (existing != null && existing.IsTargetable && !existing.IsDead)
+				if (existing != null && existing.IsTargetable && !existing.IsDead && IsNewTargetAllowed(existing))
 				{
 					if (playerRoomIndex != _lastTopologyPlayerRoomIndex &&
 					    TryGetGraphHops(
@@ -169,6 +171,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			_hasLegEndpoint = false;
 			_lastTopologyPlayerRoomIndex = -1;
 			_deprioritizedTargets.Clear();
+			_reportedAvoidedNames.Clear();
 		}
 
 		private IBattleChara? PickAggroedHostileAnyRange(Vector3 playerPosition)
@@ -206,6 +209,14 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 			return selected;
 		}
+
+        private bool IsNewTargetAllowed(IBattleChara target)
+        {
+            if (CanSelectNewTarget?.Invoke(target) != false) return true;
+            if (_reportedAvoidedNames.Add(target.NameId))
+                Service.Log.Info($"[MobPull] avoiding new target={target.GameObjectId} nameId={target.NameId} baseId={target.BaseId}");
+            return false;
+        }
 
 		private unsafe IBattleChara? PickTopologyNearestHostileAnyRange(
 			InstanceContentDeepDungeon* dd,
@@ -249,6 +260,9 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				}
 
 				if (IsDeprioritized(bnpc.GameObjectId))
+					continue;
+
+				if (!IsNewTargetAllowed(bnpc))
 					continue;
 
 				int candidateRoom = RoomGraph.GetRoomIndexForPosition(

@@ -252,11 +252,14 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			}
 
 			_lastChaseTargetEventKey = key;
+			var npc = CombatTargetingHelpers.GetBattleCharaByGameObjectId(target.GameObjectId);
 			_lastChaseTargetEventAt = now;
 			RecordReplayEvent(eventType, new
 			{
 				phase = _phase.ToString(),
 				targetId = target.GameObjectId,
+				nameId = npc?.NameId,
+				baseId = npc?.BaseId,
 				reason = target.Reason.ToString(),
 				acquisitionPlayerRoom = target.AcquisitionPlayerRoomIndex,
 				acquisitionTargetRoom = target.AcquisitionTargetRoomIndex,

@@ -13,7 +13,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
     /// </summary>
     internal static class CombatTargetingHelpers
     {
-        public static IBattleChara? PickNearestHostile(float range, out bool withinRange)
+        public static IBattleChara? PickNearestHostile(float range, out bool withinRange, Func<IBattleChara, bool>? predicate = null)
         {
             float r2 = range * range;
             withinRange = false;
@@ -30,7 +30,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
                 if (obj is IBattleNpc bnpc
                     && obj.ObjectKind == global::Dalamud.Game.ClientState.Objects.Enums.ObjectKind.BattleNpc
                     && (global::Dalamud.Game.ClientState.Objects.Enums.BattleNpcSubKind)obj.SubKind == global::Dalamud.Game.ClientState.Objects.Enums.BattleNpcSubKind.Combatant
-                    && bnpc.IsTargetable && !bnpc.IsDead)
+                    && bnpc.IsTargetable && !bnpc.IsDead && (predicate == null || predicate(bnpc)))
                 {
                     var dx = obj.Position.X - player.Position.X;
                     var dz = obj.Position.Z - player.Position.Z;
