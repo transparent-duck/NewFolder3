@@ -142,7 +142,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			ControlledReveal,
 			NaturalPoisonfruit,
 			NaturalPassageMazeroot,
-			ControlledPoisonfruit
+			ControlledPoisonfruit,
+            BossSerenity
 		}
 
 		private readonly record struct FloorItemUseKey(
@@ -3917,6 +3918,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			public PendingFloorItemUse? PendingFloorItemUse { get; private set; }
 			public bool BossNavigationResolved { get; set; }
             public DateTime NextBossDiagnosticAtUtc { get; set; }
+            public bool BossSerenityAwaitingBuff { get; set; }
             public MobMechanicsMovementGuard MobMechanicsGuard { get; } = new();
             public bool MobMechanicsYielding { get; set; }
             public DateTime NextMobMechanicsCheckUtc { get; set; }

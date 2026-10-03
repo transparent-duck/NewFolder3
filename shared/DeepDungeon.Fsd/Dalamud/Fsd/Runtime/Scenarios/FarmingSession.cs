@@ -12,6 +12,7 @@ internal sealed class FarmingSession(FarmingPlan plan)
     public bool OpenBronze { get; set; } = plan.OpenBronze;
     public int NextFloor { get; set; } = plan.StartFloor;
     public int OwnedSlot { get; set; } = -1;
+    public bool ResumeCurrentDuty { get; set; }
     public int Failures { get; set; }
     public int Discoveries { get; set; }
 }

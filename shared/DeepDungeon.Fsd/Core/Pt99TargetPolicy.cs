@@ -21,8 +21,11 @@ public static class Pt99TargetPolicy
         if (minionAvailable) return new(Pt99TargetKind.Minion, difference);
         if (griefMaxHp == 0 || eaterMaxHp == 0) return new(Pt99TargetKind.WaitForBossState, difference);
         if (griefHp <= 1 && eaterHp <= 1) return new(Pt99TargetKind.Finished, difference);
-        // Both/neither colors are not an authoritative permission to attack a boss.
-        if (light == dark)
+        // BMR's color AI only runs after pull. Without a color, initiate on a live
+        // boss so the encounter can activate instead of waiting on each other.
+        if (!light && !dark)
+            return new(griefHp > 1 ? Pt99TargetKind.Grief : Pt99TargetKind.Eater, difference);
+        if (light && dark)
             return new(Pt99TargetKind.WaitForColor, difference);
         bool canAttack = light ? griefHp > 1 : eaterHp > 1;
         // Match installed BMR's >25 switch boundary: stopping earlier would prevent

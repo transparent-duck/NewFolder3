@@ -221,7 +221,15 @@ internal partial class FsdEngine
         }
         plan = plan! with { StopAfterFloor = stopAfterFloor, StartFloor = diagnosticStartFloor ?? plan.StartFloor,
             UsesDiagnosticCheckpoints = diagnosticStartFloor.HasValue, HoldOnFailure = holdOnFailure };
-        var session = new FarmingSession(plan) { OwnedSlot = resumeSlot ?? -1 };
+        bool resumeCurrentDuty = _dutyState?.IsInDuty == true;
+        if (resumeCurrentDuty && (!holdOnFailure || !resumeSlot.HasValue ||
+            _dutyState!.IsTransitioning || _dutyState.DungeonId != 4 ||
+            _dutyState.Floor < plan.StartFloor || _dutyState.Floor >= plan.StartFloor + 10))
+        {
+            error = "原副本接續只支援保留現場的PT測試，須指定來源槽位與目前所在層段起點。";
+            return false;
+        }
+        var session = new FarmingSession(plan) { OwnedSlot = resumeSlot ?? -1, ResumeCurrentDuty = resumeCurrentDuty };
         string? key = plan!.ShowsDetailedMap ? startFloor == 21
             ? DetailedMapScenarioCatalog.PilgrimsTraverse21To30.Key
             : DetailedMapScenarioCatalog.PilgrimsTraverse31To40.Key : null;

@@ -23,6 +23,8 @@ public readonly record struct FarmingItemPolicy(CombatBuffUse CombatBuffs, bool 
         });
 
     public static bool NeedsBossRefresh(float remainingSeconds) => remainingSeconds <= BossRefreshSeconds;
+    public bool AllowsBossSerenity(int stock, bool bossFloor, float remainingSeconds, bool awaitingBuff) =>
+        bossFloor && !awaitingBuff && AllowsCombatBuff(stock, bossFloor) && NeedsBossRefresh(remainingSeconds);
     public bool AllowsEntryIncense(bool floorSetup, double secondsSinceReady) =>
         EntryPassageIncense && floorSetup && secondsSinceReady <= 20;
 }

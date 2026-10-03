@@ -41,7 +41,16 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             LeaveMode = LeaveMode.AfterFinishDungeon,
             RequireValidatedAbandonPrompt = true
         });
-        if (plan.SaveUse == SaveUse.Prepared || session.OwnedSlot >= 0)
+        if (session.ResumeCurrentDuty)
+        {
+            _entryFloor = session.NextFloor;
+            _entered = true;
+            context.TerminalRewardsRequired = _entryFloor == 91;
+            context.PreparedSaveDescription = $"原副本接續，存檔 {session.OwnedSlot + 1}，起點 {_entryFloor} 層";
+            context.StatusLine = $"原副本接續：第 {context.Duty.Floor} 層。";
+            Service.Log.Info($"[Farming] Resumed existing duty: floor={context.Duty.Floor}, entryFloor={_entryFloor}, ownedSlot={session.OwnedSlot}, holdOnFailure={plan.HoldOnFailure}");
+        }
+        else if (plan.SaveUse == SaveUse.Prepared || session.OwnedSlot >= 0)
         {
             session.Source.Reusable = plan.ReusesSave;
             session.Source.ExpectedFloor = plan.SaveUse == SaveUse.Prepared ? null : session.NextFloor;

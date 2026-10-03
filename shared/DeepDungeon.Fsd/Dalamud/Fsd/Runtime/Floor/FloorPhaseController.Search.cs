@@ -2490,7 +2490,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			var runtime = _floorRuntime;
 			if (runtime == null ||
 			    runtime.IsDisposed ||
-			    !CanAttemptPomanderUse() ||
+			    !CanAttemptPomanderUse(allowCombat: purpose == FloorItemUsePurpose.BossSerenity && _ctx?.Duty.IsBossFloor == true) ||
 			    !DeepDungeonFloorItemUsePolicy.CanUsePtIncense(
 				    dd->DeepDungeonBanId) ||
 			    GetStoneCountAvailableForFloorUse(stoneId) <= 0)
@@ -2691,6 +2691,9 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 						runtime.NaturalMazerootAttemptedOrAdopted = true;
 						runtime.ObjectEvidence.Invalidate();
 						break;
+					case FloorItemUsePurpose.BossSerenity:
+                        runtime.BossSerenityAwaitingBuff = true;
+                        break;
 					case FloorItemUsePurpose.ControlledPoisonfruit:
 						runtime.ControlledPoisonfruitDispatched = true;
 						runtime.ControlledPendingPostCapturePoisonfruit = false;
