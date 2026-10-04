@@ -29,7 +29,7 @@ internal partial class FsdEngine
             {
                 _vnavInstalled |= Matches(plugin.InternalName, "vnavmesh");
                 _palacePalInstalled |= Matches(plugin.InternalName, "PalacePal");
-                _ichingInstalled |= Matches(plugin.InternalName, "I-Ching") || Matches(plugin.InternalName, "IChing") || Matches(plugin.Name, "I-Ching");
+                _ichingInstalled |= Matches(plugin.InternalName, "I-Ching") || Matches(plugin.InternalName, "IChing") || Matches(plugin.InternalName, "I-Ching-GL") || Matches(plugin.Name, "I-Ching");
                 _bmrInstalled |= Matches(plugin.InternalName, "BossModReborn");
                 _wrathInstalled |= Matches(plugin.InternalName, "WrathCombo");
                 _rsrInstalled |= Matches(plugin.InternalName, "RotationSolver") || Matches(plugin.InternalName, "RotationSolverReborn");
