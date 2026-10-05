@@ -77,6 +77,8 @@ internal sealed class Pt99CombatController
             }
         }
         Service.TargetManager.Target = _target is { IsDead: false, IsTargetable: true } ? _target : null;
+        if (!_suppressed && _target != null && !Service.Condition[global::Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat])
+            context.PrepareCombat(_target.GameObjectId);
         status = $"PT99 - {Decision.Target} (HP difference {Decision.HpDifference:F1}%)";
     }
 }

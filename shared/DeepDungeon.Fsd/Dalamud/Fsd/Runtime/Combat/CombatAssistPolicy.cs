@@ -21,6 +21,38 @@ internal sealed class CombatAssistPolicy
 		private bool _prevInCombat = false;
 		private uint _cachedEngageRangeSkillId = uint.MaxValue;
 		private float _cachedEngageRange;
+        private DateTime _nextDiagnosticAt;
+        private DateTime _lastDiagnosticAt;
+        private string _lastDiagnosticStatus = string.Empty;
+        private ulong _lastDiagnosticTarget;
+
+    public void Tick(FsdSettings configuration, RunContext? context, bool isBossFloor, bool passageOpen,
+        out string status, out string selectStatus, out string attractStatus)
+    {
+        TickCore(configuration, context, isBossFloor, passageOpen, out status, out selectStatus, out attractStatus);
+        if (context?.RecordDiagnostic == null) return;
+        var now = DateTime.UtcNow;
+        if (now - _lastDiagnosticAt < TimeSpan.FromSeconds(1)) return;
+        var player = Service.LocalPlayer;
+        var target = Service.TargetManager.Target as IBattleChara;
+        ulong targetId = target?.GameObjectId ?? 0;
+        if (now < _nextDiagnosticAt && status == _lastDiagnosticStatus && targetId == _lastDiagnosticTarget) return;
+        _nextDiagnosticAt = now.AddSeconds(5);
+        _lastDiagnosticAt = now;
+        _lastDiagnosticStatus = status;
+        _lastDiagnosticTarget = targetId;
+        context.RecordDiagnostic("combat-assist-state", new {
+            floor = context.Duty.Floor, status, selectStatus, attractStatus,
+            configuration.NecromancerBandedAutoSelect, configuration.NecromancerBandedAutoAttract,
+            requestedActionId = configuration.NecromancerBandedAttractSkillId,
+            inCombat = Service.Condition[ConditionFlag.InCombat], passageOpen,
+            playerAvailable = player != null, playerDead = player?.IsDead, casting = player?.IsCasting,
+            currentTargetId = targetId, preferredTargetId = context.TryGetPreferredAggroTarget(out var preferred) ? preferred : 0,
+            targetHp = target?.CurrentHp, targetMaxHp = target?.MaxHp, targetable = target?.IsTargetable,
+            playerPosition = player == null ? null : new { player.Position.X, player.Position.Y, player.Position.Z },
+            targetPosition = target == null ? null : new { target.Position.X, target.Position.Y, target.Position.Z },
+            nextAttemptUtc = _nextAttractCastAt.ToUniversalTime() });
+    }
 
 	/// <summary>
 	/// Apply combat-assist behavior for the current tick.
@@ -32,7 +64,7 @@ internal sealed class CombatAssistPolicy
 	/// <param name="status">Primary status line (combined select/attract summary).</param>
 	/// <param name="selectStatus">Status line focused on target selection.</param>
 	/// <param name="attractStatus">Status line focused on attract casting.</param>
-	public void Tick(FsdSettings configuration, RunContext? context, bool isBossFloor, bool passageOpen,
+	private void TickCore(FsdSettings configuration, RunContext? context, bool isBossFloor, bool passageOpen,
 		out string status, out string selectStatus, out string attractStatus)
 		{
 		status = "Assist: Idle";
@@ -242,6 +274,13 @@ internal sealed class CombatAssistPolicy
 					}
 				}
 
+                if (!inCombat && configuration.NecromancerBandedAutoSelect &&
+                    Service.TargetManager.Target is IBattleChara selected && !selected.IsDead &&
+                    IsAllowedNewTarget(selected) &&
+                    System.Numerics.Vector2.DistanceSquared(new(player.Position.X, player.Position.Z),
+                        new(selected.Position.X, selected.Position.Z)) <= engageRange * engageRange)
+                    context?.PrepareCombat(selected.GameObjectId);
+
 				if (!inCombat && configuration.NecromancerBandedAutoAttract)
 				{
 					uint sid = configuration.NecromancerBandedAttractSkillId;
@@ -289,7 +328,17 @@ internal sealed class CombatAssistPolicy
 
 					if (tgt != null && DateTime.Now >= _nextAttractCastAt)
 					{
-						bool ok = DeepDungeon.Fsd.Dalamud.Actions.FsdActionExecutor.Cast(sid, tgt.GameObjectId);
+                        context?.PrepareCombat(tgt.GameObjectId);
+                        var attempt = DeepDungeon.Fsd.Dalamud.Actions.FsdActionExecutor.CastWithDiagnostics(sid, tgt.GameObjectId);
+                        bool ok = attempt.Accepted;
+                        context?.RecordDiagnostic?.Invoke("combat-pull-attempt", new {
+                            floor = context.Duty.Floor, targetId = tgt.GameObjectId,
+                            currentTargetId = Service.TargetManager.Target?.GameObjectId,
+                            targetPosition = new { tgt.Position.X, tgt.Position.Y, tgt.Position.Z },
+                            playerPosition = new { player.Position.X, player.Position.Y, player.Position.Z }, engageRange,
+                            inCombat, casting = player.IsCasting, attempt,
+                            betweenAreas = Service.Condition[ConditionFlag.BetweenAreas],
+                            betweenAreas51 = Service.Condition[ConditionFlag.BetweenAreas51] });
 						_nextAttractCastAt = DateTime.Now.AddSeconds(2.0);
 						status = $"Assist: Cast {(ok ? "OK" : "FAIL")}";
 						attractStatus = $"Cast {(ok ? "OK" : "FAIL")}";
@@ -310,6 +359,7 @@ internal sealed class CombatAssistPolicy
 			catch (Exception ex)
 			{
 			status = "Assist: error (CombatAssistPolicy)";
+			context?.RecordDiagnostic?.Invoke("combat-assist-error", new { error = ex.ToString() });
 			try { Service.Log.Error($"[CombatAssistPolicy] Tick error: {ex}"); } catch { }
 			}
 		}

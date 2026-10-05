@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using DeepDungeon.Fsd.Core;
 using global::Dalamud.Game.ClientState.Conditions;
 using global::Dalamud.Game.ClientState.Objects.SubKinds;
 using global::Dalamud.Game.ClientState.Objects.Types;
@@ -103,7 +104,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				var targetDelta = new Vector2(target.Value.LivePosition.X - player.Position.X,
 					target.Value.LivePosition.Z - player.Position.Z);
 				bool engagedInRange = engaged && targetDelta.LengthSquared() <= attackRange * attackRange;
-				if (engagedInRange || casting || withinLiveTargetHoldRange)
+				if (engagedInRange || casting || withinLiveTargetHoldRange || PatrolExecution.AttackWindow.IsHolding(DateTime.UtcNow))
 				{
 					_chaseHelper.CompleteCurrentLeg();
 					_status = engaged
@@ -138,6 +139,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 					{
 						_chaseHelper.CompleteCurrentLeg();
 						_status = "Hostile moved; starting next chase leg";
+						PatrolExecution.AttackWindow.Observe(false, legArrived: true, DateTime.UtcNow);
 						RecordChaseTargetEvent("clearing-chase-leg-completed", target.Value);
 					}
 					else
@@ -260,6 +262,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				targetId = target.GameObjectId,
 				nameId = npc?.NameId,
 				baseId = npc?.BaseId,
+				hp = npc?.CurrentHp, maxHp = npc?.MaxHp,
+				livePosition = new { target.LivePosition.X, target.LivePosition.Y, target.LivePosition.Z },
+				inCombat = Service.Condition[ConditionFlag.InCombat],
+				currentTargetId = Service.TargetManager.Target?.GameObjectId,
+				attackWindowStartedUtc = _floorRuntime?.ActiveExecution?.AttackWindow.StartedAt,
+				attackHoldActive = _floorRuntime?.ActiveExecution?.AttackWindow.IsHolding(now),
 				reason = target.Reason.ToString(),
 				acquisitionPlayerRoom = target.AcquisitionPlayerRoomIndex,
 				acquisitionTargetRoom = target.AcquisitionTargetRoomIndex,
@@ -418,6 +426,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			InstanceContentDeepDungeon* dd)
 		{
 			DateTime now = DateTime.UtcNow;
+			var window = PatrolExecution.AttackWindow;
+			if (_preEngageTargetProgressId != target.GameObjectId) window.Reset();
+			window.Observe(attackAttemptWindow, legArrived: false, now);
+			_preEngageTargetProgressAt = window.StartedAt;
 			var decision = EnemyChaseRecoveryPolicy.Decide(
 				targetAvailable: current != null,
 				targetDead: current == null || current.IsDead || current.CurrentHp == 0,
@@ -426,9 +438,9 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 					current != null &&
 					_preEngageTargetProgressId == target.GameObjectId &&
 					current.CurrentHp < _preEngageTargetProgressHp,
-				attackAttemptWindow: attackAttemptWindow,
+				attackAttemptWindow: window.StartedAt != default,
 				noProgress: _preEngageTargetProgressId == target.GameObjectId
-					? now - _preEngageTargetProgressAt
+					&& _preEngageTargetProgressAt != default ? now - _preEngageTargetProgressAt
 					: TimeSpan.Zero,
 				recoveryActive: _clearingPreEngageAirWallRecovery);
 
@@ -436,7 +448,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			{
 				_preEngageTargetProgressId = target.GameObjectId;
 				_preEngageTargetProgressHp = current?.CurrentHp ?? 0;
-				_preEngageTargetProgressAt = now;
+				_preEngageTargetProgressAt = window.StartedAt;
 				_clearingPreEngageAirWallRecovery = false;
 				_clearingPreEngageAirWallRecoveryAt = DateTime.MinValue;
 				_clearingPreEngageTargetRoom = ResolveTargetRoomIndex(dd, target);
@@ -449,18 +461,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				return false;
 			}
 
-			// A target can remain selected while the player is still traversing the
-			// room graph.  Only the normal attack-attempt window is evidence that the
-			// player is being held by an attack-blocking wall; a long chase alone must
-			// never start room-interior recovery.
-			if (!attackAttemptWindow)
-			{
-				_preEngageTargetProgressAt = now;
-				_clearingPreEngageAirWallRecovery = false;
-				_clearingPreEngageAirWallRecoveryAt = DateTime.MinValue;
-				_clearingPreEngageTargetRoom = ResolveTargetRoomIndex(dd, target);
-				return false;
-			}
+			// Traversing toward a distant target does not start a timer. Once an
+			// attack opportunity occurs, leaving range must not erase that evidence.
 
 			if (decision != EnemyChaseRecoveryDecision.Start)
 				return decision == EnemyChaseRecoveryDecision.Continue;
@@ -727,6 +729,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			execution.PreEngageTargetProgressId = 0;
 			execution.PreEngageTargetProgressHp = 0;
 			execution.PreEngageTargetProgressAt = DateTime.MinValue;
+			execution.AttackWindow.Reset();
 			execution.ClearingPreEngageAirWallRecovery = false;
 			execution.ClearingPreEngageAirWallRecoveryAt = DateTime.MinValue;
 			execution.ClearingPreEngageTargetRoom = -1;
@@ -757,7 +760,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 	internal static class EnemyChaseRecoveryPolicy
 	{
-		private static readonly TimeSpan NoProgressLimit = TimeSpan.FromSeconds(15);
 
 		public static EnemyChaseRecoveryDecision Decide(
 			bool targetAvailable,
@@ -774,7 +776,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				return EnemyChaseRecoveryDecision.Continue;
 			if (!attackAttemptWindow)
 				return EnemyChaseRecoveryDecision.None;
-			return noProgress >= NoProgressLimit
+			return noProgress >= EnemyChaseAttackWindow.NoProgressLimit
 				? EnemyChaseRecoveryDecision.Start
 				: EnemyChaseRecoveryDecision.None;
 		}

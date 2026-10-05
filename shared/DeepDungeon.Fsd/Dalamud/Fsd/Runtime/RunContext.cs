@@ -34,6 +34,23 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
         internal DeepDungeon.Fsd.Core.FarmingPlan? FarmingPlan;
         internal Func<bool, bool>? SetBossMovementOverride;
         internal Action<bool>? SetBossRotationSuppressed;
+        internal Action<string, object>? RecordDiagnostic;
+        internal long CombatPreparationSequence { get; private set; }
+        private ulong _preparedCombatTarget;
+        private bool _rotationWasInCombat;
+
+        internal void PrepareCombat(ulong targetId)
+        {
+            if (DutyCompletionObserved || targetId == 0 || targetId == _preparedCombatTarget) return;
+            _preparedCombatTarget = targetId;
+            CombatPreparationSequence++;
+        }
+
+        internal void ObserveCombatState(bool inCombat)
+        {
+            if (_rotationWasInCombat && !inCombat) _preparedCombatTarget = 0;
+            _rotationWasInCombat = inCombat;
+        }
         internal bool HarvestComplete;
         internal bool TerminalRewardsRequired;
         internal bool TerminalRoomObserved;

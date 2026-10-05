@@ -28,8 +28,13 @@ internal partial class FsdEngine
             StopForRotationError(error);
             return;
         }
+        bool inCombat = Service.Condition[ConditionFlag.InCombat];
+        _ddHost?.Context?.ObserveCombatState(inCombat);
         _rotationControl.Update(IsRunActive, mode, _currentDeepDungeonState,
-            Service.Condition[ConditionFlag.InCombat], _configuration.Rotation, DateTime.UtcNow, _bossRotationSuppressed);
+            inCombat, _configuration.Rotation, _bossRotationSuppressed,
+            _ddHost?.Context?.CombatPreparationSequence ?? 0,
+            Service.LocalPlayer is { IsDead: false } &&
+            !Service.Condition[ConditionFlag.BetweenAreas] && !Service.Condition[ConditionFlag.BetweenAreas51]);
         if (IsRunActive && _rotationControl.FailedProvider is { } failed)
             StopForRotationError($"無法{(_rotationControl.DesiredEnabled ? "啟用" : "關閉")}輸出：{RotationProviderLabels[(int)failed - 1]}。");
     }
@@ -38,7 +43,27 @@ internal partial class FsdEngine
     {
         _farmingError = error;
         Service.Log.Warning($"[FSD.Rotation] Stopping FSD: {error}");
-        _ddHost?.StopFsd();
+        _ddHost?.StopFsd("rotation-control-failure", new { error, provider = _configuration.Rotation.Provider.ToString(),
+            desiredEnabled = _rotationControl.DesiredEnabled, state = _currentDeepDungeonState,
+            playerAvailable = Service.LocalPlayer != null, inCombat = Service.Condition[ConditionFlag.InCombat],
+            betweenAreas = Service.Condition[ConditionFlag.BetweenAreas], betweenAreas51 = Service.Condition[ConditionFlag.BetweenAreas51] });
+    }
+
+    private void RecordRotationControl(FsdRotationControlEvent control)
+    {
+        var installed = Service.PluginInterface.InstalledPlugins.FirstOrDefault(plugin => control.Provider switch
+        {
+            FsdRotationProvider.RotationSolverReborn => plugin.InternalName is "RotationSolver" or "RotationSolverReborn",
+            FsdRotationProvider.WrathCombo => plugin.InternalName == "WrathCombo",
+            FsdRotationProvider.PromeRotation => plugin.InternalName == "PromeRotation",
+            _ => false
+        });
+        _ddHost?.FloorController.RecordReplayEvent("rotation-control", new {
+            provider = control.Provider.ToString(), control.Enabled, before = control.Before.ToString(),
+            after = control.After.ToString(), control.Accepted, control.Reason, control.DungeonId, control.Floor,
+            plugin = installed?.InternalName, version = installed?.Version.ToString(),
+            playerAvailable = Service.LocalPlayer != null, job = Service.LocalPlayer?.ClassJob.RowId,
+            inCombat = Service.Condition[ConditionFlag.InCombat], state = _currentDeepDungeonState });
     }
 
     private bool TryValidateRotation(out string error)
@@ -64,7 +89,7 @@ internal partial class FsdEngine
         return Service.CommandManager.Commands.ContainsKey(value[..end]);
     }
 
-    private static FsdRotationState ReadRotationState(FsdRotationProvider provider)
+    private FsdRotationState ReadRotationState(FsdRotationProvider provider)
     {
         if (provider == FsdRotationProvider.Custom) return FsdRotationState.Unknown;
         try
@@ -91,10 +116,16 @@ internal partial class FsdEngine
             }
             return !read.HasFunction ? FsdRotationState.Unknown : read.InvokeFunc() ? FsdRotationState.On : FsdRotationState.Off;
         }
-        catch { return FsdRotationState.Unavailable; }
+        catch (Exception error)
+        {
+            _ddHost?.FloorController.RecordReplayEvent("rotation-state-read-error", new {
+                provider = provider.ToString(), error = error.ToString(), state = _currentDeepDungeonState });
+            Service.Log.Warning($"[FSD.Rotation] ReadRotationState provider={provider} error={error}");
+            return FsdRotationState.Unavailable;
+        }
     }
 
-    private static bool SetRotationEnabled(FsdRotationProvider provider, bool enabled, string customCommand)
+    private bool SetRotationEnabled(FsdRotationProvider provider, bool enabled, string customCommand)
     {
         try
         {
@@ -122,6 +153,8 @@ internal partial class FsdEngine
         }
         catch (Exception error)
         {
+            _ddHost?.FloorController.RecordReplayEvent("rotation-control-error", new {
+                provider = provider.ToString(), enabled, error = error.ToString(), state = _currentDeepDungeonState });
             LogRotationFailure(provider, error.Message);
             return false;
         }

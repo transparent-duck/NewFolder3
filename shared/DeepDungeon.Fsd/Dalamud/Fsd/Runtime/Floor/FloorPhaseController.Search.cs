@@ -68,6 +68,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			public ulong PreEngageTargetProgressId;
 			public uint PreEngageTargetProgressHp;
 			public DateTime PreEngageTargetProgressAt = DateTime.MinValue;
+			public EnemyChaseAttackWindow AttackWindow { get; } = new();
 			public bool ClearingPreEngageAirWallRecovery;
 			public DateTime ClearingPreEngageAirWallRecoveryAt = DateTime.MinValue;
 			public int ClearingPreEngageTargetRoom = -1;

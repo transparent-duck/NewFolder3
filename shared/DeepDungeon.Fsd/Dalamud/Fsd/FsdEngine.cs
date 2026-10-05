@@ -29,7 +29,7 @@ namespace DeepDungeon.Fsd.Dalamud
         private readonly Func<string?>? _fsdStartDenialNoticeProvider;
         private readonly NativeDeepDungeonLogMessageSource _logMessageSource;
         private readonly FsdBossMechanicsController _bossMechanics = new(DispatchCompanionCommand);
-        private readonly FsdRotationController _rotationControl = new(ReadRotationState, SetRotationEnabled);
+        private readonly FsdRotationController _rotationControl;
         
 		private RunHost? _ddHost = null;
         private int _fsfScenarioIndex = 1;
@@ -94,6 +94,7 @@ namespace DeepDungeon.Fsd.Dalamud
             Func<string?>? fsdStartDenialNoticeProvider = null)
         {
             _configuration = configuration;
+            _rotationControl = new(ReadRotationState, SetRotationEnabled, RecordRotationControl);
             _executionLease = executionLease;
             _hostIdentity = hostIdentity;
             _hostVersion = hostVersion;

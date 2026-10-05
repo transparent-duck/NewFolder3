@@ -5,6 +5,26 @@ namespace DeepDungeon.Fsd.Dalamud.Actions;
 
 public static class FsdActionExecutor
 {
+    public readonly record struct CastDiagnostic(bool Accepted, uint RequestedActionId, uint AdjustedActionId,
+        uint? RawStatus, uint? AdjustedStatus, float? AnimationLock, string Result);
+
+    public static unsafe CastDiagnostic CastWithDiagnostics(uint actionId, ulong target)
+    {
+        var player = Service.LocalPlayer;
+        var manager = ActionManager.Instance();
+        bool between = Service.Condition[ConditionFlag.BetweenAreas] || Service.Condition[ConditionFlag.BetweenAreas51];
+        uint adjusted = manager != null && actionId != 0 ? manager->GetAdjustedActionId(actionId) : 0;
+        uint? rawStatus = manager != null && actionId != 0 ? manager->GetActionStatus(ActionType.Action, actionId, target) : null;
+        uint? adjustedStatus = manager != null && adjusted != 0 ? manager->GetActionStatus(ActionType.Action, adjusted, target) : null;
+        float? animationLock = manager != null ? manager->AnimationLock : null;
+        bool accepted = Cast(actionId, target);
+        string result = accepted ? "native-call-accepted" :
+            player == null || player.Address == 0 ? "player-unavailable" : player.IsDead ? "player-dead" :
+            actionId == 0 ? "no-action" : between ? "transition" : manager == null ? "action-manager-unavailable" :
+            animationLock > 0.05f ? "animation-lock" : "native-call-rejected";
+        return new(accepted, actionId, adjusted, rawStatus, adjustedStatus, animationLock, result);
+    }
+
     public static unsafe bool Cast(uint actionId, ulong target = 0xE0000000UL)
         => TryUseAction(ActionType.Action, actionId, target, requireReady: false);
 

@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.CompilerServices;
 using global::Dalamud.Plugin.Services;
 using DeepDungeon.Fsd.Core;
 using DeepDungeon.Fsd.Dalamud.GameState;
@@ -122,11 +123,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 			catch (Exception ex)
 			{
 				Service.Log.Error($"[RunHost] Failed to start FSD: {ex}");
-				StopFsd();
+				StopFsd("start-exception", new { error = ex.ToString() });
 			}
 		}
 
-		public void StopFsd()
+		public void StopFsd(string reason = "requested", object? details = null, [CallerMemberName] string caller = "")
 		{
 			lock (_dutyAttemptEventLock)
 			{
@@ -138,6 +139,14 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 			{
 				_floorController.CloseRunRecording("fsd-stopped", new
 				{
+					stopReason = reason, caller, details,
+					status = _context?.StatusLine, statusIsError = _context?.StatusIsError,
+					dutyCompletionObserved = _context?.DutyCompletionObserved,
+					playerAvailable = Service.LocalPlayer != null, playerDead = Service.LocalPlayer?.IsDead,
+					playerHp = Service.LocalPlayer?.CurrentHp,
+					inCombat = Service.Condition[global::Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat],
+					betweenAreas = Service.Condition[global::Dalamud.Game.ClientState.Conditions.ConditionFlag.BetweenAreas],
+					betweenAreas51 = Service.Condition[global::Dalamud.Game.ClientState.Conditions.ConditionFlag.BetweenAreas51],
 					scenario = _attachedScenario?.Name ?? string.Empty,
 					completedLoops = _multiLoopDriver?.CompletedLoops ?? 0,
 					targetLoops = _multiLoopDriver?.TargetLoops ?? 0,
@@ -308,7 +317,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 			catch (Exception ex)
 			{
 				Service.Log.Error($"[RunHost] FSD update error: {ex}");
-				StopFsd();
+				StopFsd("update-exception", new { error = ex.ToString() });
 			}
 		}
 
@@ -581,6 +590,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 				}
 
 				attemptContext.MarkDutyCompleted();
+				_floorController.RecordReplayEvent("duty-completed", new {
+                    attemptGeneration, floor = attemptContext.Duty.Floor,
+                    playerAvailable = player != null, playerHp = player?.CurrentHp,
+                    inCombat = Service.Condition[global::Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat] });
 			}
 			catch (Exception ex)
 			{

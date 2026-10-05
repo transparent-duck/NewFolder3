@@ -2,74 +2,65 @@ using DeepDungeon.Fsd.Core;
 
 namespace DeepDungeon.Fsd.Runtime;
 
-/// <summary>Applies the active mode's output policy. Stopping never restores a previous state.</summary>
+public readonly record struct FsdRotationControlEvent(FsdRotationProvider Provider, bool Enabled,
+    FsdRotationState Before, FsdRotationState After, bool Accepted, string Reason, uint DungeonId, byte Floor);
+
+/// <summary>Dispatches output commands at gameplay boundaries, without enforcing a persistent switch state.</summary>
 public sealed class FsdRotationController(Func<FsdRotationProvider, FsdRotationState> readState,
-    Func<FsdRotationProvider, bool, string, bool> setEnabled)
+    Func<FsdRotationProvider, bool, string, bool> setEnabled,
+    Action<FsdRotationControlEvent>? record = null)
 {
-    private bool _applied;
-    private bool _active, _inCombat;
+    private bool _inDuty, _inCombat;
     private FsdRotationProvider _provider;
     private string _customCommand = string.Empty;
-    private uint _dungeonId;
-    private byte _floor;
-    private DateTime _nextCheck;
+    private long _preparationSequence;
     public FsdRotationProvider? FailedProvider { get; private set; }
     public bool DesiredEnabled { get; private set; }
 
     public void Update(bool runActive, FarmingMode? mode, in DeepDungeonStateSnapshot state, bool inCombat,
-        FsdRotationSettings settings, DateTime nowUtc, bool suppressOutput = false)
+        FsdRotationSettings settings, bool suppressOutput = false, long preparationSequence = 0,
+        bool playerAvailable = true)
     {
         if (!runActive || !settings.TryValidate(out _))
         {
-            Reset();
+            Reset(); return;
+        }
+        // Exit resets the entry boundary, but never sends an output command.
+        if (!state.IsInDeepDungeonTerritory || !state.IsInDuty)
+        {
+            _inDuty = _inCombat = false;
+            _preparationSequence = 0;
             return;
         }
-        if (state.IsTransitioning) return;
+        if (!state.IsValid || state.IsTransitioning || !playerAvailable) return;
         bool enabled = !suppressOutput && state.FloorKind != DeepDungeonFloorKind.Result &&
             mode is not (FarmingMode.Aetherpool or FarmingMode.HoardDiscovery);
         string command = (enabled ? settings.CustomEnableCommand : settings.CustomDisableCommand) ?? string.Empty;
-        bool force = !_active || DesiredEnabled != enabled || _provider != settings.Provider || _customCommand != command ||
-            state.IsValid && (_dungeonId != state.DungeonId || _floor != state.Floor) ||
-            inCombat && !_inCombat;
-        if (!force && nowUtc < _nextCheck) return;
-        _active = true;
+        string? reason = !_inDuty ? "duty-entry" :
+            DesiredEnabled != enabled ? "output-policy-changed" :
+            _provider != settings.Provider || _customCommand != command ? "configuration-changed" :
+            enabled && preparationSequence > 0 && preparationSequence != _preparationSequence ? "combat-preparation" :
+            enabled && inCombat && !_inCombat ? "combat-started" : null;
+        _inDuty = true;
         DesiredEnabled = enabled;
         _provider = settings.Provider;
         _customCommand = command;
         _inCombat = inCombat;
-        if (state.IsValid) { _dungeonId = state.DungeonId; _floor = state.Floor; }
-        _nextCheck = nowUtc.AddSeconds(1);
-        if (force) { _applied = false; FailedProvider = null; }
-        if (!Enum.IsDefined(_provider)) { FailedProvider = _provider; return; }
-        Apply(force);
-    }
+        _preparationSequence = preparationSequence;
+        if (reason == null) return;
 
-    private void Apply(bool force)
-    {
-        var state = readState(_provider);
-        if (state == FsdRotationState.Unavailable) { FailedProvider = _provider; return; }
-        var desired = DesiredEnabled ? FsdRotationState.On : FsdRotationState.Off;
-        // Already-on output stays on. Off boundaries still clear providers' pending actions.
-        if (state == desired && (DesiredEnabled || !force)) { FailedProvider = null; return; }
-        if (state == FsdRotationState.Unknown && _applied && !force) return;
-        bool succeeded = setEnabled(_provider, DesiredEnabled, _customCommand);
-        if (succeeded)
-        {
-            var observed = readState(_provider);
-            succeeded = observed != FsdRotationState.Unavailable &&
-                (observed == FsdRotationState.Unknown || observed == desired);
-        }
-        _applied = succeeded;
-        FailedProvider = succeeded ? null : _provider;
+        // Readback is diagnostic only: RSR includes transient native-player availability.
+        var before = readState(_provider);
+        bool accepted = setEnabled(_provider, enabled, command);
+        var after = readState(_provider);
+        FailedProvider = accepted ? null : _provider;
+        record?.Invoke(new(_provider, enabled, before, after, accepted, reason, state.DungeonId, state.Floor));
     }
 
     public void Reset()
     {
-        if (!_active) return;
-        _active = _inCombat = DesiredEnabled = false;
-        _dungeonId = 0; _floor = 0;
-        _nextCheck = default;
+        _inDuty = _inCombat = DesiredEnabled = false;
+        _preparationSequence = 0;
         FailedProvider = null;
-        _applied = false;
     }
 }

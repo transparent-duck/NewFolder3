@@ -237,6 +237,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			Dispose();
             ResetResultRoom();
 			_ctx = context;
+			context.RecordDiagnostic = RecordReplayEvent;
 			_chaseHelper.CanSelectNewTarget = context.CanSelectNewCombatTarget;
 			_ctx.ClearPreferredAggroTarget();
 			_navHelper = new NavigationHelper(_ctx.Navigator);
@@ -3827,7 +3828,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			});
 		}
 
-		private void RecordReplayEvent(string eventType, object data)
+		internal void RecordReplayEvent(string eventType, object data)
 		{
 			if (_runRecorder == null)
 				return;
