@@ -7,7 +7,7 @@ internal partial class FsdEngine
 {
     private static ICallGateSubscriber<bool>? _wrathRotationState, _rsrRotationState, _promeRotationState, _promeRotationStop, _promeRotationStart;
     private static ICallGateSubscriber<string, object>? _rsrRotationMode;
-    private static readonly DateTime[] RotationErrorRetryAt = new DateTime[5];
+    private static readonly DateTime[] RotationErrorRetryAt = new DateTime[Enum.GetValues<FsdRotationProvider>().Length + 1];
     private bool _bossRotationSuppressed;
 
     private bool SetBossMovementOverride(bool active)
@@ -36,7 +36,7 @@ internal partial class FsdEngine
             Service.LocalPlayer is { IsDead: false } &&
             !Service.Condition[ConditionFlag.BetweenAreas] && !Service.Condition[ConditionFlag.BetweenAreas51]);
         if (IsRunActive && _rotationControl.FailedProvider is { } failed)
-            StopForRotationError($"無法{(_rotationControl.DesiredEnabled ? "啟用" : "關閉")}輸出：{RotationProviderLabels[(int)failed - 1]}。");
+            StopForRotationError($"無法{(_rotationControl.DesiredEnabled ? "啟用" : "關閉")}輸出：{GetRotationProviderLabel(failed)}。");
     }
 
     private void StopForRotationError(string error)
@@ -56,6 +56,7 @@ internal partial class FsdEngine
             FsdRotationProvider.RotationSolverReborn => plugin.InternalName is "RotationSolver" or "RotationSolverReborn",
             FsdRotationProvider.WrathCombo => plugin.InternalName == "WrathCombo",
             FsdRotationProvider.PromeRotation => plugin.InternalName == "PromeRotation",
+            FsdRotationProvider.InsertNameHere3 => plugin.InternalName == "InsertNameHere3",
             _ => false
         });
         _ddHost?.FloorController.RecordReplayEvent("rotation-control", new {
@@ -77,7 +78,7 @@ internal partial class FsdEngine
             return false;
         }
         if (ReadRotationState(settings.Provider) != FsdRotationState.Unavailable) return true;
-        error = $"自動輸出插件不可用：{RotationProviderLabels[(int)settings.Provider - 1]}。";
+        error = $"自動輸出插件不可用：{GetRotationProviderLabel(settings.Provider)}。";
         return false;
     }
 
@@ -106,6 +107,9 @@ internal partial class FsdEngine
                     if (!Service.CommandManager.Commands.ContainsKey("/wrath")) return FsdRotationState.Unavailable;
                     read = _wrathRotationState ??= Service.PluginInterface.GetIpcSubscriber<bool>("WrathCombo.GetAutoRotationState");
                     break;
+                case FsdRotationProvider.InsertNameHere3:
+                    return Service.CommandManager.Commands.ContainsKey("/inh3")
+                        ? FsdRotationState.Unknown : FsdRotationState.Unavailable;
                 case FsdRotationProvider.PromeRotation:
                     _promeRotationStart ??= Service.PluginInterface.GetIpcSubscriber<bool>("PromeRotation.IPC.Start");
                     _promeRotationStop ??= Service.PluginInterface.GetIpcSubscriber<bool>("PromeRotation.IPC.Stop");
@@ -140,6 +144,7 @@ internal partial class FsdEngine
             else succeeded = provider switch
             {
                 FsdRotationProvider.WrathCombo => Service.CommandManager.ProcessCommand(enabled ? "/wrath auto on" : "/wrath auto off"),
+                FsdRotationProvider.InsertNameHere3 => Service.CommandManager.ProcessCommand(enabled ? "/inh3 on" : "/inh3 off"),
                 FsdRotationProvider.PromeRotation => (enabled
                     ? _promeRotationStart ??= Service.PluginInterface.GetIpcSubscriber<bool>("PromeRotation.IPC.Start")
                     : _promeRotationStop ??= Service.PluginInterface.GetIpcSubscriber<bool>("PromeRotation.IPC.Stop")).InvokeFunc(),

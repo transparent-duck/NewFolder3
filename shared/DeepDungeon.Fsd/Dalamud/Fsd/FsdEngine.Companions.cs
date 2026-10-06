@@ -12,8 +12,12 @@ internal partial class FsdEngine
     private bool _palacePalInstalled;
     private bool _ichingInstalled;
     private bool _bmrInstalled;
-    private bool _wrathInstalled, _rsrInstalled, _promeInstalled;
-    private static readonly string[] RotationProviderLabels = ["Rotation Solver Reborn", "Wrath Combo", "Prome Rotation", "自訂"];
+    private bool _wrathInstalled, _rsrInstalled, _promeInstalled, _inh3Installed;
+    // Display order is independent of persisted provider values (Custom remains 4).
+    private static readonly FsdRotationProvider[] RotationProviderOptions =
+        [FsdRotationProvider.RotationSolverReborn, FsdRotationProvider.WrathCombo,
+         FsdRotationProvider.PromeRotation, FsdRotationProvider.InsertNameHere3, FsdRotationProvider.Custom];
+    private static readonly string[] RotationProviderLabels = ["Rotation Solver Reborn", "Wrath Combo", "Prome Rotation", "InsertNameHere3", "自訂"];
     private static readonly string[] BossMechanicsProviderLabels = ["Bossmod Reborn", "自訂"];
     private readonly string[] _recoveryPotionNames = new string[DungeonCatalog.All.Length];
     private readonly int?[] _recoveryPotionCounts = new int?[DungeonCatalog.All.Length];
@@ -24,7 +28,7 @@ internal partial class FsdEngine
         {
             _nextCompanionCheck = DateTime.UtcNow.AddSeconds(1);
             _vnavInstalled = _palacePalInstalled = _ichingInstalled = _bmrInstalled = false;
-            _wrathInstalled = _rsrInstalled = _promeInstalled = false;
+            _wrathInstalled = _rsrInstalled = _promeInstalled = _inh3Installed = false;
             foreach (var plugin in Service.PluginInterface.InstalledPlugins)
             {
                 _vnavInstalled |= Matches(plugin.InternalName, "vnavmesh");
@@ -34,6 +38,7 @@ internal partial class FsdEngine
                 _wrathInstalled |= Matches(plugin.InternalName, "WrathCombo");
                 _rsrInstalled |= Matches(plugin.InternalName, "RotationSolver") || Matches(plugin.InternalName, "RotationSolverReborn");
                 _promeInstalled |= Matches(plugin.InternalName, "PromeRotation");
+                _inh3Installed |= Matches(plugin.InternalName, "InsertNameHere3");
             }
             for (int i = 0; i < DungeonCatalog.All.Length; i++)
             {
@@ -55,11 +60,12 @@ internal partial class FsdEngine
             ImGui.TableSetupColumn("##Status", ImGuiTableColumnFlags.WidthFixed, ImGui.CalcTextSize("未安裝").X);
             DrawCompanionRow("vnavmesh", "", _vnavInstalled);
             DrawCompanionRow("PalacePal", "", _palacePalInstalled);
-            DrawCompanionRow("自動輸出", RotationProviderLabels[(int)_configuration.Rotation.Provider - 1], _configuration.Rotation.Provider switch
+            DrawCompanionRow("自動輸出", GetRotationProviderLabel(_configuration.Rotation.Provider), _configuration.Rotation.Provider switch
             {
                 FsdRotationProvider.RotationSolverReborn => _rsrInstalled,
                 FsdRotationProvider.WrathCombo => _wrathInstalled,
                 FsdRotationProvider.PromeRotation => _promeInstalled,
+                FsdRotationProvider.InsertNameHere3 => _inh3Installed,
                 _ => (bool?)null
             });
             DrawCompanionRow("I-Ching", "", _ichingInstalled);
@@ -123,15 +129,21 @@ internal partial class FsdEngine
         }
     }
 
+    private static string GetRotationProviderLabel(FsdRotationProvider provider)
+    {
+        int index = Array.IndexOf(RotationProviderOptions, provider);
+        return index >= 0 ? RotationProviderLabels[index] : "自訂";
+    }
+
     private void DrawRotationSettings()
     {
         var settings = _configuration.Rotation;
         ImGui.Text("自動輸出");
-        int provider = (int)settings.Provider - 1;
+        int provider = Array.IndexOf(RotationProviderOptions, settings.Provider);
         ImGui.SetNextItemWidth(ImGui.GetFontSize() * 18);
         if (ImGui.Combo("##FsdRotationProvider", ref provider, RotationProviderLabels, RotationProviderLabels.Length))
         {
-            settings.Provider = (FsdRotationProvider)(provider + 1);
+            settings.Provider = RotationProviderOptions[provider];
             _configuration.Save();
         }
         if (settings.Provider == FsdRotationProvider.Custom)
@@ -147,7 +159,7 @@ internal partial class FsdEngine
         }
         if (_rotationControl.FailedProvider is { } failed)
             ImGui.TextColored(new Vector4(0.95f, 0.45f, 0.45f, 1),
-                $"無法{(_rotationControl.DesiredEnabled ? "啟用" : "關閉")}輸出：{RotationProviderLabels[(int)failed - 1]}");
+                $"無法{(_rotationControl.DesiredEnabled ? "啟用" : "關閉")}輸出：{GetRotationProviderLabel(failed)}");
     }
 
     private static bool DrawCustomCompanionCommands(string id, ref string on, ref string off)

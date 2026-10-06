@@ -292,7 +292,7 @@
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Companions.cs",
-      "sha256": "d0bd09ae5a25a1bb6cee71211455aac2ab214367c0cf3f4ce9b010ecee63737b"
+      "sha256": "25518954c8c39189a2341a9be79ddd03fc5087e3221d034d310d35532eda48b8"
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.cs",
@@ -312,7 +312,7 @@
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Rotation.cs",
-      "sha256": "665b9dd7118ffce8db9d2d4124944ddebb39868b332a2b9c932716384fa17591"
+      "sha256": "46090252593aded42499f8868df8ec526cbe3b2dd731624c568365ae0f7e4803"
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Ui.cs",
@@ -740,7 +740,7 @@
     },
     {
       "path": "Runtime/FsdRotationSettings.cs",
-      "sha256": "ceb74b374f3d84a5bb86e6632cb66c9ff090d174f991339dd59d7f7f3fbcdc38"
+      "sha256": "a5ea704e22b45b3340bf1799fcdb73134a3d146a1acc6ce0e9faf8042f7ba69f"
     },
     {
       "path": "Runtime/FsdSettings.cs",

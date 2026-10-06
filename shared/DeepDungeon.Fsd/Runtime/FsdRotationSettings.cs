@@ -1,7 +1,7 @@
 namespace DeepDungeon.Fsd.Runtime;
 
 // Keep existing manual selections stable; legacy value 0 migrates to empty custom configuration.
-public enum FsdRotationProvider { RotationSolverReborn = 1, WrathCombo = 2, PromeRotation = 3, Custom = 4 }
+public enum FsdRotationProvider { RotationSolverReborn = 1, WrathCombo = 2, PromeRotation = 3, Custom = 4, InsertNameHere3 = 5 }
 public enum FsdRotationState { Unavailable, Unknown, Off, On }
 
 public sealed class FsdRotationSettings
