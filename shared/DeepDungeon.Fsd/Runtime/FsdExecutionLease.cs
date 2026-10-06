@@ -2,9 +2,9 @@ namespace DeepDungeon.Fsd.Runtime;
 
 public sealed class FsdExecutionLease : IDisposable
 {
-    public const string LeaseName = @"Local\DeepDungeon.Fsd.Execution.v1";
+    public static string LeaseName { get; } = $@"Local\DeepDungeon.Fsd.Execution.v2.{Environment.ProcessId}";
 
-    private readonly Mutex _mutex;
+    private readonly Semaphore _semaphore;
     private readonly string _ownerIdentity;
     private bool _held;
     private bool _disposed;
@@ -14,7 +14,7 @@ public sealed class FsdExecutionLease : IDisposable
         if (string.IsNullOrWhiteSpace(ownerIdentity))
             throw new ArgumentException("Lease owner identity is required.", nameof(ownerIdentity));
         _ownerIdentity = ownerIdentity;
-        _mutex = new Mutex(false, LeaseName);
+        _semaphore = new Semaphore(1, 1, LeaseName);
     }
 
     public bool IsHeld => _held;
@@ -26,15 +26,10 @@ public sealed class FsdExecutionLease : IDisposable
         if (_held)
             return;
 
-        try
-        {
-            if (!_mutex.WaitOne(0))
-                throw new InvalidOperationException($"FSD execution is already owned by another plugin. Requested owner: {_ownerIdentity}.");
-        }
-        catch (AbandonedMutexException)
-        {
-            // The abandoned mutex is acquired by this call; this is an explicit ownership transfer.
-        }
+        // Independently loaded plugins share the framework thread. A mutex is
+        // reentrant there; the semaphore gives each host instance one claim.
+        if (!_semaphore.WaitOne(0))
+            throw new InvalidOperationException($"FSD execution is already owned by another plugin. Requested owner: {_ownerIdentity}.");
 
         _held = true;
     }
@@ -44,7 +39,7 @@ public sealed class FsdExecutionLease : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (!_held)
             return;
-        _mutex.ReleaseMutex();
+        _semaphore.Release();
         _held = false;
     }
 
@@ -54,10 +49,10 @@ public sealed class FsdExecutionLease : IDisposable
             return;
         if (_held)
         {
-            _mutex.ReleaseMutex();
+            _semaphore.Release();
             _held = false;
         }
-        _mutex.Dispose();
+        _semaphore.Dispose();
         _disposed = true;
     }
 }

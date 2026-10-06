@@ -12,6 +12,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 	{
 		private ulong _currentTargetId;
 		public Func<IBattleChara, bool>? CanSelectNewTarget;
+		public Func<ulong, bool>? IsTargetBlocked;
 		private readonly HashSet<uint> _reportedAvoidedNames = new();
 		private Vector3 _legEndpoint;
 		private bool _hasLegEndpoint;
@@ -38,7 +39,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			NormalFloorGraphSnapshot? normalGraph,
 			int playerRoomIndex,
 			Vector3 playerPosition,
-			out EnemyChaseAcquisitionFailure acquisitionFailure)
+            out EnemyChaseAcquisitionFailure acquisitionFailure,
+            bool allowNewTargets = true)
 		{
 			acquisitionFailure = EnemyChaseAcquisitionFailure.None;
 			PruneDeprioritizedTargets();
@@ -52,6 +54,13 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 					aggroed.Position,
 					aggroed.HitboxRadius,
 					EnemyChaseTargetReason.Aggro);
+			}
+
+			if (!allowNewTargets)
+			{
+				_currentTargetId = 0;
+				_hasLegEndpoint = false;
+				return null;
 			}
 
 			// 2. Persist existing clearing target if still alive
@@ -369,6 +378,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 		private bool IsDeprioritized(ulong targetId)
 		{
+			if (IsTargetBlocked?.Invoke(targetId) == true) return true;
 			return _deprioritizedTargets.TryGetValue(targetId, out var expiresAt) &&
 			       DateTime.UtcNow < expiresAt;
 		}

@@ -165,40 +165,33 @@ internal partial class FsdEngine
         }
     }
 
-    public bool StartSelectedFarming(out string error, int? stopAfterFloor = null, int? diagnosticStartFloor = null,
-        int? resumeSlot = null, bool holdOnFailure = false)
+    public FsdControlResult StartSelectedFarming(FsdStartRequest request)
     {
-        if (stopAfterFloor.HasValue && (_configuration.Farming.Mode != FarmingMode.DeepProgression ||
-            stopAfterFloor.Value is < 10 or > 100 || stopAfterFloor.Value % 10 != 0 || _fsfScenarioIndex == 2))
+        var scenario = request.Scenario ?? (_configuration.NecromancerFsdScenarioIndex == 2
+            ? FsdStartScenario.ControlledSurvey : FsdStartScenario.Farming);
+        if (scenario == FsdStartScenario.ControlledSurvey)
         {
-            error = "停止層數只支援死靈術士模式，且必須為 10 至 100 的十層邊界。";
-            return false;
-        }
-        if ((diagnosticStartFloor.HasValue || resumeSlot.HasValue || holdOnFailure) && _fsfScenarioIndex == 2)
-        {
-            error = "測試起點只支援死靈術士模式。";
-            return false;
-        }
-        if (_fsfScenarioIndex == 2)
-        {
-            var survey = new ControlledPtSurveySession();
-            return TryStartOutsideDutyFsd(() => new ControlledPt21To30Scenario(survey),
+            if (request.DiagnosticStartFloor.HasValue || request.ResumeSlot.HasValue || request.HoldOnFailure)
+                return new FsdControlResult(false, "Diagnostic checkpoints are unavailable for controlled survey capture.");
+            return StartControlledPilgrimsTraverseCapture(
                 Math.Max(1, _configuration.NecromancerFsdLoopCount), _configuration.NecromancerFsdLoopInfinite,
-                DetailedMapEvidenceContract.PilgrimsTraverse21To30ScenarioKey, out error);
+                "start-controlled-pt-capture");
         }
         var settings = _configuration.Farming;
         var p = settings.GetPreferences(_configuration);
         bool prepared = settings.Mode is FarmingMode.Aetherpool or FarmingMode.HoardDiscovery;
-        return TryStartFarming(settings.Mode, prepared ? SaveUse.Prepared : SaveUse.Create,
+        var farming = new FsdFarmingRequest(settings.Mode, prepared ? SaveUse.Prepared : SaveUse.Create,
             settings.Mode == FarmingMode.DeepProgression ? 1 : _fsfScenarioIndex == 0 ? 21 : 31,
-            p.Cycles, p.Infinite, p.BandedEnabled == true, p.OpenGold, p.OpenSilver, p.OpenBronze,
-            out error, stopAfterFloor, diagnosticStartFloor, resumeSlot, holdOnFailure);
+            p.Cycles, p.Infinite, new FarmingTargets(p.BandedEnabled == true, p.OpenGold, p.OpenSilver, p.OpenBronze), request);
+        bool started = TryStartFarming(farming, out string error);
+        return new FsdControlResult(started, error);
     }
 
-    public bool TryStartFarming(FarmingMode mode, SaveUse saveUse, int startFloor, int cycles, bool infinite,
-        bool hoard, bool gold, bool silver, bool bronze, out string error, int? stopAfterFloor = null,
-        int? diagnosticStartFloor = null, int? resumeSlot = null, bool holdOnFailure = false)
+    public bool TryStartFarming(FsdFarmingRequest request, out string error)
     {
+        var (mode, saveUse, startFloor, cycles, infinite, targets, checkpointOptions) = request;
+        var (hoard, gold, silver, bronze) = targets;
+        var (stopAfterFloor, diagnosticStartFloor, resumeSlot, holdOnFailure, _) = checkpointOptions ?? new FsdStartRequest();
         if (stopAfterFloor.HasValue && (mode != FarmingMode.DeepProgression ||
             stopAfterFloor.Value is < 10 or > 100 || stopAfterFloor.Value % 10 != 0))
         {
@@ -232,7 +225,7 @@ internal partial class FsdEngine
             error = "原副本接續只支援保留現場的PT測試，須指定來源槽位與目前所在層段起點。";
             return false;
         }
-        var session = new FarmingSession(plan) { OwnedSlot = resumeSlot ?? -1, ResumeCurrentDuty = resumeCurrentDuty };
+        var session = new FarmingSession(plan, resumeSlot ?? -1, resumeCurrentDuty);
         string? key = plan!.ShowsDetailedMap ? startFloor == 21
             ? DetailedMapScenarioCatalog.PilgrimsTraverse21To30.Key
             : DetailedMapScenarioCatalog.PilgrimsTraverse31To40.Key : null;

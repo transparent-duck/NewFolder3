@@ -1,19 +1,8 @@
 using System;
 using System.Threading;
 
-namespace DeepDungeon.Fsd.Dalamud.Runtime
+namespace DeepDungeon.Fsd.Runtime
 {
-	/// <summary>
-	/// Determines when the Full Self-Delving engine should stop starting new runs.
-	/// </summary>
-	// TODO: Deprecated item-count end modes; FSD should only stop by loop count.
-	public enum FsdEndMode
-	{
-		Loops = 0,
-		Potsherd = 1,
-		Hoard = 2
-	}
-
 	public enum LeaveMode
 	{
 		AfterFinishDungeon = 0,

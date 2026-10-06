@@ -304,10 +304,13 @@ namespace DeepDungeon.Fsd.Dalamud
 					{
 						try
 						{
-                            if (!StartSelectedFarming(out var error))
+                            var request = new FsdStartRequest(Scenario: _fsfScenarioIndex == 2
+                                ? FsdStartScenario.ControlledSurvey : FsdStartScenario.Farming);
+                            var result = StartSelectedFarming(request);
+                            if (!result.Ok)
                             {
-                                _farmingError = error;
-                                Service.Log.Warning($"[Necromancer] FSD start rejected: {error}");
+                                _farmingError = result.Error;
+                                Service.Log.Warning($"[Necromancer] FSD start rejected: {result.Error}");
                             }
 						}
 						catch (Exception ex)
@@ -2228,9 +2231,10 @@ namespace DeepDungeon.Fsd.Dalamud
         {
             try
             {
-                if (TryStartFarming(FarmingMode.Hoard, SaveUse.Create, 31, 1, false,
-                        _configuration.NecromancerAutoBandedFarmEnabled, _configuration.NecromancerAutoOpenGoldChest,
-                        _configuration.NecromancerAutoOpenSilverChest, _configuration.NecromancerAutoOpenBronzeChest, out var error))
+                var request = new FsdFarmingRequest(FarmingMode.Hoard, SaveUse.Create, 31, 1, false,
+                    new FarmingTargets(_configuration.NecromancerAutoBandedFarmEnabled, _configuration.NecromancerAutoOpenGoldChest,
+                        _configuration.NecromancerAutoOpenSilverChest, _configuration.NecromancerAutoOpenBronzeChest));
+                if (TryStartFarming(request, out var error))
                     Service.Log.Info($"[Necromancer] FullSelfDelving started: PT chest (banded only)");
                 else
                     Service.Log.Warning($"[Necromancer] FullSelfDelving start rejected: {error}");
@@ -2241,16 +2245,16 @@ namespace DeepDungeon.Fsd.Dalamud
             }
         }
 
-        public object StartControlledPilgrimsTraverseCapture(
+        public FsdControlResult StartControlledPilgrimsTraverseCapture(
             int targetLoops,
             bool infinite,
             string? confirmation)
         {
             if (!_detailedMapHostOptions.SupportsControlledPtSurvey)
-                return new { ok = false, error = "Controlled reusable-save survey capture is unavailable for this FSD host." };
+                return new FsdControlResult(false, "Controlled reusable-save survey capture is unavailable for this FSD host.");
 
             if (!string.Equals(confirmation, "start-controlled-pt-capture", StringComparison.Ordinal))
-                return new { ok = false, error = "Controlled PT capture requires confirmation=start-controlled-pt-capture." };
+                return new FsdControlResult(false, "Controlled PT capture requires confirmation=start-controlled-pt-capture.");
 
             var session = new ControlledPtSurveySession();
             bool started = TryStartOutsideDutyFsd(
@@ -2260,8 +2264,8 @@ namespace DeepDungeon.Fsd.Dalamud
                 DetailedMapEvidenceContract.PilgrimsTraverse21To30ScenarioKey,
                 out string error);
             return started
-                ? new { ok = true, scenario = "PT 21-30 controlled capture" }
-                : new { ok = false, error };
+                ? new FsdControlResult(true, Scenario: "PT 21-30 controlled capture")
+                : new FsdControlResult(false, error);
         }
 
         public void StopFullSelfDelving()

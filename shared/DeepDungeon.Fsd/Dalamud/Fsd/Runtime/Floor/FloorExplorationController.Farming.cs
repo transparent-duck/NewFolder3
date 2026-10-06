@@ -5,18 +5,18 @@ using FFXIVClientStructs.FFXIV.Client.Game.InstanceContent;
 
 namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor;
 
-public sealed partial class FloorPhaseController
+internal sealed partial class FloorExplorationController
 {
-    private unsafe bool TryFinishHarvest(InstanceContentDeepDungeon* dd, FloorRuntime runtime)
+    internal unsafe bool TryFinishHarvest(InstanceContentDeepDungeon* dd)
     {
         var ctx = _ctx;
-        if (ctx?.FarmingPlan?.ReusesSave != true || runtime.Kind != FloorRuntimeKind.Normal ||
+        if (ctx?.FarmingPlan?.ReusesSave != true || this.Kind != FloorRuntimeKind.Normal ||
             _phase != FloorPhase.FloorActive || _executor == null) return false;
         if (ctx.HarvestComplete || ctx.AttemptAborted) return true;
         if (ctx.FarmingPlan.Mode == FarmingMode.HoardDiscovery)
         {
             // A spawned banded coffer proves discovery. Opening it and clearing the boss are separate events.
-            var evidence = runtime.ObjectEvidence.Current;
+            var evidence = this.ObjectEvidence.Current;
             if (evidence?.Available == true && BandedChestLocator.TryFindNearestToPlayer(evidence, out var found) && found.HasValue)
             {
                 ctx.HoardDiscoveries++;
@@ -36,18 +36,18 @@ public sealed partial class FloorPhaseController
         {
             bool chestWorkComplete = _executor.IsHoardWorkResolved && _executor.PlannedRouteCount == 0 &&
                 _executor.IsComplete && !_activeWaypoint.HasValue;
-            bool canSkip = EntryIncenseWindowOpen(runtime) &&
+            bool canSkip = EntryIncenseWindowOpen() &&
                 DeepDungeonFloorItemUsePolicy.CanUsePtIncense(dd->DeepDungeonBanId) &&
-                !runtime.NaturalPoisonfruitAttempted && !runtime.NaturalMazerootAttemptedOrAdopted &&
+                !this.Survey.NaturalPoisonfruitAttempted && !this.Survey.NaturalMazerootAttemptedOrAdopted &&
                 (GetStoneCountAvailableForFloorUse(1) > 0 || GetStoneCountAvailableForFloorUse(2) > 0);
-            bool passageItemPending = runtime.PendingFloorItemUse is
-                { Key: { Kind: FloorItemUseKind.Stone, ItemId: 1 or 2 } };
+            bool passageItemPending = this.ItemUse.Pending is
+            { Key: { Kind: FloorItemUseKind.Stone, ItemId: 1 or 2 } };
             if (FarmingHarvestPolicy.ShouldLeave(chestWorkComplete, canSkip, passageItemPending,
-                    runtime.FarmingPassageItemConfirmed)) ctx.HarvestComplete = true;
+                    this.FarmingPassageItemConfirmed)) ctx.HarvestComplete = true;
         }
         if (!ctx.HarvestComplete && !ctx.AttemptAborted) return false;
         CancelActiveMovement();
-        runtime.ClearObjectiveDecision();
+        this.Objectives.ClearObjectiveDecision();
         ctx.RunOptions.Update(o => o.LeaveMode = LeaveMode.Immediate);
         _status = ctx.AttemptAborted ? ctx.StatusLine : "本次採集完成；退本並驗證準備存檔。";
         return true;

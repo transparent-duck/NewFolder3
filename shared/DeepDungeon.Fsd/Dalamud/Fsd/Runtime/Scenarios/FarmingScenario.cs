@@ -52,10 +52,7 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
         }
         else if (plan.SaveUse == SaveUse.Prepared || session.OwnedSlot >= 0)
         {
-            session.Source.Reusable = plan.ReusesSave;
-            session.Source.ExpectedFloor = plan.SaveUse == SaveUse.Prepared ? null : session.NextFloor;
-            session.Source.RequiredSlot = session.OwnedSlot >= 0 ? session.OwnedSlot : null;
-            _prepared = new PreparedSaveFlow(session.Source);
+            _prepared = new PreparedSaveFlow(session.PrepareSource());
             _prepared.Prepare(context);
         }
         else
@@ -96,8 +93,7 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             }
             if (_create != null)
             {
-                session.OwnedSlot = ctx.SaveSlots.LastUsedSlotIndex;
-                if (session.OwnedSlot < 0)
+                if (!session.BindCreatedSave(ctx.SaveSlots.LastUsedSlotIndex))
                 {
                     ctx.StatusLine = "入場來源未由本任務建立；停止自動化，請手動退本。";
                     ctx.StatusIsError = true;
@@ -194,14 +190,11 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             }
             if (!_delete.Update(framework)) return;
             if (ctx.StatusIsError) { _complete = true; return; }
-            session.OwnedSlot = -1;
-            session.Source = new PreparedSaveBinding();
+            session.ConfirmOwnedSaveDeleted();
         }
         CountsAsCycle = decision.CountCycle;
         _recoverFailure = decision.RecoverFailure;
-        session.NextFloor = decision.NextFloor;
-        session.Discoveries += ctx.HoardDiscoveries;
-        if (decision.RecoverFailure) session.Failures++;
+        session.CompleteAttempt(decision, ctx.HoardDiscoveries);
         if (decision.Error.Length > 0)
         {
             ctx.StatusLine = ctx.AttemptAbortReason + decision.Error + " FSD 已停止。";

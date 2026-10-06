@@ -23,12 +23,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 	public sealed partial class FloorPhaseController
 	{
 		private RunContext? _ctx;
+        private readonly TerminalRoomController _terminalRooms;
 		private readonly IFloorEvidenceObserver? _floorEvidenceObserver;
 		private readonly IRunTelemetryObserver? _runTelemetryObserver;
 		private readonly NativeDeepDungeonLogMessageSource _logMessageSource;
 		private NavigationHelper? _navHelper;
 		private NavigationDriver? _navDriver;
-		private WaypointTaskRunner? _taskRunner => _floorRuntime?.ActiveExecution?.TaskRunner;
 		private AutoPilotExecutor? _executor => _floorRuntime?.Executor;
 		private ChatWatchers? _chatWatchers;
 		private DeepDungeonRunRecorder? _runRecorder;
@@ -37,15 +37,13 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		private readonly EnemyChaseHelper _chaseHelper = new();
 
 		private FloorPhase _phase = FloorPhase.FloorSetup;
-		private FloorRuntime? _floorRuntime;
-		private static readonly TimeSpan GeneralTickInterval = TimeSpan.FromMilliseconds(500);
-		private const int CurrentIntuitionResolutionWindowMilliseconds = 1500;
-		private const float BossNavigationArrivalTolerance = 3f;
+		private FloorExplorationController? _floorRuntime;
+        private readonly PassageDestinationResolver _passageDestination = new();
+        private Vector3 ResolvePassageWalkingPosition(Vector3 actor) =>
+            _passageDestination.Resolve(actor, _floorRuntime?.Generation ?? -1);
 		private long _nextFloorGeneration;
 		private long _nextRoomSearchRequestId;
 		private string _status = "Idle";
-		private DateTime _nextPomanderUseAt = DateTime.MinValue;
-		private bool _pomanderDispatchedThisUpdate;
 		private Pt30DivineFavorFlashHelper? _pt30DivineFavorFlashHelper;
         private Pt50ChaseOutputGuard? _pt50ChaseOutputGuard;
 		private bool _wasTransitioning;
@@ -67,138 +65,31 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		private string _lastPassageNavigationEventKey = string.Empty;
 		private DateTime _lastObjectEvidenceTelemetryAt = DateTime.MinValue;
 		private DateTime _lastObjectEvidenceUnavailableAt = DateTime.MinValue;
-		private string _blockedMovementOperation = string.Empty;
-		private string _blockedTransitionOperation = string.Empty;
 		private bool _controlledReusableSaveSurveyArmed;
-		private static readonly TimeSpan ClearingEngageNoProgressLimit = TimeSpan.FromSeconds(15);
-		private static readonly TimeSpan ClearingEngageRecenterFallbackLimit = TimeSpan.FromSeconds(10);
-		private static readonly TimeSpan CombatTargetSuppressionDuration = TimeSpan.FromSeconds(20);
 		private static readonly TimeSpan NativeIntuitionPollInterval = TimeSpan.FromMilliseconds(250);
 		private readonly record struct NativeIntuitionState(bool IsActive, int Count, bool IsUsable);
-		private readonly record struct ControlledTrapWitnessKey(
-			ulong GameObjectId,
-			uint BaseId,
-			int X,
-			int Y,
-			int Z)
-		{
-			public static ControlledTrapWitnessKey From(in FloorObjectEvidence evidence)
-			{
-				const float normalization = 10f;
-				return new ControlledTrapWitnessKey(
-					evidence.GameObjectId,
-					evidence.BaseId,
-					(int)MathF.Round(evidence.Position.X * normalization),
-					(int)MathF.Round(evidence.Position.Y * normalization),
-					(int)MathF.Round(evidence.Position.Z * normalization));
-			}
-		}
-
-		/// <summary>
-		/// TEMPORARY controlled-survey research only: dedupe key for once-per-floor
-		/// controlled-candidate-object-observed recorder events.
-		/// </summary>
-		private readonly record struct ControlledCandidateObjectAuditKey(
-			int CandidateRoomIndex,
-			int SourceCandidateIndex,
-			ushort ObjectIndex,
-			ulong GameObjectId,
-			uint EntityId,
-			uint BaseId,
-			string ObjectKind,
-			byte SubKind,
-			uint LayoutId,
-			uint GimmickId,
-			uint NameId)
-		{
-			public static ControlledCandidateObjectAuditKey From(in ControlledCandidateObjectMatch match) =>
-				new(
-					match.CandidateRoomIndex,
-					match.SourceCandidateIndex,
-					match.ObjectIndex,
-					match.GameObjectId,
-					match.EntityId,
-					match.BaseId,
-					match.ObjectKind,
-					match.SubKind,
-					match.LayoutId,
-					match.GimmickId,
-					match.NameId ?? 0u);
-		}
-
-		private enum FloorItemUseKind
-		{
-			Pomander,
-			Stone
-		}
-
-		private enum FloorItemUsePurpose
-		{
-			Automatic,
-			GoldChestOvercap,
-			SilverChestOvercap,
-			ControlledStrength,
-			NaturalReveal,
-			ControlledReveal,
-			NaturalPoisonfruit,
-			NaturalPassageMazeroot,
-			ControlledPoisonfruit,
-            BossSerenity
-		}
-
-		private readonly record struct FloorItemUseKey(
-			FloorItemUseKind Kind,
-			uint ItemId);
-
-		private sealed class PendingFloorItemUse
-		{
-			public required FloorItemUseKey Key { get; init; }
-			public required FloorItemUsePurpose Purpose { get; init; }
-			public required int CountBeforeDispatch { get; init; }
-			public required int AttemptNumber { get; init; }
-			public required DateTime DispatchedAtUtc { get; init; }
-			public required string Reason { get; init; }
-			public bool BlocksFloorSetup { get; init; }
-			public long SightLogSequenceBeforeDispatch { get; init; }
-			public long MazerootLogSequenceBeforeDispatch { get; init; }
-			public long IntuitionAttemptId { get; init; }
-			public long IntuitionExpectedAtMilliseconds { get; init; }
-			public bool AuthoritativeConfirmationObserved { get; set; }
-			public bool UnconfirmedRecorded { get; set; }
-		}
-
-		private FloorPlanningState PlanningState =>
+		private FloorPlanningSession PlanningState =>
 			_floorRuntime?.PlanningState ?? throw new InvalidOperationException("No active floor planning state.");
 		private PendingIntuitionState PendingIntuition =>
 			_floorRuntime?.PendingIntuition ?? throw new InvalidOperationException("No active floor Intuition attempt state.");
-		private bool BossNavigationResolved
-		{
-			get => _floorRuntime?.BossNavigationResolved == true;
-			set
-			{
-				if (_floorRuntime != null)
-					_floorRuntime.BossNavigationResolved = value;
-			}
-		}
-
 		public FloorPhase CurrentPhase => _phase;
 		public string Status => _status;
 		public string? RunRecorderPath => _runRecorder?.FilePath;
-		public ObjectiveArbiterDecision CurrentObjectiveDecision => _floorRuntime?.ObjectiveDecision ?? default;
+		public ObjectiveArbiterDecision CurrentObjectiveDecision => _floorRuntime?.Objectives.ObjectiveDecision ?? default;
 		public bool AllowsCombatChannel =>
 			_floorRuntime is { IsDisposed: false } &&
 			(Service.Condition[ConditionFlag.InCombat] ||
-			 (_floorRuntime.HasObjectiveDecision &&
-			  _floorRuntime.ObjectiveDecision.Channels.Combat != CommandChannelPermission.Blocked));
+			 (_floorRuntime.Objectives.HasObjectiveDecision &&
+			  _floorRuntime.Objectives.ObjectiveDecision.Channels.Combat != CommandChannelPermission.Blocked));
 		public bool AllowsMovementChannel =>
-			_floorRuntime?.HasObjectiveDecision == true &&
-			_floorRuntime.ObjectiveDecision.Channels.Movement != CommandChannelPermission.Blocked;
+			_floorRuntime?.Objectives.HasObjectiveDecision == true &&
+			_floorRuntime.Objectives.ObjectiveDecision.Channels.Movement != CommandChannelPermission.Blocked;
 		public bool AllowsTransitionChannel =>
-			_floorRuntime?.HasObjectiveDecision == true &&
-			_floorRuntime.ObjectiveDecision.Channels.Transition == CommandChannelPermission.PrimaryObjective;
+			_floorRuntime?.Objectives.HasObjectiveDecision == true &&
+			_floorRuntime.Objectives.ObjectiveDecision.Channels.Transition == CommandChannelPermission.PrimaryObjective;
 		public bool AllowsChestSidecarInteraction =>
-			_floorRuntime?.HasObjectiveDecision == true &&
-			_floorRuntime.ObjectiveDecision.Channels.Interaction != CommandChannelPermission.Blocked;
+			_floorRuntime?.Objectives.HasObjectiveDecision == true &&
+			_floorRuntime.Objectives.ObjectiveDecision.Channels.Interaction != CommandChannelPermission.Blocked;
 
 		public FloorPhaseController(
 			NativeDeepDungeonLogMessageSource logMessageSource,
@@ -208,6 +99,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			_logMessageSource = logMessageSource ?? throw new ArgumentNullException(nameof(logMessageSource));
 			_floorEvidenceObserver = floorEvidenceObserver;
 			_runTelemetryObserver = runTelemetryObserver;
+            _terminalRooms = new TerminalRoomController(status => _status = status, RecordReplayEvent, DestroyFloorRuntime, ResolvePassageWalkingPosition);
 		}
 
 		public object ArmControlledReusableSaveSurveyCapture()
@@ -235,12 +127,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		public void Initialize(RunContext context)
 		{
 			Dispose();
-            ResetResultRoom();
 			_ctx = context;
 			context.RecordDiagnostic = RecordReplayEvent;
 			_chaseHelper.CanSelectNewTarget = context.CanSelectNewCombatTarget;
 			_ctx.ClearPreferredAggroTarget();
 			_navHelper = new NavigationHelper(_ctx.Navigator);
+            _terminalRooms.Initialize(context, _navHelper);
 			_navDriver = new NavigationDriver(_navHelper);
 			DisposeChatWatchers();
 			_chatWatchers = new ChatWatchers(_logMessageSource);
@@ -248,7 +140,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			CloseRunRecording("controller-reinitialized");
 			_chaseHelper.Reset();
 			_phase = FloorPhase.FloorSetup;
-			_nextPomanderUseAt = DateTime.MinValue;
 			_nextRoomSearchRequestId = 0;
 			_wasTransitioning = false;
 			_lastGraphPendingFloor = 255;
@@ -269,14 +160,14 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			_lastPassageNavigationEventKey = string.Empty;
 			_lastObjectEvidenceTelemetryAt = DateTime.MinValue;
 			_lastObjectEvidenceUnavailableAt = DateTime.MinValue;
-			ResetPermissionBlocks();
-			ResetEngagedTargetProgress();
+			_floorRuntime?.ResetPermissionBlocks();
+			_floorRuntime?.ResetEngagedTargetProgress();
 			_pt30DivineFavorFlashHelper?.Dispose();
 			_pt30DivineFavorFlashHelper = new Pt30DivineFavorFlashHelper(active =>
                 _ctx?.SetBossMovementOverride?.Invoke(active) ?? _ctx?.Configuration.BossMechanicsActive != true);
             _pt50ChaseOutputGuard?.Reset();
             _pt50ChaseOutputGuard = new Pt50ChaseOutputGuard(active => _ctx?.SetBossRotationSuppressed?.Invoke(active));
-			ResetPatrolPlan();
+			_floorRuntime?.ResetPatrolPlan();
 			_runRecorder = new DeepDungeonRunRecorder(BuildRecorderSessionName());
 			try
 			{
@@ -300,7 +191,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 		public unsafe void Update(IFramework _)
 		{
-			_pomanderDispatchedThisUpdate = false;
+			_floorRuntime?.ItemUse.BeginUpdate();
 			if (_ctx == null)
 				return;
 
@@ -313,13 +204,13 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			var efw = FFXIVClientStructs.FFXIV.Client.Game.Event.EventFramework.Instance();
 			if (efw == null)
 			{
-				_floorRuntime?.ClearObjectiveDecision();
+				_floorRuntime?.Objectives.ClearObjectiveDecision();
 				return;
 			}
 			var dd = efw->GetInstanceContentDeepDungeon();
 			if (dd == null)
 			{
-				_floorRuntime?.ClearObjectiveDecision();
+				_floorRuntime?.Objectives.ClearObjectiveDecision();
 				return;
 			}
 
@@ -353,7 +244,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
                 if (DeepDungeon.Fsd.Runtime.DeepDungeonFloorClassifier.Classify(dd->DeepDungeonId, dd->Floor) ==
                     DeepDungeon.Fsd.Runtime.DeepDungeonFloorKind.Result)
                 {
-                    UpdateResultRoom();
+                    _terminalRooms.UpdateResultRoom();
                     return;
                 }
 				bool nativeIntuitionActive = false;
@@ -364,7 +255,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 					requiresIntuitionState && nativeIntuitionActive));
 				if (readyIntuition.Kind == ReadyFloorIntuitionDecisionKind.Wait)
 				{
-					_floorRuntime?.ClearObjectiveDecision();
+					_floorRuntime?.Objectives.ClearObjectiveDecision();
 					_status = "Waiting for native Intuition state...";
 					RecordNativeIntuitionState("native-state-unavailable", force: false, nativeStateAvailable, nativeIntuitionActive);
 					return;
@@ -388,48 +279,48 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				if (activeRuntime == null || activeRuntime.IsDisposed)
 					return;
 				activeRuntime.RunTelemetry?.SampleStable(DateTime.UtcNow);
-				ResolvePendingFloorItemUse(dd, activeRuntime);
+				activeRuntime.ResolvePendingFloorItemUse(dd);
 				if (activeRuntime.Kind == FloorRuntimeKind.Normal && !RefreshFloorObjectEvidence(dd, activeRuntime))
 					return;
-				ResolveInheritedIntuition(activeRuntime);
+				activeRuntime.Survey.ResolveInheritedIntuition();
 				if (_ctx.ControlledPtSurvey?.LeaveRequested == true)
 				{
 					CancelActiveMovement();
-					activeRuntime.ClearObjectiveDecision();
+					activeRuntime.Objectives.ClearObjectiveDecision();
 					_status = "Controlled PT capture complete; abandoning before further floor movement";
 					return;
 				}
-				ObserveFloorRuntimeNativeIntuitionEdge(activeRuntime);
+				activeRuntime.ObserveFloorRuntimeNativeIntuitionEdge();
 
 				if (_ctx?.ControlledPtSurvey == null &&
-				    TryReconcileDelayedHoardEvidence(dd, activeRuntime))
+				    activeRuntime.TryReconcileDelayedHoardEvidence(dd))
 				{
-					RefreshObjectiveDecision(dd, activeRuntime);
+					activeRuntime.RefreshObjectiveDecision(dd);
 					return;
 				}
 
-                if (TryFinishHarvest(dd, activeRuntime)) return;
-				RefreshObjectiveDecision(dd, activeRuntime);
+                if (activeRuntime.TryFinishHarvest(dd)) return;
+				activeRuntime.RefreshObjectiveDecision(dd);
 				switch (_phase)
 				{
 					case FloorPhase.FloorSetup:
-						UpdateFloorSetup(dd);
+						activeRuntime.UpdateFloorSetup(dd);
 						break;
 					case FloorPhase.FloorActive:
-						UpdateFloorActive(dd);
+						activeRuntime.UpdateFloorActive(dd);
 						break;
 					case FloorPhase.BossFloor:
-						UpdateBossFloor(dd);
+						activeRuntime.Boss.Update(dd);
 						break;
 					case FloorPhase.Done:
 						break;
 				}
 
-				RefreshObjectiveDecision(dd, activeRuntime);
+				activeRuntime.RefreshObjectiveDecision(dd);
 			}
 			catch (Exception ex)
 			{
-				_floorRuntime?.ClearObjectiveDecision();
+				_floorRuntime?.Objectives.ClearObjectiveDecision();
 				Service.Log.Error($"[FloorPhase] Update error: {ex.Message}\n{ex.StackTrace}");
 			}
 		}
@@ -497,366 +388,15 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 		public void CancelActiveMovement()
 		{
-			EndActiveWaypointTelemetry(RunWaypointTerminalOutcome.Aborted, "MovementCanceled");
+			_floorRuntime?.EndActiveWaypointTelemetry(RunWaypointTerminalOutcome.Aborted, "MovementCanceled");
 			bool navigationActive = _navHelper?.HasActiveTarget == true;
-			_taskRunner?.Reset(cancelNavigation: false);
+			_floorRuntime?.ResetTaskRunner(cancelNavigation: false);
 			_navDriver?.Reset();
 			if (navigationActive)
 				_navHelper?.Cancel();
-			_activeWaypoint = null;
+			_floorRuntime?.ClearActiveWaypoint();
 			_pt30DivineFavorFlashHelper?.Reset();
 			_pt50ChaseOutputGuard?.Reset();
-		}
-
-		private bool RequireMovementPermission(
-			string operation,
-			FloorObjectiveKind? requiredObjective = null,
-			bool primaryOwnsOperation = true)
-		{
-			var runtime = _floorRuntime;
-			var decision = runtime?.ObjectiveDecision ?? default;
-			bool allowed = runtime?.HasObjectiveDecision == true &&
-			               decision.Channels.Movement != CommandChannelPermission.Blocked &&
-			               primaryOwnsOperation &&
-			               (!requiredObjective.HasValue || decision.PrimaryObjective == requiredObjective.Value);
-			if (allowed)
-			{
-				ClearPermissionBlock(ref _blockedMovementOperation, "Movement");
-				return true;
-			}
-
-			RecordPermissionBlock(ref _blockedMovementOperation, "Movement", operation, requiredObjective);
-			_status = $"Waiting: movement permission blocked for {operation} ({decision.PrimaryObjective})";
-			return false;
-		}
-
-		private static bool IsSearchObjective(FloorObjectiveKind objective) =>
-			objective is FloorObjectiveKind.OpenVisibleBandedChest or
-				FloorObjectiveKind.CompleteKnownHoard or
-				FloorObjectiveKind.DiscoverHoard or FloorObjectiveKind.OpenPlannedChest;
-
-		private bool ShouldContinuePlannedRouteForPassageActivation(FloorObjectiveKind objective) =>
-			_ctx?.ControlledPtSurvey == null &&
-			objective == FloorObjectiveKind.ActivatePassage &&
-			_ctx?.Duty.PassageOpen != true &&
-			_executor?.PlannedRouteCount > 0;
-
-		private bool ClearingMovementOwnedByCurrentObjective()
-		{
-			return CurrentObjectiveDecision.PrimaryObjective is
-				FloorObjectiveKind.ActivatePassage or
-				FloorObjectiveKind.FinishCombatBeforePassage;
-		}
-
-		private bool HasActiveSearchExecution()
-		{
-			return _activeWaypoint.HasValue ||
-			       (_taskRunner != null && _taskRunner.Phase != TaskPhase.Idle) ||
-			       _executor?.RoomContext != null ||
-			       (_floorRuntime?.ActiveExecution?.ObjectiveRecords.Count ?? 0) > 0;
-		}
-
-		private unsafe void UpdateFloorActive(InstanceContentDeepDungeon* dd)
-		{
-            if (YieldToMobMechanics())
-            {
-                if (Service.LocalPlayer is { } player && ShouldRunGeneralTick()) SyncLiveRunOptions(dd, player);
-                return;
-            }
-			if (_ctx?.ControlledPtSurvey != null &&
-			    _floorRuntime is { ControlledPositiveMessagePendingIndicator: true } indicatorRuntime)
-			{
-				UpdateControlledIndicatorAcquisition(dd, indicatorRuntime);
-				return;
-			}
-
-			if (_ctx?.ControlledPtSurvey != null &&
-			    _floorRuntime is { ControlledIntuitionResolutionPending: true } &&
-			    CurrentObjectiveDecision.PrimaryObjective == FloorObjectiveKind.EnterPassage)
-			{
-				CancelActiveMovement();
-				_status = "Controlled PT: holding passage until Intuition resolution window completes";
-				return;
-			}
-
-			if (_ctx?.ControlledPtSurvey != null &&
-			    _floorRuntime is
-			    {
-				    ControlledOpportunityCompleted: false,
-				    ControlledDispatchBarrierActive: true
-			    } barrierRuntime)
-			{
-				EnsureControlledDispatchOutsidePassage(
-					dd,
-					barrierRuntime,
-					barrierRequired: true,
-					"controlled positive 敏慧 capture");
-				_status = barrierRuntime.ControlledDispatchBarrierActive
-					? "Controlled PT: relocating away from passage before capture"
-					: "Controlled PT: passage dispatch barrier cleared";
-				return;
-			}
-
-			if (_ctx?.ControlledPtSurvey != null &&
-			    _floorRuntime is
-			    {
-				    ControlledOpportunityCompleted: false,
-				    ControlledPositiveCapturePending: true
-			    } controlledRuntime)
-			{
-				if (controlledRuntime.ControlledSightConfirmed)
-					UpdateControlledCandidateCoverageMovement(dd, controlledRuntime);
-				else
-					CancelActiveMovement();
-				return;
-			}
-
-			var objective = CurrentObjectiveDecision.PrimaryObjective;
-			if (!EnsureObjectiveExecution(objective))
-				return;
-			if (TryActivateVisibleBandedObjective(dd))
-				return;
-
-			bool continuePlannedRoute = ShouldContinuePlannedRouteForPassageActivation(objective);
-			if (!IsSearchObjective(objective) && !continuePlannedRoute && HasActiveSearchExecution() && !StopActiveSearchExecution(objective))
-				return;
-
-			if (IsSearchObjective(objective) || continuePlannedRoute)
-			{
-				UpdateSearchMechanics(dd);
-				return;
-			}
-
-			if (objective is FloorObjectiveKind.ActivatePassage or FloorObjectiveKind.FinishCombatBeforePassage)
-			{
-                if (_ctx?.FarmingPlan?.ReusesSave == true)
-                {
-                    CancelActiveMovement();
-                    _ctx.ClearPreferredAggroTarget();
-                    _status = "速刷：等待跳層道具生效／脫離戰鬥";
-                    return;
-                }
-				UpdateClearingMechanics(dd);
-				return;
-			}
-
-			if (objective == FloorObjectiveKind.EnterPassage)
-			{
-				UpdatePassageNavigation(dd);
-				return;
-			}
-
-			CancelActiveMovement();
-			_chaseHelper.Reset();
-			ResetPatrolPlan();
-			_ctx?.ClearPreferredAggroTarget();
-			_status = $"Floor active, waiting for objective ({CurrentObjectiveDecision.PrimaryObjective})";
-		}
-
-		private unsafe void UpdateControlledIndicatorAcquisition(
-			InstanceContentDeepDungeon* dd,
-			FloorRuntime runtime)
-		{
-			var player = Service.LocalPlayer;
-			var rooms = runtime.NormalGraph?.ReachableRooms;
-			if (player == null || rooms == null)
-			{
-				_status = "Controlled PT: waiting for indicator acquisition geometry";
-				return;
-			}
-
-			while (runtime.ControlledIndicatorRoomCursor < rooms.Count &&
-			       (runtime.EvidenceSession?.HasVisitedRoom(rooms[runtime.ControlledIndicatorRoomCursor]) == true ||
-			        MapPos.TryGetRoomCenter(
-				        dd,
-				        rooms[runtime.ControlledIndicatorRoomCursor],
-				        out var coveredCenter) &&
-			        Vector3.DistanceSquared(player.Position, coveredCenter) <= 1.5f * 1.5f))
-			{
-				runtime.ControlledIndicatorRoomCursor++;
-			}
-
-			if (runtime.ControlledIndicatorRoomCursor >= rooms.Count)
-			{
-				CompleteControlledJointSampleIncomplete(
-					dd,
-					runtime,
-					$"Controlled PT floor {runtime.Floor} received 7272 but the exact indicator did not load after room-center coverage.");
-				return;
-			}
-
-			int targetRoom = rooms[runtime.ControlledIndicatorRoomCursor];
-			NavigateToRoom(dd, targetRoom, player);
-			_status = $"Controlled PT: acquiring exact indicator via room {targetRoom}";
-		}
-
-		private bool EnsureObjectiveExecution(FloorObjectiveKind objective)
-		{
-			var runtime = _floorRuntime;
-			if (runtime == null || runtime.IsDisposed || _navHelper == null)
-				return false;
-			if (runtime.ActiveExecution?.Objective == objective)
-				return true;
-			if (runtime.ActiveExecution != null &&
-			    HasActiveSearchExecution() &&
-			    ShouldContinuePlannedRouteForPassageActivation(objective))
-			{
-				runtime.ActiveExecution.Objective = objective;
-				return true;
-			}
-			if (runtime.ActiveExecution != null)
-			{
-				if (HasActiveSearchExecution())
-				{
-					if (!StopActiveSearchExecution(objective))
-						return false;
-				}
-				else
-				{
-					CancelActiveMovement();
-				}
-				_chaseHelper.Reset();
-				_ctx?.ClearPreferredAggroTarget();
-			}
-
-			runtime.ReplaceObjectiveExecution(objective, _navHelper);
-			return true;
-		}
-
-		private unsafe bool TryActivateVisibleBandedObjective(InstanceContentDeepDungeon* dd)
-		{
-			if (CurrentObjectiveDecision.PrimaryObjective != FloorObjectiveKind.OpenVisibleBandedChest ||
-			    (_activeWaypoint ?? _executor?.CurrentWaypoint)?.Type == RoomObjectiveType.ChestBanded)
-			{
-				return false;
-			}
-
-			var runtime = _floorRuntime;
-			var player = Service.LocalPlayer;
-			if (runtime?.NormalGraph == null || player == null || runtime.ObjectEvidence.Current is not { } evidence)
-			{
-				_status = "Waiting to activate visible banded objective...";
-				return true;
-			}
-			if (!BandedChestLocator.TryFindNearestToPlayer(evidence, out var bandedPosition))
-			{
-				_status = "Waiting for banded chest evidence...";
-				return true;
-			}
-			if (!bandedPosition.HasValue)
-				return false;
-
-			int roomIndex = RoomGraph.GetRoomIndexForPosition(
-				dd,
-				bandedPosition.Value,
-				runtime.NormalGraph.ReachableRooms,
-				-1);
-			if (roomIndex < 0)
-			{
-				_status = "Waiting to resolve visible banded chest room...";
-				return true;
-			}
-
-			HandleVisibleBandedDetection(dd, player, roomIndex, bandedPosition.Value);
-			return true;
-		}
-
-		private bool RequireTransitionPermission(string operation, FloorObjectiveKind requiredObjective)
-		{
-			var runtime = _floorRuntime;
-			var decision = runtime?.ObjectiveDecision ?? default;
-			bool allowed = runtime?.HasObjectiveDecision == true &&
-			               decision.PrimaryObjective == requiredObjective &&
-			               decision.Channels.Transition == CommandChannelPermission.PrimaryObjective;
-			if (allowed)
-			{
-				ClearPermissionBlock(ref _blockedTransitionOperation, "Transition");
-				return true;
-			}
-
-			RecordPermissionBlock(ref _blockedTransitionOperation, "Transition", operation, requiredObjective);
-			_status = $"Waiting: transition permission blocked for {operation} ({decision.PrimaryObjective})";
-			return false;
-		}
-
-		private void RecordPermissionBlock(
-			ref string blockedOperation,
-			string channel,
-			string operation,
-			FloorObjectiveKind? requiredObjective)
-		{
-			if (string.Equals(blockedOperation, operation, StringComparison.Ordinal))
-				return;
-
-			blockedOperation = operation;
-			_navDriver?.Cancel();
-			var decision = _floorRuntime?.ObjectiveDecision ?? default;
-			RecordReplayEvent("objective-permission-blocked", new
-			{
-				floor = _floorRuntime?.Floor ?? 0,
-				floorGeneration = _floorRuntime?.Generation ?? 0,
-				phase = _phase.ToString(),
-				channel,
-				operation,
-				requiredObjective = requiredObjective?.ToString(),
-				primaryObjective = decision.PrimaryObjective.ToString(),
-				movement = decision.Channels.Movement.ToString(),
-				combat = decision.Channels.Combat.ToString(),
-				transition = decision.Channels.Transition.ToString()
-			});
-		}
-
-		private void ClearPermissionBlock(ref string blockedOperation, string channel)
-		{
-			if (string.IsNullOrEmpty(blockedOperation))
-				return;
-
-			string operation = blockedOperation;
-			blockedOperation = string.Empty;
-			var decision = _floorRuntime?.ObjectiveDecision ?? default;
-			RecordReplayEvent("objective-permission-restored", new
-			{
-				floor = _floorRuntime?.Floor ?? 0,
-				floorGeneration = _floorRuntime?.Generation ?? 0,
-				phase = _phase.ToString(),
-				channel,
-				operation,
-				primaryObjective = decision.PrimaryObjective.ToString()
-			});
-		}
-
-		private void ResetPermissionBlocks()
-		{
-			_blockedMovementOperation = string.Empty;
-			_blockedTransitionOperation = string.Empty;
-		}
-
-		public void TickInteractionChannel(IFramework _)
-		{
-			var runtime = _floorRuntime;
-			if (_pomanderDispatchedThisUpdate ||
-			    runtime == null ||
-			    runtime.IsDisposed ||
-			    !AllowsChestSidecarInteraction)
-			{
-				return;
-			}
-
-			var waypoint = _activeWaypoint;
-			var evidence = runtime.ObjectEvidence.Current;
-			if (!waypoint.HasValue || !IsChestWaypoint(waypoint.Value) || evidence?.Available != true)
-				return;
-
-            if (waypoint.Value.Type == RoomObjectiveType.ChestBanded && _ctx?.RunOptions.Current.DiscoveryOnly == true)
-                return;
-			if (_ctx?.ChestInteraction.TryInteract(ActiveChestAttempt, evidence, out var snapshot, out bool retry) == true)
-			{
-				if (!retry || _ctx?.Configuration.AggressiveChestInteraction != true)
-				{
-					runtime.ObjectEvidence.Invalidate();
-					RecordChestInteractionStarted(waypoint.Value, snapshot, retry);
-				}
-			}
 		}
 
 		public bool TickCombatChannel(out string status)
@@ -888,141 +428,27 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			if (snap != null)
 			{
 				snap.Phase = _phase;
-				snap.TaskPhase = _taskRunner?.Phase ?? TaskPhase.Idle;
+				snap.TaskPhase = _floorRuntime?.CurrentTaskPhase ?? TaskPhase.Idle;
 				snap.Status = _status;
 			}
 			return snap;
 		}
 
-		private unsafe void RefreshObjectiveDecision(InstanceContentDeepDungeon* dd, FloorRuntime runtime)
+		private unsafe bool RefreshFloorObjectEvidence(InstanceContentDeepDungeon* dd, FloorExplorationController runtime)
 		{
-			if (runtime.IsDisposed ||
-			    runtime.Floor != dd->Floor ||
-			    runtime.DungeonId != dd->DeepDungeonId)
-			{
-				return;
-			}
-			var objectEvidence = runtime.Kind == FloorRuntimeKind.Normal
-				? runtime.ObjectEvidence.Current
-				: null;
-			if (runtime.Kind == FloorRuntimeKind.Normal && objectEvidence?.Available != true)
-			{
-				runtime.ClearObjectiveDecision();
-				return;
-			}
-
-			var executor = _executor;
-			var evidenceState = executor?.HoardEvidenceState ?? HoardEvidenceState.Disabled;
-			var activeWaypoint = _activeWaypoint ?? executor?.CurrentWaypoint;
-			bool passageOpen = _ctx?.Duty.PassageOpen == true;
-			bool combatInProgress = Service.Condition[ConditionFlag.InCombat];
-			bool suppressCombat = _ctx?.FarmingPlan?.ReusesSave == true;
-			bool routineCombatAllowed = !suppressCombat && (combatInProgress || !passageOpen);
-			bool chestInteractionAllowed =
-				objectEvidence != null &&
-				_activeWaypoint.HasValue &&
-				IsChestWaypoint(_activeWaypoint.Value);
-			bool visibleBandedChest =
-				activeWaypoint?.Type == RoomObjectiveType.ChestBanded ||
-				executor?.HasPendingBandedWaypoint == true ||
-				_searchExecutionKind == SearchExecutionKind.BandedReentry;
-			if (!visibleBandedChest &&
-			    executor?.ConfigSnapshot.BandedEnabled == true &&
-			    !executor.HasOpenedHoardThisFloor &&
-			    objectEvidence != null &&
-			    BandedChestLocator.TryFindNearestToPlayer(objectEvidence, out var visibleBandedPosition))
-			{
-				visibleBandedChest = visibleBandedPosition.HasValue;
-			}
-			bool bandedRevealPending = IsBandedRevealExpectationPending();
-			bool hoardWorkResolved =
-				runtime.Kind == FloorRuntimeKind.Boss ||
-				executor?.IsHoardWorkResolved == true;
-			bool mandatoryHoardTerminal =
-				hoardWorkResolved && !bandedRevealPending && !visibleBandedChest;
-			bool knownOrConfirmedHoard =
-				!hoardWorkResolved &&
-				evidenceState is HoardEvidenceState.IntuitionDirect or HoardEvidenceState.IntuitionWaitingForIndicator;
-			bool requiredHoardDiscovery =
-				!hoardWorkResolved &&
-				evidenceState is HoardEvidenceState.BlindSearch or HoardEvidenceState.IntuitionActiveUnconfirmed;
-			bool passageActivationRequired =
-				runtime.Kind == FloorRuntimeKind.Normal &&
-				!passageOpen &&
-				hoardWorkResolved &&
-				evidenceState != HoardEvidenceState.IntuitionPending;
-			if (_ctx?.ControlledPtSurvey != null && runtime.Kind == FloorRuntimeKind.Normal)
-			{
-				visibleBandedChest = false;
-				knownOrConfirmedHoard = false;
-				requiredHoardDiscovery = false;
-				mandatoryHoardTerminal = runtime.ControlledIntuitionResolved;
-				passageActivationRequired = !passageOpen && runtime.ControlledIntuitionResolved;
-			}
-			var snapshot = new ObjectiveArbiterSnapshot(
-				BossObjective: runtime.Kind == FloorRuntimeKind.Boss,
-				VisibleBandedChest: visibleBandedChest,
-				KnownOrConfirmedHoard: knownOrConfirmedHoard,
-				RequiredHoardDiscovery: requiredHoardDiscovery,
-				MandatoryHoardTerminal: mandatoryHoardTerminal,
-				PassageOpen: passageOpen,
-				PassageActivationRequired: passageActivationRequired,
-				CombatInProgress: combatInProgress,
-				RoutineCombatAllowed: routineCombatAllowed,
-				ActiveChestInteraction: chestInteractionAllowed,
-                SuppressCombat: suppressCombat,
-                RequiredChestWork: _ctx?.RunOptions.Current.HarvestChestsRequired == true &&
-                    (executor?.PlannedRouteCount > 0 || executor?.RoomContext != null ||
-                     _activeWaypoint.HasValue || (_taskRunner != null && _taskRunner.Phase != TaskPhase.Idle)));
-			if (!runtime.RefreshObjectiveDecision(
-					snapshot,
-					objectEvidence?.Version ?? 0,
-					_ctx?.RunOptions.Version ?? 0,
-					runtime.ObjectiveLedger.Version,
-					out var decision))
-				return;
-
-			RecordReplayEvent("objective-arbiter-decision", new
-			{
-				floor = runtime.Floor,
-				floorGeneration = runtime.Generation,
-				primaryObjective = decision.PrimaryObjective.ToString(),
-				movement = decision.Channels.Movement.ToString(),
-				combat = decision.Channels.Combat.ToString(),
-				interaction = decision.Channels.Interaction.ToString(),
-				interactionOwner = "ChestSidecar",
-				transition = decision.Channels.Transition.ToString(),
-				evidenceState = evidenceState.ToString(),
-				bossObjective = runtime.Kind == FloorRuntimeKind.Boss,
-				visibleBandedChest,
-				bandedRevealPending,
-				hoardWorkResolved,
-				knownOrConfirmedHoard,
-				requiredHoardDiscovery,
-				mandatoryHoardTerminal,
-				passageActivationRequired,
-				passageOpen,
-				combatInProgress,
-				routineCombatAllowed,
-				activeChestInteraction = chestInteractionAllowed
-			});
-		}
-
-		private unsafe bool RefreshFloorObjectEvidence(InstanceContentDeepDungeon* dd, FloorRuntime runtime)
-		{
-			TryArmControlledCandidateObjectAudit(dd, runtime);
+			runtime.Survey.TryArmControlledCandidateObjectAudit(dd);
 			IReadOnlyList<ControlledCandidateAuditPoint>? auditUniverse =
 				_ctx?.ControlledPtSurvey != null &&
-				runtime.ControlledCandidateObjectAuditArmed
-					? runtime.ControlledCandidateObjectAuditUniverse
+				runtime.Survey.ControlledCandidateObjectAuditArmed
+					? runtime.Survey.ControlledCandidateObjectAuditUniverse
 					: null;
 			var refresh = runtime.ObjectEvidence.RefreshIfDue(runtime.DungeonId, auditUniverse);
 			if (refresh.Attempted)
 			{
-				ObserveCurrentRoom(dd);
-				ObserveFloorEvidence(dd, runtime);
-				PublishAuthoritativeRunFloorStateIfChanged(dd, runtime);
-				ObserveControlledCandidateObjectMatches(runtime, refresh);
+				runtime.ObserveCurrentRoom(dd);
+				runtime.Survey.ObserveFloorEvidence(dd);
+				runtime.PublishAuthoritativeRunFloorStateIfChanged(dd);
+				runtime.Survey.ObserveControlledCandidateObjectMatches(refresh);
 			}
 			var snapshot = runtime.ObjectEvidence.Current;
 			var now = DateTime.UtcNow;
@@ -1054,7 +480,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			if (snapshot?.Available == true)
 				return true;
 
-			runtime.ClearObjectiveDecision();
+			runtime.Objectives.ClearObjectiveDecision();
 			_status = "Waiting for floor object evidence...";
 			if (now - _lastObjectEvidenceUnavailableAt >= TimeSpan.FromSeconds(2))
 			{
@@ -1069,1552 +495,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				});
 			}
 			return false;
-		}
-
-		/// <summary>
-		/// TEMPORARY controlled-survey research only: build a fixed PalacePal candidate audit
-		/// universe for all reachable rooms once graph/executor exist. Position coincidence only;
-		/// does not infer from Sight timing / load distance.
-		/// </summary>
-		private unsafe void TryArmControlledCandidateObjectAudit(
-			InstanceContentDeepDungeon* dd,
-			FloorRuntime runtime)
-		{
-			if (_ctx?.ControlledPtSurvey == null ||
-			    runtime.Kind != FloorRuntimeKind.Normal ||
-			    runtime.ControlledCandidateObjectAuditArmed)
-			{
-				return;
-			}
-
-			var graph = runtime.NormalGraph;
-			var executor = runtime.Executor;
-			if (graph == null || executor == null)
-				return;
-
-			var universe = new List<ControlledCandidateAuditPoint>();
-			IReadOnlyList<int> rooms = graph.ReachableRooms;
-			for (int roomOffset = 0; roomOffset < rooms.Count; roomOffset++)
-			{
-				int roomIndex = rooms[roomOffset];
-				IReadOnlyList<Vector3> candidates =
-					executor.GetPalacePalCandidatesForRoom(dd, roomIndex);
-				for (int candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
-				{
-					Vector3 candidate = candidates[candidateIndex];
-					var position = new RawWorldPosition(candidate.X, candidate.Y, candidate.Z);
-					bool duplicate = false;
-					for (int existing = 0; existing < universe.Count; existing++)
-					{
-						if (!RawWorldPosition.CanonicallyEquals(universe[existing].Position, position))
-							continue;
-						duplicate = true;
-						break;
-					}
-					if (duplicate)
-						continue;
-
-					universe.Add(new ControlledCandidateAuditPoint(
-						roomIndex,
-						candidateIndex,
-						position));
-				}
-			}
-
-			runtime.ControlledCandidateObjectAuditUniverse = universe.ToArray();
-			runtime.ControlledCandidateObjectAuditArmed = true;
-			RecordReplayEvent("controlled-candidate-object-audit-armed", new
-			{
-				floor = runtime.Floor,
-				floorGeneration = runtime.Generation,
-				candidateCount = universe.Count,
-				roomCount = rooms.Count
-			});
-		}
-
-		/// <summary>
-		/// TEMPORARY controlled-survey research only: log each unique candidate+object signature
-		/// once per FloorRuntime into the run recorder.
-		/// </summary>
-		private void ObserveControlledCandidateObjectMatches(
-			FloorRuntime runtime,
-			in FloorObjectEvidenceRefreshResult refresh)
-		{
-			if (_ctx?.ControlledPtSurvey == null ||
-			    !refresh.ScanCompleted ||
-			    refresh.Snapshot?.ControlledCandidateObjectMatches is not { Count: > 0 } matches)
-			{
-				return;
-			}
-
-			for (int i = 0; i < matches.Count; i++)
-			{
-				ControlledCandidateObjectMatch match = matches[i];
-				var key = ControlledCandidateObjectAuditKey.From(match);
-				if (!runtime.ControlledCandidateObjectAuditLoggedKeys.Add(key))
-					continue;
-
-				float dx = match.ObjectPosition.X - match.CandidatePosition.X;
-				float dy = match.ObjectPosition.Y - match.CandidatePosition.Y;
-				float dz = match.ObjectPosition.Z - match.CandidatePosition.Z;
-				float matchDistance = MathF.Sqrt(dx * dx + dy * dy + dz * dz);
-				RecordReplayEvent("controlled-candidate-object-observed", new
-				{
-					floor = runtime.Floor,
-					floorGeneration = runtime.Generation,
-					candidateRoomIndex = match.CandidateRoomIndex,
-					sourceCandidateIndex = match.SourceCandidateIndex,
-					candidatePosition = new
-					{
-						match.CandidatePosition.X,
-						match.CandidatePosition.Y,
-						match.CandidatePosition.Z
-					},
-					objectPosition = new
-					{
-						match.ObjectPosition.X,
-						match.ObjectPosition.Y,
-						match.ObjectPosition.Z
-					},
-					matchDistance,
-					match.ObjectIndex,
-					match.GameObjectId,
-					match.EntityId,
-					match.BaseId,
-					match.ObjectKind,
-					match.SubKind,
-					match.Name,
-					match.NameId,
-					match.LayoutId,
-					match.GimmickId,
-					match.IsTargetable,
-					match.IsDead,
-					match.HitboxRadius,
-					match.CurrentDistance
-				});
-			}
-		}
-
-		private unsafe void ObserveFloorEvidence(InstanceContentDeepDungeon* dd, FloorRuntime runtime)
-		{
-			var session = runtime.EvidenceSession;
-			var snapshot = runtime.ObjectEvidence.Current;
-			if (snapshot == null)
-				return;
-
-			int intuitionStock = _pomanderManager.GetCount(FloorInitPlanner.IntuitionPomanderSlotIndex);
-			int sightStock = _pomanderManager.GetCount(FloorInitPlanner.SightPomanderSlotIndex);
-			int effectiveSightStock = IsPomanderBlockedForFloor(
-				FloorInitPlanner.SightPomanderSlotIndex)
-					? 0
-					: sightStock;
-			bool naturalPtStonesSupported =
-				DungeonCatalog.SupportsNaturalPtStones(dd->DeepDungeonId);
-			bool pomandersUsableThisFloor =
-				DeepDungeonFloorItemUsePolicy.CanUsePomanders(
-					dd->DeepDungeonBanId);
-			bool ptIncenseUsableThisFloor =
-				DeepDungeonFloorItemUsePolicy.CanUsePtIncense(
-					dd->DeepDungeonBanId);
-			int mazerootStock =
-				_ctx?.ControlledPtSurvey != null ||
-				naturalPtStonesSupported
-					? _pomanderManager.GetStoneCount(2)
-					: 0;
-			int effectiveMazerootStock = naturalPtStonesSupported
-				? GetStoneCountAvailableForFloorUse(2)
-				: 0;
-			bool sightTrapObserved = snapshot.SightTrapIndicators.Count > 0;
-			if (sightTrapObserved)
-			{
-				_executor?.ObserveSightTrapIndicators(snapshot);
-				_chatWatchers?.ConfirmSightThisFloor("SightTrapIndicatorObserved");
-			}
-			bool sightConfirmed = _chatWatchers?.SightState == SightUseState.Confirmed;
-			if (_ctx?.ControlledPtSurvey != null)
-				TryConfirmControlledAuthoritativeReveal(runtime);
-			else
-			{
-				ObserveNaturalRevealInventory(
-					runtime,
-					sightStock,
-					mazerootStock);
-				TryAdoptExternalNaturalReveal(runtime, sightConfirmed);
-				TryConfirmNaturalAuthoritativeReveal(
-					runtime,
-					sightTrapObserved);
-			}
-			session?.ObserveEffectStates(
-				_nativeIntuitionActive,
-				intuitionStock,
-				sightConfirmed,
-				sightStock,
-				"scheduled-object-evidence-refresh");
-			session?.ObserveObjectEvidence(dd, snapshot);
-
-			if (_ctx?.ControlledPtSurvey != null)
-			{
-				UpdateControlledPtSurvey(dd, runtime, snapshot, intuitionStock, sightStock, sightConfirmed);
-				return;
-			}
-
-			var intuitionResolution = _chatWatchers?.ChatSaysHoard == true
-				? IntuitionFloorResolution.Positive
-				: _chatWatchers?.ChatSaysNoHoard == true
-					? IntuitionFloorResolution.Negative
-					: IntuitionFloorResolution.Unresolved;
-			bool exactHoardEvidenceFromBanded;
-			Vector3? exactIndicatorPosition =
-				TryResolveNaturalExactHoardPosition(
-					dd,
-					runtime,
-					snapshot,
-					out exactHoardEvidenceFromBanded);
-			bool exactIndicatorAvailable = exactIndicatorPosition.HasValue;
-			bool acceptedIncomingEdgeKnown =
-				exactIndicatorPosition.HasValue &&
-				HasAcceptedIncomingEdge(
-					dd,
-					runtime,
-					exactIndicatorPosition.Value);
-			var decision = SightResearchPolicy.Decide(new SightResearchSnapshot(
-				StableFloor: runtime.Kind == FloorRuntimeKind.Normal && runtime.Floor == dd->Floor && runtime.DungeonId == dd->DeepDungeonId,
-				IntuitionResolution: intuitionResolution,
-				ExactHoardIndicatorAvailable: exactIndicatorAvailable,
-				AcceptedIncomingEdgeKnown: acceptedIncomingEdgeKnown,
-				SightUseBlocked:
-					IsSightUseBlocked() ||
-					!pomandersUsableThisFloor,
-				SightStock: effectiveSightStock,
-				MazerootStock: effectiveMazerootStock,
-				RevealDispatchedThisFloor: runtime.NaturalRevealDispatched,
-				AuthoritativeRevealConfirmed: runtime.NaturalRevealConfirmed,
-				MazerootSupported: naturalPtStonesSupported,
-				MazerootUsableThisFloor: ptIncenseUsableThisFloor,
-				BandedHoardEvidenceAvailable: exactHoardEvidenceFromBanded));
-			int selectedResourceStock = decision.ShouldUseMazeroot
-				? effectiveMazerootStock
-				: effectiveSightStock;
-			session?.ObserveResearchDecision(
-				decision,
-				selectedResourceStock,
-				runtime.NaturalRevealResource);
-
-			if (decision.ShouldCollectJointScan && exactIndicatorPosition.HasValue)
-				UpdateNaturalJointCapture(dd, runtime, snapshot, exactIndicatorPosition.Value);
-
-			if (!decision.ShouldUseReveal || !CanAttemptPomanderUse())
-			{
-				return;
-			}
-
-			bool dispatched = decision.ShouldUseSight
-				? IsPomanderAvailableForFloorUse(FloorInitPlanner.SightPomanderSlotIndex) &&
-				  TryUsePomander(
-					  FloorInitPlanner.SightPomanderSlotIndex,
-					  dd,
-					  "automatic exact-hoard research")
-				: effectiveMazerootStock > 0 &&
-				  TryUseNaturalMazeroot(
-					  dd,
-					  "automatic exact-hoard research");
-			session?.ObserveResearchAction(
-				dispatched,
-				decision.RevealResource,
-				selectedResourceStock);
-		}
-
-		private unsafe Vector3? TryResolveNaturalExactHoardPosition(
-			InstanceContentDeepDungeon* dd,
-			FloorRuntime runtime,
-			FloorObjectEvidenceSnapshot snapshot,
-			out bool fromBandedChest)
-		{
-			fromBandedChest = false;
-			if (snapshot.HoardIndicators.Count > 0)
-				return snapshot.HoardIndicators[0].Object.Position;
-
-			if (_executor?.CachedHoardIndicatorPos is { } cachedPosition)
-				return cachedPosition;
-
-			if (!BandedChestLocator.TryFindNearestToPlayer(snapshot, out Vector3? bandedPosition) ||
-				!bandedPosition.HasValue ||
-				!IsPalacePalCandidatePosition(dd, runtime, bandedPosition.Value))
-			{
-				return null;
-			}
-
-			fromBandedChest = true;
-			return bandedPosition.Value;
-		}
-
-		private unsafe bool IsPalacePalCandidatePosition(
-			InstanceContentDeepDungeon* dd,
-			FloorRuntime runtime,
-			Vector3 position)
-		{
-			IReadOnlyList<int>? rooms = runtime.NormalGraph?.ReachableRooms;
-			if (rooms == null)
-				return false;
-
-			int roomIndex = RoomGraph.GetRoomIndexForPosition(dd, position, rooms, -1);
-			if (roomIndex < 0)
-				return false;
-
-			IReadOnlyList<Vector3>? candidates =
-				_executor?.GetPalacePalCandidatesForRoom(dd, roomIndex);
-			if (candidates == null)
-				return false;
-
-			var rawPosition = new RawWorldPosition(position.X, position.Y, position.Z);
-			for (int i = 0; i < candidates.Count; i++)
-			{
-				Vector3 candidate = candidates[i];
-				if (RawWorldPosition.CanonicallyEquals(
-					rawPosition,
-					new RawWorldPosition(candidate.X, candidate.Y, candidate.Z)))
-				{
-					return true;
-				}
-			}
-
-			return false;
-		}
-
-		private unsafe bool HasAcceptedIncomingEdge(
-			InstanceContentDeepDungeon* dd,
-			FloorRuntime runtime,
-			Vector3 exactHoardPosition)
-		{
-			DetailedMapCatalog? catalog = _ctx?.DetailedMap.Catalog;
-			IReadOnlyList<int>? rooms = runtime.NormalGraph?.ReachableRooms;
-			if (catalog == null || rooms == null)
-				return false;
-
-			int roomIndex = RoomGraph.GetRoomIndexForPosition(
-				dd,
-				exactHoardPosition,
-				rooms,
-				-1);
-			if (roomIndex < 0)
-				return false;
-
-			var rawPosition = new RawWorldPosition(
-				exactHoardPosition.X,
-				exactHoardPosition.Y,
-				exactHoardPosition.Z);
-			return DetailedMapResearchKnowledge.ResolveHoardPredecessor(
-				       catalog,
-				       dd->ActiveLayoutIndex,
-				       roomIndex,
-				       rawPosition) !=
-			       DetailedMapHoardPredecessorKnowledge.Unknown;
-		}
-
-		private void ObserveNaturalRevealInventory(
-			FloorRuntime runtime,
-			int sightStock,
-			int mazerootStock)
-		{
-			long sightLogSequence =
-				_chatWatchers?.SightLogSequence ?? 0;
-			long mazerootLogSequence =
-				_chatWatchers?.MazerootLogSequence ?? 0;
-			NaturalRevealInventoryDecision decision =
-				NaturalRevealInventoryPolicy.Decide(
-					new NaturalRevealInventorySnapshot(
-						runtime.NaturalRevealInventoryBaselineEstablished,
-						runtime.NaturalPreviousSightStock,
-						runtime.NaturalPreviousMazerootStock,
-						sightStock,
-						mazerootStock,
-						runtime.NaturalRevealDispatched ||
-						runtime.NaturalRevealConfirmed ||
-						runtime.NaturalMazerootAttemptedOrAdopted,
-						DungeonCatalog.SupportsNaturalPtStones(
-							runtime.DungeonId)));
-			long previousSightLogSequence =
-				runtime.NaturalPreviousSightLogSequence;
-			long previousMazerootLogSequence =
-				runtime.NaturalPreviousMazerootLogSequence;
-			runtime.NaturalRevealInventoryBaselineEstablished = true;
-			runtime.NaturalPreviousSightStock = sightStock;
-			runtime.NaturalPreviousMazerootStock = mazerootStock;
-			runtime.NaturalPreviousSightLogSequence =
-				sightLogSequence;
-			runtime.NaturalPreviousMazerootLogSequence =
-				mazerootLogSequence;
-			if (decision.Kind !=
-			    NaturalRevealInventoryDecisionKind.AdoptExternalPending)
-			{
-				return;
-			}
-
-			runtime.NaturalRevealDispatched = true;
-			runtime.NaturalRevealResource = decision.Resource;
-			if (decision.Resource == SightResearchRevealResource.Mazeroot)
-				runtime.NaturalMazerootAttemptedOrAdopted = true;
-			runtime.NaturalSightLogSequenceAtDispatch =
-				previousSightLogSequence;
-			runtime.NaturalMazerootLogSequenceAtDispatch =
-				previousMazerootLogSequence;
-			runtime.NaturalRevealConfirmed = false;
-			runtime.NaturalJointScanComplete = false;
-			_chatWatchers?.MarkSightAttemptedThisFloor();
-			RecordReplayEvent("external-reveal-pending", new
-			{
-				floor = runtime.Floor,
-				revealSource = decision.Resource.ToString()
-			});
-		}
-
-		private bool TryConfirmNaturalAuthoritativeReveal(
-			FloorRuntime runtime,
-			bool sightTrapObserved)
-		{
-			if (runtime.NaturalRevealConfirmed)
-				return true;
-			if (!runtime.NaturalRevealDispatched)
-				return false;
-
-			bool confirmed =
-				NaturalRevealInventoryPolicy.IsAuthoritativeConfirmation(
-					runtime.NaturalRevealResource,
-					(_chatWatchers?.SightLogSequence ?? 0) >
-						runtime.NaturalSightLogSequenceAtDispatch,
-					(_chatWatchers?.MazerootLogSequence ?? 0) >
-						runtime.NaturalMazerootLogSequenceAtDispatch,
-					sightTrapObserved,
-					DungeonCatalog.SupportsNaturalPtStones(
-						runtime.DungeonId));
-			if (!confirmed)
-				return false;
-
-			runtime.NaturalRevealConfirmed = true;
-			runtime.NaturalRevealConfirmationRefreshSequence =
-				runtime.ObjectEvidence.Current?.RefreshSequence ??
-				runtime.ObjectEvidence.RefreshCount;
-			runtime.NaturalRevealConfirmationFullScanCount =
-				runtime.ObjectEvidence.FullScanCount;
-			runtime.EvidenceSession?.ObserveResearchAuthoritativeRevealConfirmed();
-			return true;
-		}
-
-		private void TryAdoptExternalNaturalReveal(
-			FloorRuntime runtime,
-			bool sightConfirmed)
-		{
-			if (runtime.NaturalRevealDispatched ||
-			    runtime.NaturalRevealConfirmed ||
-			    runtime.NaturalMazerootAttemptedOrAdopted ||
-			    !sightConfirmed)
-			{
-				return;
-			}
-
-			bool sightLogObserved =
-				(_chatWatchers?.SightLogSequence ?? 0) > 0;
-			bool mazerootLogObserved =
-				DungeonCatalog.SupportsNaturalPtStones(
-					runtime.DungeonId) &&
-				(_chatWatchers?.MazerootLogSequence ?? 0) > 0;
-			SightResearchRevealResource resource =
-				(sightLogObserved, mazerootLogObserved) switch
-				{
-					(true, false) => SightResearchRevealResource.Sight,
-					(false, true) => SightResearchRevealResource.Mazeroot,
-					_ => SightResearchRevealResource.None
-				};
-			if (resource == SightResearchRevealResource.None)
-				return;
-
-			runtime.NaturalRevealResource = resource;
-			if (resource == SightResearchRevealResource.Mazeroot)
-				runtime.NaturalMazerootAttemptedOrAdopted = true;
-			runtime.NaturalRevealConfirmed = true;
-			runtime.NaturalRevealConfirmationRefreshSequence =
-				runtime.ObjectEvidence.Current?.RefreshSequence ??
-				runtime.ObjectEvidence.RefreshCount;
-			runtime.NaturalRevealConfirmationFullScanCount =
-				runtime.ObjectEvidence.FullScanCount;
-			runtime.EvidenceSession?.ObserveResearchAuthoritativeRevealConfirmed();
-		}
-
-		private unsafe void UpdateNaturalJointCapture(
-			InstanceContentDeepDungeon* dd,
-			FloorRuntime runtime,
-			FloorObjectEvidenceSnapshot snapshot,
-			Vector3 exactHoardPosition)
-		{
-			if (runtime.NaturalJointScanComplete ||
-			    !runtime.NaturalRevealConfirmed ||
-			    runtime.EvidenceSession?.Bundle.AcquisitionMode !=
-			    FloorEvidenceAcquisitionMode.AutomaticCommunitySurvey ||
-			    snapshot.PlayerPosition is not { } playerPosition)
-			{
-				return;
-			}
-
-			if (!runtime.NaturalCandidateUniverseResolved)
-			{
-				IReadOnlyList<int>? rooms = runtime.NormalGraph?.ReachableRooms;
-				if (rooms == null)
-					return;
-
-				int hoardRoomIndex = RoomGraph.GetRoomIndexForPosition(
-					dd,
-					exactHoardPosition,
-					rooms,
-					-1);
-				if (hoardRoomIndex < 0)
-					return;
-
-				IReadOnlyList<Vector3>? palacePalCandidates =
-					_executor?.GetPalacePalCandidatesForRoom(dd, hoardRoomIndex);
-				if (palacePalCandidates == null || palacePalCandidates.Count == 0)
-					return;
-
-				var candidates = new RawWorldPosition[palacePalCandidates.Count];
-				for (int i = 0; i < palacePalCandidates.Count; i++)
-				{
-					Vector3 candidate = palacePalCandidates[i];
-					candidates[i] = new RawWorldPosition(
-						candidate.X,
-						candidate.Y,
-						candidate.Z);
-				}
-				runtime.NaturalCandidateUniverse = candidates;
-				runtime.NaturalCandidateUniverseResolved = true;
-			}
-
-			for (int i = 0; i < snapshot.SightTrapIndicators.Count; i++)
-			{
-				FloorObjectEvidence trap = snapshot.SightTrapIndicators[i];
-				if (!runtime.NaturalObservedTrapWitnesses.Add(
-					    ControlledTrapWitnessKey.From(trap)))
-				{
-					continue;
-				}
-
-				float dx = trap.Position.X - playerPosition.X;
-				float dz = trap.Position.Z - playerPosition.Z;
-				runtime.NaturalMaximumTrapWitnessDistance = MathF.Max(
-					runtime.NaturalMaximumTrapWitnessDistance,
-					MathF.Sqrt(dx * dx + dz * dz));
-			}
-
-			float safeRadius =
-				ControlledPtSurveyPolicy.GetProvenTrapLoadSafeRadius(
-					runtime.NaturalMaximumTrapWitnessDistance);
-			bool trapWitnessAvailable =
-				runtime.NaturalObservedTrapWitnesses.Count > 0 &&
-				safeRadius > 0f;
-			var rawPlayerPosition = new RawWorldPosition(
-				playerPosition.X,
-				playerPosition.Y,
-				playerPosition.Z);
-			bool allCandidatesCovered =
-				trapWitnessAvailable &&
-				ControlledPtSurveyPolicy.AreAllCandidatesCovered(
-					rawPlayerPosition,
-					runtime.NaturalCandidateUniverse,
-					safeRadius);
-			bool synchronizedScanAvailable =
-				snapshot.Available &&
-				snapshot.RefreshSequence >
-				runtime.NaturalRevealConfirmationRefreshSequence &&
-				runtime.ObjectEvidence.FullScanCount >
-				runtime.NaturalRevealConfirmationFullScanCount;
-			if (!synchronizedScanAvailable ||
-			    !trapWitnessAvailable ||
-			    !allCandidatesCovered)
-			{
-				return;
-			}
-
-			runtime.NaturalJointScanComplete = true;
-			runtime.EvidenceSession?.ObserveResearchJointScanComplete();
-			RecordReplayEvent("natural-joint-scan-complete", new
-			{
-				floor = dd->Floor,
-				revealSource = runtime.NaturalRevealResource.ToString(),
-				safeRadius,
-				candidateCount = runtime.NaturalCandidateUniverse.Length
-			});
-		}
-
-		private bool TryConfirmControlledAuthoritativeReveal(FloorRuntime runtime)
-		{
-			if (runtime.ControlledSightConfirmed)
-				return true;
-
-			bool confirmed = ControlledPtSurveyPolicy.IsAuthoritativeCaptureReveal(
-				runtime.ControlledCaptureItem,
-				(_chatWatchers?.SightLogSequence ?? 0) >
-					runtime.ControlledSightLogSequenceAtDispatch,
-				(_chatWatchers?.MazerootLogSequence ?? 0) >
-					runtime.ControlledMazerootLogSequenceAtDispatch);
-			if (!confirmed)
-				return false;
-
-			runtime.ControlledSightConfirmed = true;
-			runtime.ControlledSightConfirmedAtMilliseconds = Environment.TickCount64;
-			runtime.ControlledSightConfirmationRefreshSequence =
-				runtime.ObjectEvidence.Current?.RefreshSequence ?? runtime.ObjectEvidence.RefreshCount;
-			runtime.ControlledSightConfirmationFullScanCount = runtime.ObjectEvidence.FullScanCount;
-			runtime.EvidenceSession?.ObserveAuthoritativeRevealConfirmed();
-			return true;
-		}
-
-		private unsafe void UpdateControlledPtSurvey(
-			InstanceContentDeepDungeon* dd,
-			FloorRuntime runtime,
-			FloorObjectEvidenceSnapshot snapshot,
-			int intuitionStock,
-			int sightStock,
-			bool sightActive)
-		{
-			var survey = _ctx?.ControlledPtSurvey;
-			var evidence = runtime.EvidenceSession;
-			if (survey == null)
-				return;
-
-			int mazerootCount = _pomanderManager.GetStoneCount(2);
-			int poisonfruitCount = _pomanderManager.GetStoneCount(1);
-			int effectiveSightStock =
-				DeepDungeonFloorItemUsePolicy.CanUsePomanders(
-					dd->DeepDungeonBanId) &&
-				!IsPomanderBlockedForFloor(
-					FloorInitPlanner.SightPomanderSlotIndex)
-					? sightStock
-					: 0;
-			int effectiveMazerootCount =
-				DeepDungeonFloorItemUsePolicy.CanUsePtIncense(
-					dd->DeepDungeonBanId) &&
-				!IsStoneBlockedForFloor(2)
-					? mazerootCount
-					: 0;
-			int effectivePoisonfruitCount =
-				DeepDungeonFloorItemUsePolicy.CanUsePtIncense(
-					dd->DeepDungeonBanId) &&
-				!IsStoneBlockedForFloor(1)
-					? poisonfruitCount
-					: 0;
-			ProcessPendingControlledPostCapturePoisonfruit(
-				dd,
-				runtime,
-				effectivePoisonfruitCount);
-			if (TryUseControlledStrength(dd, runtime))
-				return;
-			if (runtime.ControlledOpportunityCompleted)
-				return;
-
-			evidence?.ConfigureControlledSurvey(
-				ControlledPtSurveyPolicy.IsResearchFloor(dd->Floor)
-					? ControlledSurveyFloorRole.SelectedTarget
-					: ControlledSurveyFloorRole.Transit,
-				survey.ResearchFloors);
-
-			if (runtime.ControlledIntuitionRequiresCurrentUse &&
-			    runtime.ControlledIntuitionExpectationStartedAtMilliseconds == 0)
-			{
-				bool firstFloor = dd->Floor == ControlledPtSurveyPolicy.FirstFloor;
-				if (firstFloor &&
-				    !ControlledPtSurveyPolicy.HasSightCapableResource(sightStock, mazerootCount))
-				{
-					survey.Fail("Controlled PT capture requires at least one Sight or 敏慧 before arming Intuition on floor 21.");
-					survey.RequestSuccessfulLeave();
-					return;
-				}
-				if (firstFloor && _nativeIntuitionActive)
-				{
-					survey.Fail("Controlled PT floor 21 must arm Intuition only after its explicit current-floor dispatch.");
-					survey.RequestSuccessfulLeave();
-					return;
-				}
-				if (!firstFloor && intuitionStock <= 0)
-				{
-					FailControlledInheritedState(
-						runtime,
-						$"Controlled PT floor {dd->Floor} lost Intuition with no remaining stock to reactivate it.");
-					return;
-				}
-				if (!CanAttemptPomanderUse())
-					return;
-				if (!IsPomanderAvailableForFloorUse(FloorInitPlanner.IntuitionPomanderSlotIndex))
-				{
-					if (firstFloor)
-					{
-						survey.Fail("Controlled PT capture requires one usable Intuition on floor 21.");
-						survey.RequestSuccessfulLeave();
-						return;
-					}
-					_status = $"Controlled PT: waiting to reactivate Intuition on floor {dd->Floor}";
-					return;
-				}
-				TryUsePomander(
-					FloorInitPlanner.IntuitionPomanderSlotIndex,
-					dd,
-					firstFloor
-						? "controlled persistent intuition"
-						: "controlled Intuition reactivation");
-				return;
-			}
-
-			ControlledPtIntuitionResolutionDecision intuitionDecision;
-			if (runtime.ControlledIntuitionRequiresCurrentUse)
-			{
-				if (runtime.ControlledIntuitionExpectationStartedAtMilliseconds == 0)
-				{
-					_status = "Controlled PT: waiting for correlated Intuition expectation";
-					return;
-				}
-
-				int intuitionElapsedMilliseconds = (int)Math.Clamp(
-					Environment.TickCount64 - runtime.ControlledIntuitionExpectationStartedAtMilliseconds,
-					0L,
-					int.MaxValue);
-				intuitionDecision = runtime.ControlledIntuitionDecision ??
-					ControlledPtSurveyPolicy.ResolveCurrentIntuition(
-						_chatWatchers?.ChatSaysHoard == true,
-						_chatWatchers?.ChatSaysNoHoard == true,
-						intuitionElapsedMilliseconds,
-						CurrentIntuitionResolutionWindowMilliseconds);
-			}
-			else
-			{
-				if (!runtime.InheritedIntuitionDecision.HasValue)
-				{
-					int elapsedMilliseconds = runtime.InheritedIntuitionArmedAtMilliseconds > 0
-						? (int)Math.Clamp(
-							Environment.TickCount64 - runtime.InheritedIntuitionArmedAtMilliseconds,
-							0L,
-							int.MaxValue)
-						: 0;
-					runtime.ControlledIntuitionResolutionPending = true;
-					_status =
-						$"Controlled PT: waiting for inherited Intuition result ({elapsedMilliseconds}/{CurrentIntuitionResolutionWindowMilliseconds}ms)";
-					return;
-				}
-
-				var inheritedDecision = runtime.InheritedIntuitionDecision.Value;
-				var source = inheritedDecision.Source switch
-				{
-					InheritedIntuitionResolutionSource.HoardPresent =>
-						ControlledPtIntuitionResolutionSource.InheritedHoardPresent,
-					InheritedIntuitionResolutionSource.NoHoardInferred =>
-						ControlledPtIntuitionResolutionSource.InheritedNoHoardInferred,
-					InheritedIntuitionResolutionSource.InvalidNoHoardMessage =>
-						ControlledPtIntuitionResolutionSource.InvalidInheritedNoHoardMessage,
-					InheritedIntuitionResolutionSource.RejectedEvidence =>
-						ControlledPtIntuitionResolutionSource.RejectedInheritedEvidence,
-					_ => ControlledPtIntuitionResolutionSource.None
-				};
-				intuitionDecision = new ControlledPtIntuitionResolutionDecision(
-					inheritedDecision.Terminal,
-					inheritedDecision.HoardPresent,
-					inheritedDecision.NoHoard,
-					inheritedDecision.IsError,
-					source,
-					inheritedDecision.ElapsedMilliseconds);
-			}
-			if (!intuitionDecision.Terminal)
-			{
-				runtime.ControlledIntuitionResolutionPending = true;
-				_status = "Controlled PT: waiting for Intuition result";
-				return;
-			}
-			runtime.ControlledIntuitionResolutionPending = false;
-
-			if (!runtime.ControlledIntuitionResolved)
-			{
-				_chatWatchers?.CancelExpectedIntuitionResult(runtime.ControlledIntuitionExpectationAttemptId);
-				PendingIntuition.CancelAttempt(runtime.ControlledIntuitionExpectationAttemptId);
-				runtime.ControlledIntuitionResolved = true;
-				runtime.ControlledIntuitionDecision = intuitionDecision;
-				evidence?.ObserveControlledIntuitionResolution(
-					intuitionDecision.Source,
-					intuitionDecision.ElapsedMilliseconds,
-					CurrentIntuitionResolutionWindowMilliseconds);
-			}
-			if (intuitionDecision.IsError)
-			{
-				survey.Fail($"Controlled PT floor {dd->Floor} Intuition result failed: {intuitionDecision.Source}.");
-				survey.RequestSuccessfulLeave();
-				return;
-			}
-
-			if (intuitionDecision.NoHoard)
-			{
-				CompleteControlledOpportunity(
-					dd,
-					runtime,
-					intuitionDecision.Source == ControlledPtIntuitionResolutionSource.InheritedNoHoardInferred
-						? ControlledPtSurveyTargetOutcome.InheritedNoHoardInferred
-						: ControlledPtSurveyTargetOutcome.IntuitionNegative,
-					sightStock,
-					mazerootCount,
-					poisonfruitCount);
-				return;
-			}
-
-			bool hasIndicator = snapshot.HoardIndicators.Count > 0;
-			var indicatorAction = ControlledPtSurveyPolicy.DecidePositiveIndicatorAction(
-				runtime.ControlledHoardPositionResolved,
-				hasIndicator);
-			if (indicatorAction == ControlledPtPositiveIndicatorAction.AcquireExactIndicator)
-			{
-				runtime.ControlledPositiveMessagePendingIndicator = true;
-				_status = "Controlled PT: positive Intuition result; acquiring exact indicator";
-				return;
-			}
-			runtime.ControlledPositiveMessagePendingIndicator = false;
-
-			if (indicatorAction == ControlledPtPositiveIndicatorAction.ContinueCapture)
-			{
-				if (!runtime.ControlledHoardPositionResolved)
-				{
-					var hoardPosition = snapshot.HoardIndicators[0].Object.Position;
-					var rooms = runtime.NormalGraph?.ReachableRooms;
-					int hoardRoom = rooms == null
-						? -1
-						: RoomGraph.GetRoomIndexForPosition(
-							dd,
-							hoardPosition,
-							rooms,
-							-1);
-					if (hoardRoom < 0)
-					{
-						CompleteControlledJointSampleIncomplete(
-							dd,
-							runtime,
-							$"Controlled PT floor {dd->Floor} could not resolve the exact H coordinate to a reachable room.");
-						return;
-					}
-					runtime.ControlledHoardRoomIndex = hoardRoom;
-					runtime.ControlledHoardPosition = hoardPosition;
-					runtime.ControlledHoardPositionResolved = true;
-				}
-
-				runtime.ControlledPositiveCapturePending = true;
-				if (!sightActive && !runtime.ControlledSightDispatched)
-				{
-					if (!CanAttemptPomanderUse())
-						return;
-					var action = ControlledPtSurveyPolicy.DecidePositiveCaptureItem(
-						dd->Floor,
-						sightActive,
-						effectiveSightStock,
-						effectiveMazerootCount);
-					if (action == ControlledPtSurveyItemAction.UseSight &&
-					    !IsPomanderAvailableForFloorUse(
-						    FloorInitPlanner.SightPomanderSlotIndex))
-					{
-						_status =
-							"Controlled PT: waiting for selected Sight to become usable";
-						return;
-					}
-					if (action == ControlledPtSurveyItemAction.UseMazeroot &&
-					    !EnsureControlledDispatchOutsidePassage(
-						    dd,
-						    runtime,
-						    barrierRequired: true,
-						    "controlled positive 敏慧 capture"))
-					{
-						return;
-					}
-					bool dispatched = action switch
-					{
-						ControlledPtSurveyItemAction.UseMazeroot => TryUseControlledStone(
-							2,
-							dd,
-							"controlled positive capture with 敏慧"),
-						ControlledPtSurveyItemAction.UseSight => TryUsePomander(
-							FloorInitPlanner.SightPomanderSlotIndex,
-							dd,
-							"controlled positive capture with Sight",
-							FloorItemUsePurpose.ControlledReveal),
-						_ => false
-					};
-					if (!dispatched)
-					{
-						CompleteControlledJointSampleIncomplete(
-							dd,
-							runtime,
-							$"Controlled PT floor {dd->Floor} has an exact hoard indicator but no Sight-capable resource could be dispatched.");
-						return;
-					}
-					return;
-				}
-
-				bool authoritativeRevealConfirmed =
-					TryConfirmControlledAuthoritativeReveal(runtime);
-				if (authoritativeRevealConfirmed)
-				{
-					if (snapshot.PlayerPosition is not { } scanPlayerPosition)
-					{
-						_status = "Controlled PT: waiting for scan-captured player position";
-						return;
-					}
-
-					if (!runtime.ControlledCandidateUniverseResolved)
-					{
-						var palacePalCandidates =
-							_executor?.GetPalacePalCandidatesForRoom(
-								dd,
-								runtime.ControlledHoardRoomIndex);
-						if (palacePalCandidates == null || palacePalCandidates.Count == 0)
-						{
-							CompleteControlledJointSampleIncomplete(
-								dd,
-								runtime,
-								$"Controlled PT floor {dd->Floor} has no PalacePal T/H candidate universe for H room {runtime.ControlledHoardRoomIndex}.");
-							return;
-						}
-
-						var candidates = new RawWorldPosition[palacePalCandidates.Count];
-						for (int i = 0; i < palacePalCandidates.Count; i++)
-						{
-							var candidate = palacePalCandidates[i];
-							candidates[i] = new RawWorldPosition(
-								candidate.X,
-								candidate.Y,
-								candidate.Z);
-						}
-						runtime.ControlledCandidateUniverse = candidates;
-						runtime.ControlledCandidateUniverseResolved = true;
-					}
-
-					for (int i = 0; i < snapshot.SightTrapIndicators.Count; i++)
-					{
-						var trap = snapshot.SightTrapIndicators[i];
-						if (!runtime.ControlledObservedTrapWitnesses.Add(
-							    ControlledTrapWitnessKey.From(trap)))
-						{
-							continue;
-						}
-
-						float dx = trap.Position.X - scanPlayerPosition.X;
-						float dz = trap.Position.Z - scanPlayerPosition.Z;
-						float firstAppearanceDistance = MathF.Sqrt(dx * dx + dz * dz);
-						runtime.ControlledMaximumTrapWitnessDistance = MathF.Max(
-							runtime.ControlledMaximumTrapWitnessDistance,
-							firstAppearanceDistance);
-						RecordReplayEvent("controlled-trap-load-witness", new
-						{
-							floor = dd->Floor,
-							trap.BaseId,
-							trap.GameObjectId,
-							trap.Position,
-							playerPosition = scanPlayerPosition,
-							firstAppearanceDistance,
-							provenSafeRadius =
-								ControlledPtSurveyPolicy.GetProvenTrapLoadSafeRadius(
-									runtime.ControlledMaximumTrapWitnessDistance)
-						});
-					}
-
-					float safeRadius =
-						ControlledPtSurveyPolicy.GetProvenTrapLoadSafeRadius(
-							runtime.ControlledMaximumTrapWitnessDistance);
-					bool trapWitnessAvailable =
-						runtime.ControlledObservedTrapWitnesses.Count > 0 &&
-						safeRadius > 0f;
-					var rawPlayerPosition = new RawWorldPosition(
-						scanPlayerPosition.X,
-						scanPlayerPosition.Y,
-						scanPlayerPosition.Z);
-					bool allCandidatesCovered =
-						trapWitnessAvailable &&
-						ControlledPtSurveyPolicy.AreAllCandidatesCovered(
-							rawPlayerPosition,
-							runtime.ControlledCandidateUniverse,
-							safeRadius);
-					bool synchronizedScanAvailable =
-						snapshot.Available &&
-						snapshot.RefreshSequence >
-							runtime.ControlledSightConfirmationRefreshSequence &&
-						runtime.ObjectEvidence.FullScanCount >
-							runtime.ControlledSightConfirmationFullScanCount;
-					bool postArrivalScanAvailable =
-						runtime.ControlledHoardRoomTargetReached &&
-						snapshot.Available &&
-						snapshot.RefreshSequence >
-							Math.Max(
-								runtime.ControlledSightConfirmationRefreshSequence,
-								runtime.ControlledHoardRoomTargetRefreshSequence) &&
-						runtime.ObjectEvidence.FullScanCount >
-							Math.Max(
-								runtime.ControlledSightConfirmationFullScanCount,
-								runtime.ControlledHoardRoomTargetFullScanCount);
-					var jointAction = ControlledPtSurveyPolicy.DecideJointCapture(
-						authoritativeRevealConfirmed,
-						runtime.ControlledCandidateUniverse.Length > 0,
-						trapWitnessAvailable,
-						allCandidatesCovered,
-						synchronizedScanAvailable,
-						runtime.ControlledHoardRoomTargetReached,
-						postArrivalScanAvailable);
-					if (jointAction == ControlledPtJointCaptureAction.Complete)
-					{
-						CancelActiveMovement();
-						CompleteControlledOpportunity(
-							dd,
-							runtime,
-							ControlledPtSurveyTargetOutcome.PositiveCaptured,
-							sightStock,
-							mazerootCount,
-							poisonfruitCount);
-						return;
-					}
-
-					if (jointAction == ControlledPtJointCaptureAction.Incomplete)
-					{
-						CompleteControlledJointSampleIncomplete(
-							dd,
-							runtime,
-							trapWitnessAvailable
-								? $"Controlled PT floor {dd->Floor} T witness radius {safeRadius:F1}m did not cover every PalacePal candidate after reaching H room {runtime.ControlledHoardRoomIndex}."
-								: $"Controlled PT floor {dd->Floor} obtained no T visibility witness after reaching H room {runtime.ControlledHoardRoomIndex}.");
-						return;
-					}
-
-					_status = jointAction == ControlledPtJointCaptureAction.WaitForHoardRoomScan
-						? $"Controlled PT: waiting for synchronized scan in H room {runtime.ControlledHoardRoomIndex}"
-						: $"Controlled PT: approaching H room {runtime.ControlledHoardRoomIndex}";
-				}
-				else if (runtime.ControlledSightDispatched &&
-				         DateTime.UtcNow - runtime.ControlledSightDispatchedAt >= TimeSpan.FromSeconds(5))
-				{
-					CompleteControlledJointSampleIncomplete(
-						dd,
-						runtime,
-						$"Controlled PT floor {dd->Floor} did not expose authoritative reveal confirmation after the capture item was dispatched.");
-				}
-				return;
-			}
-
-		}
-
-		private unsafe void CompleteControlledOpportunity(
-			InstanceContentDeepDungeon* dd,
-			FloorRuntime runtime,
-			ControlledPtSurveyTargetOutcome outcome,
-			int sightStock,
-			int mazerootCount,
-			int poisonfruitCount)
-		{
-			var survey = _ctx?.ControlledPtSurvey;
-			if (survey == null || runtime.ControlledOpportunityCompleted)
-				return;
-
-			runtime.ControlledOpportunityCompleted = true;
-			runtime.ControlledPositiveCapturePending = false;
-			runtime.ControlledPositiveMessagePendingIndicator = false;
-			runtime.ControlledDispatchBarrierActive = false;
-			runtime.EvidenceSession?.ObserveControlledOutcome(outcome);
-			if (!PersistControlledFloorBeforeLeave(runtime, $"target-terminal:{outcome}"))
-			{
-				survey.Fail($"Controlled PT floor {dd->Floor} evidence could not be persisted.");
-				survey.RequestSuccessfulLeave();
-				CancelActiveMovement();
-				return;
-			}
-			var decision = ControlledPtSurveyPolicy.DecideFloorAction(
-				dd->Floor,
-				outcome,
-				sightStock,
-				mazerootCount,
-				poisonfruitCount);
-
-			if (!decision.ShouldAbandon)
-			{
-				bool negativeOutcome =
-					outcome is ControlledPtSurveyTargetOutcome.IntuitionNegative or
-						ControlledPtSurveyTargetOutcome.InheritedNoHoardInferred;
-				bool sightCaptureOutcome =
-					(outcome is ControlledPtSurveyTargetOutcome.PositiveCaptured or
-						ControlledPtSurveyTargetOutcome.PositiveJointSampleIncomplete) &&
-					runtime.ControlledCaptureItem == ControlledPtSurveyItemAction.UseSight;
-				if (negativeOutcome || sightCaptureOutcome)
-				{
-					runtime.ControlledPendingPostCapturePoisonfruit = true;
-					ProcessPendingControlledPostCapturePoisonfruit(dd, runtime, poisonfruitCount);
-				}
-				return;
-			}
-
-			survey.RequestSuccessfulLeave();
-			CancelActiveMovement();
-		}
-
-		private unsafe void UpdateControlledCandidateCoverageMovement(
-			InstanceContentDeepDungeon* dd,
-			FloorRuntime runtime)
-		{
-			var player = Service.LocalPlayer;
-			if (player == null)
-			{
-				_status = "Controlled PT: waiting for player before candidate coverage";
-				return;
-			}
-
-			if (!runtime.ControlledCandidateUniverseResolved ||
-			    runtime.ControlledCandidateUniverse.Length == 0)
-			{
-				CancelActiveMovement();
-				_status = "Controlled PT: waiting for candidate universe";
-				return;
-			}
-
-			int playerRoom = RoomGraph.GetLocalPlayerRoomIndex(dd);
-			if (runtime.ControlledHoardRoomTargetReached)
-			{
-				CancelActiveMovement();
-				_status =
-					$"Controlled PT: waiting for synchronized scan in H room {runtime.ControlledHoardRoomIndex}";
-				return;
-			}
-
-			if (runtime.ControlledHoardRoomIndex < 0 ||
-			    !MapPos.TryGetRoomCenter(
-				    dd,
-				    runtime.ControlledHoardRoomIndex,
-				    out var hoardRoomCenter))
-			{
-				CompleteControlledJointSampleIncomplete(
-					dd,
-					runtime,
-					$"Controlled PT floor {dd->Floor} lost the center of H room {runtime.ControlledHoardRoomIndex}.");
-				return;
-			}
-
-			var navigation = _navDriver?.Drive(
-				hoardRoomCenter,
-				player.Position,
-				1.2f,
-				dd,
-				playerRoom,
-				runtime.ControlledHoardRoomIndex) ?? NavDriveResult.Failed;
-			if (navigation == NavDriveResult.Failed)
-			{
-				CompleteControlledJointSampleIncomplete(
-					dd,
-					runtime,
-					$"Controlled PT floor {dd->Floor} could not approach H room {runtime.ControlledHoardRoomIndex}.");
-				return;
-			}
-			if (navigation == NavDriveResult.Arrived)
-			{
-				CancelActiveMovement();
-				runtime.ControlledHoardRoomTargetReached = true;
-				runtime.ControlledHoardRoomTargetRefreshSequence =
-					runtime.ObjectEvidence.Current?.RefreshSequence ??
-					runtime.ObjectEvidence.RefreshCount;
-				runtime.ControlledHoardRoomTargetFullScanCount =
-					runtime.ObjectEvidence.FullScanCount;
-				_status =
-					$"Controlled PT: scanning after reaching H room {runtime.ControlledHoardRoomIndex}";
-				return;
-			}
-
-			_status =
-				$"Controlled PT: approaching H room {runtime.ControlledHoardRoomIndex}";
-		}
-
-		private unsafe void CompleteControlledJointSampleIncomplete(
-			InstanceContentDeepDungeon* dd,
-			FloorRuntime runtime,
-			string reason)
-		{
-			if (_ctx?.ControlledPtSurvey == null || runtime.ControlledOpportunityCompleted)
-				return;
-
-			CancelActiveMovement();
-			Service.Log.Warning($"[ControlledPT] {reason}");
-			RecordReplayEvent("controlled-joint-sample-incomplete", new
-			{
-				floor = dd->Floor,
-				runtime.ControlledHoardRoomIndex,
-				reason
-			});
-			CompleteControlledOpportunity(
-				dd,
-				runtime,
-				ControlledPtSurveyTargetOutcome.PositiveJointSampleIncomplete,
-				_pomanderManager.GetCount(FloorInitPlanner.SightPomanderSlotIndex),
-				_pomanderManager.GetStoneCount(2),
-				_pomanderManager.GetStoneCount(1));
-		}
-
-		private void FailControlledInheritedState(FloorRuntime runtime, string reason)
-		{
-			var survey = _ctx?.ControlledPtSurvey;
-			if (survey == null || runtime.ControlledOpportunityCompleted)
-				return;
-
-			runtime.ControlledOpportunityCompleted = true;
-			runtime.ControlledIntuitionResolutionPending = false;
-			runtime.EvidenceSession?.ObserveControlledOutcome(
-				ControlledPtSurveyTargetOutcome.InheritedStateInconsistent);
-			if (!PersistControlledFloorBeforeLeave(runtime, $"inherited-state-inconsistent:{reason}"))
-				reason += " Evidence persistence also failed.";
-			survey.Fail(reason);
-			survey.RequestSuccessfulLeave();
-			CancelActiveMovement();
-		}
-
-		private bool PersistControlledFloorBeforeLeave(FloorRuntime runtime, string reason)
-		{
-			var evidence = runtime.EvidenceSession;
-			if (evidence == null)
-				return false;
-
-			try
-			{
-				var bundle = evidence.Finalize($"controlled-exit:{reason}");
-				runtime.EvidenceSession = null;
-				return _floorEvidenceJournal?.EnqueueAndWait(bundle, TimeSpan.FromSeconds(2)) == true;
-			}
-			catch (Exception ex)
-			{
-				Service.Log.Error($"[FloorEvidenceJournal] Controlled pre-leave flush failed: {ex}");
-				return false;
-			}
-		}
-
-		private unsafe bool TryUseControlledStrength(
-			InstanceContentDeepDungeon* dd,
-			FloorRuntime runtime)
-		{
-			if (runtime.ControlledStrengthHandled)
-				return false;
-			if (HasLocalPlayerStatus(StrengthStatusId))
-			{
-				runtime.ControlledStrengthHandled = true;
-				return false;
-			}
-			if (!IsPomanderAvailableForFloorUse(FloorInitPlanner.StrengthPomanderSlotIndex) ||
-			    !CanAttemptPomanderUse())
-			{
-				return false;
-			}
-			if (!TryUsePomander(
-				    FloorInitPlanner.StrengthPomanderSlotIndex,
-				    dd,
-				    "controlled combat acceleration",
-				    FloorItemUsePurpose.ControlledStrength))
-			{
-				return false;
-			}
-
-			return true;
-		}
-
-		private unsafe bool TryUseControlledStone(
-			byte stoneId,
-			InstanceContentDeepDungeon* dd,
-			string reason)
-		{
-			return TryDispatchFloorStone(
-				stoneId,
-				dd,
-				reason,
-				stoneId == 2
-					? FloorItemUsePurpose.ControlledReveal
-					: FloorItemUsePurpose.ControlledPoisonfruit);
-		}
-
-		private void RegisterNaturalRevealDispatch(
-			SightResearchRevealResource resource,
-			long sightLogSequenceBeforeDispatch,
-			long mazerootLogSequenceBeforeDispatch)
-		{
-			FloorRuntime? runtime = _floorRuntime;
-			if (_ctx?.ControlledPtSurvey != null ||
-			    runtime == null ||
-			    resource == SightResearchRevealResource.None ||
-			    resource == SightResearchRevealResource.Mazeroot &&
-			    !DungeonCatalog.SupportsNaturalPtStones(runtime.DungeonId))
-			{
-				return;
-			}
-
-			runtime.NaturalRevealDispatched = true;
-			runtime.NaturalRevealResource = resource;
-			if (resource == SightResearchRevealResource.Mazeroot)
-				runtime.NaturalMazerootAttemptedOrAdopted = true;
-			runtime.NaturalSightLogSequenceAtDispatch =
-				sightLogSequenceBeforeDispatch;
-			runtime.NaturalMazerootLogSequenceAtDispatch =
-				mazerootLogSequenceBeforeDispatch;
-			runtime.NaturalRevealConfirmed = false;
-			runtime.NaturalJointScanComplete = false;
-			runtime.ObjectEvidence.Invalidate();
-		}
-
-		private unsafe bool TryUseNaturalMazeroot(
-			InstanceContentDeepDungeon* dd,
-			string reason)
-		{
-			if (_ctx?.ControlledPtSurvey != null ||
-			    !DungeonCatalog.SupportsNaturalPtStones(dd->DeepDungeonId) ||
-			    !DeepDungeonFloorItemUsePolicy.CanUsePtIncense(
-				    dd->DeepDungeonBanId) ||
-			    !CanAttemptPomanderUse() ||
-			    _floorRuntime == null || !EntryIncenseWindowOpen(_floorRuntime) ||
-			    _floorRuntime.NaturalPoisonfruitAttempted ||
-			    GetStoneCountAvailableForFloorUse(2) <= 0)
-			{
-				return false;
-			}
-			if (!CanDispatchNaturalPassageOpeningStoneSafely(dd))
-			{
-				_status = "Waiting to use 敏慧 safely away from the passage";
-				return false;
-			}
-
-			return TryDispatchFloorStone(
-				2,
-				dd,
-				reason,
-				FloorItemUsePurpose.NaturalReveal);
-		}
-
-		private unsafe bool CanDispatchNaturalPassageOpeningStoneSafely(
-			InstanceContentDeepDungeon* dd)
-		{
-			var player = Service.LocalPlayer;
-			if (player == null)
-				return false;
-
-			FloorObjectEvidenceSnapshot? evidence =
-				_floorRuntime?.ObjectEvidence.Current;
-			int playerRoom = RoomGraph.GetLocalPlayerRoomIndex(dd);
-			int passageRoom = RoomGraph.GetPassageRoomIndex(dd);
-			bool roomRelationAvailable =
-				playerRoom >= 0 && passageRoom >= 0;
-			Vector3 passagePosition = default;
-			bool exactPassageAvailable =
-				evidence?.Available == true &&
-				PassageLocator.TryGetPassageActorPosition(
-					evidence,
-					out passagePosition);
-			float distanceSquared = exactPassageAvailable
-				? Vector3.DistanceSquared(
-					player.Position,
-					passagePosition)
-				: 0f;
-			ControlledPtDispatchGateAction decision =
-				ControlledPtSurveyPolicy.DecidePassageDispatchGate(
-					barrierRequired: true,
-					roomRelationAvailable,
-					roomRelationAvailable && playerRoom == passageRoom,
-					exactPassageAvailable,
-					distanceSquared);
-			return decision == ControlledPtDispatchGateAction.Allow;
-		}
-
-		private unsafe bool TryUseNaturalPassageAcceleration(
-			InstanceContentDeepDungeon* dd,
-			FloorRuntime runtime)
-		{
-			if (_ctx?.ControlledPtSurvey != null ||
-			    !DungeonCatalog.SupportsNaturalPtStones(dd->DeepDungeonId) ||
-			    !DeepDungeonFloorItemUsePolicy.CanUsePtIncense(
-				    dd->DeepDungeonBanId) ||
-			    !EntryIncenseWindowOpen(runtime) ||
-			    _ctx?.Duty.PassageOpen == true)
-			{
-				return false;
-			}
-
-			int poisonfruitStock = GetStoneCountAvailableForFloorUse(1);
-			int mazerootStock = GetStoneCountAvailableForFloorUse(2);
-			bool canDispatch = CanAttemptPomanderUse();
-			bool passageDispatchSafe =
-				canDispatch &&
-				CanDispatchNaturalPassageOpeningStoneSafely(dd);
-			var action = NaturalPassageAccelerationPolicy.Decide(
-				new NaturalPassageAccelerationSnapshot(
-					ControlledSurveyActive: _ctx?.ControlledPtSurvey != null,
-					EntryWindowOpen: EntryIncenseWindowOpen(runtime),
-					PassageOpen: _ctx?.Duty.PassageOpen == true,
-					PoisonfruitStock: poisonfruitStock,
-					PoisonfruitAttemptedThisFloor:
-						runtime.NaturalPoisonfruitAttempted,
-					MazerootStock: mazerootStock,
-					MazerootAttemptedOrAdopted:
-						runtime.NaturalMazerootAttemptedOrAdopted,
-					CanDispatch: canDispatch,
-					PassageDispatchSafe: passageDispatchSafe,
-					PtStoneSupported:
-						DungeonCatalog.SupportsNaturalPtStones(
-							dd->DeepDungeonId),
-					PtStoneUsableThisFloor:
-						DeepDungeonFloorItemUsePolicy.CanUsePtIncense(
-							dd->DeepDungeonBanId)));
-			if (action == NaturalPassageAccelerationAction.DispatchMazeroot)
-			{
-				return TryUseNaturalPassageMazeroot(
-					dd,
-					runtime,
-					"ordinary passage acceleration fallback");
-			}
-
-			if (action != NaturalPassageAccelerationAction.DispatchPoisonfruit)
-				return false;
-
-			return TryDispatchFloorStone(
-				1,
-				dd,
-				"ordinary passage acceleration",
-				FloorItemUsePurpose.NaturalPoisonfruit);
-		}
-
-		private unsafe bool TryUseNaturalPassageMazeroot(
-			InstanceContentDeepDungeon* dd,
-			FloorRuntime runtime,
-			string reason)
-		{
-			if (_ctx?.ControlledPtSurvey != null ||
-			    runtime.NaturalMazerootAttemptedOrAdopted ||
-			    !DungeonCatalog.SupportsNaturalPtStones(dd->DeepDungeonId) ||
-			    !DeepDungeonFloorItemUsePolicy.CanUsePtIncense(
-				    dd->DeepDungeonBanId) ||
-			    !CanAttemptPomanderUse() ||
-			    _floorRuntime == null || !EntryIncenseWindowOpen(_floorRuntime) ||
-			    _floorRuntime.NaturalPoisonfruitAttempted ||
-			    GetStoneCountAvailableForFloorUse(2) <= 0)
-			{
-				return false;
-			}
-			if (!CanDispatchNaturalPassageOpeningStoneSafely(dd))
-			{
-				_status = "Waiting to use passage accelerator safely away from the passage";
-				return false;
-			}
-			return TryDispatchFloorStone(
-				2,
-				dd,
-				reason,
-				FloorItemUsePurpose.NaturalPassageMazeroot);
-		}
-
-		private unsafe bool EnsureControlledDispatchOutsidePassage(
-			InstanceContentDeepDungeon* dd,
-			FloorRuntime runtime,
-			bool barrierRequired,
-			string operation)
-		{
-			var player = Service.LocalPlayer;
-			var evidence = runtime.ObjectEvidence.Current;
-			int playerRoom = RoomGraph.GetLocalPlayerRoomIndex(dd);
-			int passageRoom = RoomGraph.GetPassageRoomIndex(dd);
-			bool roomRelationAvailable = playerRoom >= 0 && passageRoom >= 0;
-			Vector3 passagePosition = default;
-			bool exactPassageAvailable =
-				player != null &&
-				evidence?.Available == true &&
-				PassageLocator.TryGetPassageActorPosition(evidence, out passagePosition);
-			float distanceSquared = exactPassageAvailable && player != null
-				? Vector3.DistanceSquared(player.Position, passagePosition)
-				: 0f;
-			var decision = ControlledPtSurveyPolicy.DecidePassageDispatchGate(
-				barrierRequired,
-				roomRelationAvailable,
-				roomRelationAvailable && playerRoom == passageRoom,
-				exactPassageAvailable,
-				distanceSquared);
-			if (decision == ControlledPtDispatchGateAction.Allow)
-			{
-				if (runtime.ControlledDispatchBarrierActive)
-					CancelActiveMovement();
-				runtime.ControlledDispatchBarrierActive = false;
-				runtime.ControlledDispatchRelocationStarted = false;
-				return true;
-			}
-
-			runtime.ControlledDispatchBarrierActive = true;
-			if (decision == ControlledPtDispatchGateAction.WaitForExactPassage || player == null)
-			{
-				CancelActiveMovement();
-				_status = $"Controlled PT: waiting for exact passage position before {operation}";
-				return false;
-			}
-
-			var away = player.Position - passagePosition;
-			away.Y = 0f;
-			if (away.LengthSquared() < 0.01f)
-			{
-				if (!MapPos.TryGetRoomCenter(dd, playerRoom, out var roomCenter))
-				{
-					CancelActiveMovement();
-					_status = $"Controlled PT: cannot resolve relocation direction before {operation}";
-					return false;
-				}
-				away = roomCenter - passagePosition;
-				away.Y = 0f;
-				if (away.LengthSquared() < 0.01f)
-				{
-					CancelActiveMovement();
-					_status = $"Controlled PT: passage relocation direction is degenerate before {operation}";
-					return false;
-				}
-			}
-
-			away = Vector3.Normalize(away);
-			var destination = passagePosition +
-				away * (ControlledPtSurveyPolicy.PassageDispatchExclusionRadius + 1f);
-			destination.Y = player.Position.Y;
-			if (!runtime.ControlledDispatchRelocationStarted)
-			{
-				CancelActiveMovement();
-				runtime.ControlledDispatchRelocationStarted = true;
-			}
-			_navDriver?.Drive(destination, player.Position, 0.4f, dd, playerRoom, playerRoom);
-			_status = $"Controlled PT: relocating away from passage before {operation}";
-			return false;
-		}
-
-		private unsafe void TryUseControlledPoisonfruit(
-			InstanceContentDeepDungeon* dd,
-			FloorRuntime runtime,
-			int poisonfruitCount,
-			string reason)
-		{
-			if (runtime.ControlledPoisonfruitDispatched || poisonfruitCount <= 0 || !CanAttemptPomanderUse())
-				return;
-			TryUseControlledStone(1, dd, reason);
-		}
-
-		private unsafe void ProcessPendingControlledPostCapturePoisonfruit(
-			InstanceContentDeepDungeon* dd,
-			FloorRuntime runtime,
-			int poisonfruitCount)
-		{
-			if (runtime.PendingFloorItemUse?.Purpose ==
-			    FloorItemUsePurpose.ControlledPoisonfruit)
-			{
-				return;
-			}
-
-			var action = ControlledPtSurveyPolicy.DecidePostCaptureAcceleration(
-				runtime.ControlledPendingPostCapturePoisonfruit,
-				runtime.ControlledPoisonfruitDispatched,
-				_ctx?.Duty.PassageOpen == true,
-				poisonfruitCount,
-				CanAttemptPomanderUse());
-			switch (action)
-			{
-				case ControlledPtPostCaptureAccelerationAction.Dispatch:
-					TryUseControlledStone(1, dd, "controlled post-Sight continuation acceleration");
-					break;
-				case ControlledPtPostCaptureAccelerationAction.CompleteWithoutDispatch:
-				case ControlledPtPostCaptureAccelerationAction.None:
-					runtime.ControlledPendingPostCapturePoisonfruit = false;
-					break;
-			}
 		}
 
 		private unsafe FloorEvidenceAcquisitionMode ConsumeFloorEvidenceAcquisitionMode(InstanceContentDeepDungeon* dd)
@@ -2681,7 +561,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			}
 
 			long floorGeneration = ++_nextFloorGeneration;
-			_floorRuntime = new FloorRuntime(
+			_floorRuntime = new FloorExplorationController(
 				floorGeneration,
 				dd->DeepDungeonId,
 				dd->Floor,
@@ -2702,37 +582,48 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 						dd->Floor,
 						floorGeneration,
 						_ctx?.ControlledPtSurvey != null,
-						!isBossFloor));
-			if (_ctx?.ControlledPtSurvey == null &&
-			    runtimeKind == FloorRuntimeKind.Normal)
-			{
-				_floorRuntime.NaturalRevealInventoryBaselineEstablished = true;
-				_floorRuntime.NaturalPreviousSightStock =
-					_pomanderManager.GetCount(
-						FloorInitPlanner.SightPomanderSlotIndex);
-				_floorRuntime.NaturalPreviousMazerootStock =
-					DungeonCatalog.SupportsNaturalPtStones(
-						dd->DeepDungeonId)
-						? _pomanderManager.GetStoneCount(2)
-						: 0;
-			}
+						!isBossFloor),
+                new FloorItemExecutor(_ctx!, _pomanderManager, _chatWatchers, () => _phase,
+                    (checkpoint, force) => RecordNativeIntuitionState(checkpoint, force), RecordReplayEvent),
+                _ctx!, _navHelper!, _navDriver!, _chaseHelper, _pomanderManager, _chatWatchers,
+                _runTelemetryObserver, _passageDestination, () => _phase, value => _phase = value,
+                () => _status, value => _status = value, () => _nativeIntuitionActive,
+                CancelActiveMovement, RecordReplayEvent,
+                (checkpoint, force) => RecordNativeIntuitionState(checkpoint, force),
+                RecordHoardEvidenceWait, EndHoardEvidenceWait, SnapshotRunOptions,
+                () => ++_nextRoomSearchRequestId, ReadMobForbiddenZoneCount, ReadBossMovementDiagnostics,
+                RecordPassageExitDelayedByCombat, RecordChaseTargetEvent,
+                RecordChaseAcquisitionFailure, RecordPassageNavigationEvent,
+                () => _lastChaseAcquisitionFailureKey = string.Empty, RecordNativeIntuitionState);
+            _floorRuntime.AttachBoss(new FloorBossController(dd->Floor, _ctx!, _navHelper!,
+                _pomanderManager, _floorRuntime.Items, _terminalRooms, _pt30DivineFavorFlashHelper,
+                _pt50ChaseOutputGuard, (operation, objective) => _floorRuntime.RequireMovementPermission(operation, objective),
+                value => _status = value, RecordReplayEvent, RecordBossCombatSnapshot));
+            _floorRuntime.AttachSurvey(new FloorSurveyController(
+                _floorRuntime.Generation, _floorRuntime.DungeonId, _floorRuntime.Floor, !isBossFloor,
+                _floorRuntime.ReadyAtUtc, normalGraph, _floorRuntime.ObjectEvidence, _floorRuntime.Items,
+                _ctx!, _floorRuntime.Executor, _pomanderManager, _chatWatchers, _navDriver, _floorEvidenceJournal,
+                () => _phase, () => _nativeIntuitionActive, () => _status, value => _status = value,
+                CancelActiveMovement, RecordReplayEvent, _floorRuntime.RequestPlanRefresh, _floorRuntime.HandleNoHoardEvidenceInvalidated,
+                outcome => EndHoardEvidenceWait(outcome), _floorRuntime.NavigateToRoom));
+            _floorRuntime.Survey.InitializeNaturalInventory();
 			if (runtimeKind == FloorRuntimeKind.Normal)
 			{
 				try
 				{
 					var acquisitionMode = ConsumeFloorEvidenceAcquisitionMode(dd);
 					var roomBindings = FloorEvidenceSession.BuildRoomBindings(dd, normalGraph!.ReachableRooms);
-					_floorRuntime.EvidenceSession = new FloorEvidenceSession(
+					_floorRuntime.Survey.OpenEvidenceSession(new FloorEvidenceSession(
 						FsdEngineIdentity.InformationalVersion,
 						dd->DeepDungeonId,
 						dd->Floor,
 						Service.ClientState.TerritoryType,
 						dd->ActiveLayoutIndex,
 						acquisitionMode,
-						roomBindings);
+						roomBindings));
 					if (_ctx?.ControlledPtSurvey is { } controlled)
 					{
-						_floorRuntime.EvidenceSession.ConfigureControlledSurvey(
+						_floorRuntime.Survey.EvidenceSession!.ConfigureControlledSurvey(
 							ControlledPtSurveyPolicy.IsResearchFloor(dd->Floor)
 								? ControlledSurveyFloorRole.SelectedTarget
 								: ControlledSurveyFloorRole.Transit,
@@ -2747,35 +638,31 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			_lastObjectEvidenceTelemetryAt = DateTime.MinValue;
 			_lastObjectEvidenceUnavailableAt = DateTime.MinValue;
 			_phase = isBossFloor ? FloorPhase.BossFloor : FloorPhase.FloorSetup;
-			_taskRunner?.Reset();
+			_floorRuntime?.ResetTaskRunner();
 			_navDriver?.Cancel();
 			_chaseHelper.Reset();
-			ResetPatrolPlan();
-			ResetPermissionBlocks();
+			_floorRuntime?.ResetPatrolPlan();
+			_floorRuntime?.ResetPermissionBlocks();
 			_ctx?.ClearPreferredAggroTarget();
-			PlanningState.LastKnownHoardCount = dd->HoardCount;
-			_nextPomanderUseAt = DateTime.MinValue;
+			PlanningState.ObserveHoardCount(dd->HoardCount);
 			_lastGraphPendingFloor = 255;
 			_lastGraphPendingDungeonId = 0;
 			_lastPassageExitDelayEventAt = DateTime.MinValue;
 			_lastChaseAcquisitionFailureKey = string.Empty;
-			ResetEngagedTargetProgress();
+			_floorRuntime?.ResetEngagedTargetProgress();
 			bool controlledFirstFloor =
 				_ctx?.ControlledPtSurvey != null &&
 				!isBossFloor &&
 				dd->Floor == ControlledPtSurveyPolicy.FirstFloor;
-			_floorRuntime.ControlledIntuitionRequiresCurrentUse =
-				controlledFirstFloor ||
-				controlledNativeGate == ControlledPtInheritedNativeGateAction.ReactivateWithCurrentUse;
+			_floorRuntime!.Survey.ConfigureCurrentIntuitionUse(controlledFirstFloor ||
+                controlledNativeGate == ControlledPtInheritedNativeGateAction.ReactivateWithCurrentUse);
 			_chatWatchers?.BeginReadyFloor(
 				controlledFirstFloor
 					? false
 					: !isBossFloor && _nativeIntuitionActive);
 			if (!controlledFirstFloor && !isBossFloor && _nativeIntuitionActive)
 			{
-				_floorRuntime.InheritedIntuitionArmedAtMilliseconds = Environment.TickCount64;
-				_floorRuntime.InheritedIntuitionAttemptId =
-					_chatWatchers?.ExpectInheritedIntuitionResult(dd->Floor) ?? 0;
+				_floorRuntime.Survey.BeginInheritedIntuition();
 			}
 			_pt30DivineFavorFlashHelper?.Reset();
 			_pt50ChaseOutputGuard?.Reset();
@@ -2861,11 +748,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			var previousFloor = runtime.Floor;
 			var previousRuntimeKind = runtime.Kind.ToString();
 			var previousGeneration = runtime.Generation;
-			if (runtime.EvidenceSession != null)
+			if (runtime.Survey.EvidenceSession != null)
 			{
 				try
 				{
-					_floorEvidenceJournal?.Enqueue(runtime.EvidenceSession.Finalize(reason));
+					_floorEvidenceJournal?.Enqueue(runtime.Survey.EvidenceSession.Finalize(reason));
 				}
 				catch (Exception ex)
 				{
@@ -2873,24 +760,23 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				}
 			}
 			EndHoardEvidenceWait(reason);
-			PreemptActiveObjectiveExecutions($"FloorRuntimeDestroyed:{reason}");
-			EndActiveWaypointTelemetry(
+			_floorRuntime?.PreemptActiveObjectiveExecutions($"FloorRuntimeDestroyed:{reason}");
+			_floorRuntime?.EndActiveWaypointTelemetry(
 				RunWaypointTerminalOutcome.Aborted,
 				$"FloorRuntimeDestroyed:{reason}");
 			CancelActiveMovement();
 			ObserveFloorTerminalTelemetry(runtime, reason);
 			ObserveFloorTelemetryBoundary(runtime, reason);
-			_chatWatchers?.CancelExpectedIntuitionResult(runtime.InheritedIntuitionAttemptId);
-			if (runtime.PendingFloorItemUse is { } pendingFloorItemUse)
-				CancelPendingIntuitionAttempt(pendingFloorItemUse);
+			_chatWatchers?.CancelExpectedIntuitionResult(runtime.Survey.InheritedIntuitionAttemptId);
+			if (runtime.ItemUse.Pending is { } pendingFloorItemUse)
+				runtime.Items.CancelPendingIntuitionAttempt(pendingFloorItemUse);
 			runtime.Dispose();
 			_floorRuntime = null;
 			_phase = FloorPhase.FloorSetup;
 			_chaseHelper.Reset();
-			ResetPatrolPlan();
-			ResetPermissionBlocks();
+			_floorRuntime?.ResetPatrolPlan();
+			_floorRuntime?.ResetPermissionBlocks();
 			_ctx?.ClearPreferredAggroTarget();
-			_nextPomanderUseAt = DateTime.MinValue;
 			_lastGraphPendingFloor = 255;
 			_lastGraphPendingDungeonId = 0;
 			_pt30DivineFavorFlashHelper?.Reset();
@@ -2917,416 +803,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				return false;
 
 			return true;
-		}
-
-		private void RequestPlanRefresh(string reason)
-		{
-			var runtime = _floorRuntime;
-			if (runtime == null || runtime.Kind != FloorRuntimeKind.Normal || runtime.IsDisposed)
-				return;
-
-			PlanningState.RefreshRequested = true;
-			PlanningState.PendingEvidenceVersion++;
-			PlanningState.PendingEvidenceFloor = runtime.Floor;
-			PlanningState.PendingEvidenceDungeonId = runtime.DungeonId;
-			PlanningState.PendingEvidenceReason = reason;
-		}
-
-		private void ObserveFloorRuntimeNativeIntuitionEdge(FloorRuntime runtime)
-		{
-			if (runtime.Kind != FloorRuntimeKind.Normal || runtime.IsDisposed)
-				return;
-
-			if (!runtime.NativeIntuitionActive.HasValue)
-			{
-				runtime.NativeIntuitionActive = _nativeIntuitionActive;
-				return;
-			}
-
-			bool previous = runtime.NativeIntuitionActive.Value;
-			if (!ReadyFloorIntuitionPlanner.ShouldRequestPlanRefresh(previous, _nativeIntuitionActive))
-				return;
-
-			runtime.NativeIntuitionActive = _nativeIntuitionActive;
-			string reason = _nativeIntuitionActive
-				? "native-intuition-activated"
-				: "native-intuition-deactivated";
-			RequestPlanRefresh(reason);
-			RecordReplayEvent("native-intuition-edge", new
-			{
-				floor = runtime.Floor,
-				floorGeneration = runtime.Generation,
-				previous,
-				current = _nativeIntuitionActive,
-				reason
-			});
-		}
-
-		private void MarkPlanRefreshConsumed(long consumedVersion)
-		{
-			var runtime = _floorRuntime;
-			if (runtime != null &&
-			    runtime.Kind == FloorRuntimeKind.Normal &&
-			    !runtime.IsDisposed &&
-			    runtime.Floor == PlanningState.PendingEvidenceFloor &&
-			    runtime.DungeonId == PlanningState.PendingEvidenceDungeonId)
-			{
-				var acknowledgement = LateHoardEvidencePlanner.AcknowledgeVersion(
-					PlanningState.PendingEvidenceVersion,
-					PlanningState.ReconciledEvidenceVersion,
-					consumedVersion);
-				PlanningState.ReconciledEvidenceVersion = acknowledgement.ReconciledVersion;
-				PlanningState.RefreshRequested = acknowledgement.RefreshPending;
-			}
-		}
-
-		private unsafe bool TryReconcileDelayedHoardEvidence(InstanceContentDeepDungeon* dd, FloorRuntime runtime)
-		{
-			if (runtime.IsDisposed ||
-			    runtime.Kind != FloorRuntimeKind.Normal ||
-			    _phase != FloorPhase.FloorActive ||
-			    HasActiveSearchExecution() ||
-			    _executor == null)
-			{
-				return false;
-			}
-
-			var now = DateTime.UtcNow;
-			if (now >= PlanningState.NextLateEvidencePollAt)
-			{
-				PlanningState.NextLateEvidencePollAt = now.Add(GeneralTickInterval);
-				if (!RefreshCachedHoardIndicator(dd))
-				{
-					_status = "Waiting for hoard indicator evidence...";
-					return true;
-				}
-			}
-
-			bool matchesCurrentFloor =
-				PlanningState.PendingEvidenceFloor == runtime.Floor &&
-				PlanningState.PendingEvidenceDungeonId == runtime.DungeonId;
-			var gate = LateHoardEvidencePlanner.Decide(new LateHoardEvidenceSnapshot
-			{
-				PendingVersion = PlanningState.PendingEvidenceVersion,
-				ReconciledVersion = PlanningState.ReconciledEvidenceVersion,
-				StableNormalFloor = true,
-				EvidenceMatchesCurrentFloor = matchesCurrentFloor,
-				FloorActiveAllowsReplan = true,
-				MandatoryHoardWorkResolved = _executor.IsHoardWorkResolved,
-				RefreshedPlan = Array.Empty<RoomPlanEntry>()
-			});
-			if (!gate.ShouldRegeneratePlan)
-			{
-				if (PlanningState.PendingEvidenceVersion > PlanningState.ReconciledEvidenceVersion && !matchesCurrentFloor)
-				{
-					PlanningState.ReconciledEvidenceVersion = PlanningState.PendingEvidenceVersion;
-					PlanningState.RefreshRequested = false;
-					RecordReplayEvent("late-hoard-evidence-ignored", new
-					{
-						floor = runtime.Floor,
-						floorGeneration = runtime.Generation,
-						dungeonId = runtime.DungeonId,
-						evidenceFloor = PlanningState.PendingEvidenceFloor,
-						evidenceDungeonId = PlanningState.PendingEvidenceDungeonId,
-						evidenceVersion = PlanningState.PendingEvidenceVersion,
-						reason = "noncurrent-floor"
-					});
-				}
-				return false;
-			}
-
-			var player = Service.LocalPlayer;
-			var normalGraph = runtime.NormalGraph;
-			if (player == null || normalGraph == null)
-				return false;
-
-			long evidenceVersion = PlanningState.PendingEvidenceVersion;
-			string evidenceReason = PlanningState.PendingEvidenceReason;
-			_executor.GeneratePlan(dd, normalGraph, _chatWatchers, player.Position, _nativeIntuitionActive);
-			if (!_executor.HasPlanningSnapshot)
-			{
-				_status = "Waiting for floorset or player-room evidence...";
-				return true;
-			}
-
-			bool bandedEligible = _executor.ConfigSnapshot.BandedEnabled && !_executor.HasOpenedHoardThisFloor;
-			Vector3? visibleBanded = null;
-			if (bandedEligible && !BandedChestLocator.TryFindNearestToPlayer(runtime.ObjectEvidence.Current!, out visibleBanded))
-			{
-				_status = "Waiting for banded chest evidence...";
-				return true;
-			}
-			bool pendingBanded = bandedEligible &&
-				(_searchExecutionKind == SearchExecutionKind.BandedReentry ||
-				 _activeWaypoint?.Type == RoomObjectiveType.ChestBanded ||
-				 _executor.HasPendingBandedWaypoint);
-			var decision = LateHoardEvidencePlanner.Decide(new LateHoardEvidenceSnapshot
-			{
-				PendingVersion = evidenceVersion,
-				ReconciledVersion = PlanningState.ReconciledEvidenceVersion,
-				StableNormalFloor = true,
-				EvidenceMatchesCurrentFloor = true,
-				FloorActiveAllowsReplan = true,
-				MandatoryHoardWorkResolved = _executor.IsHoardWorkResolved,
-				PendingOrVisibleBandedWork = pendingBanded || visibleBanded.HasValue,
-				RefreshedPlan = _executor.SnapshotPlannedRoute()
-			});
-
-			bool startedVisibleBanded = false;
-			if (decision.ShouldResumeHoardWork && visibleBanded.HasValue)
-			{
-				int bandedRoom = RoomGraph.GetRoomIndexForPosition(
-					dd,
-					visibleBanded.Value,
-					normalGraph.ReachableRooms,
-					-1);
-				if (bandedRoom < 0)
-				{
-					_status = "Waiting to resolve visible banded chest room...";
-					return true;
-				}
-				_executor.ClearRoomContext();
-				startedVisibleBanded = _executor.StartBandedOnlyRoomSearch(dd, bandedRoom, player.Position, visibleBanded.Value);
-				if (!startedVisibleBanded && !decision.HasRequiredHoardWork)
-				{
-					CancelActiveMovement();
-					_status = "Visible banded chest could not be queued";
-					RecordReplayEvent("late-hoard-evidence-reconcile-failed", new
-					{
-						floor = runtime.Floor,
-						floorGeneration = runtime.Generation,
-						phase = _phase.ToString(),
-						evidenceVersion,
-						evidenceReason,
-						bandedRoom,
-						reason = "visible-banded-room-search-build-failed"
-					});
-					return true;
-				}
-			}
-
-			MarkPlanRefreshConsumed(evidenceVersion);
-			if (decision.BlockUnroutableMandatoryWork)
-			{
-				_status = $"Waiting for mandatory hoard evidence ({_executor.HoardEvidenceState})";
-				RecordHoardEvidenceWait("late-hoard-evidence-waiting-unresolved");
-				RecordReplayEvent("late-hoard-evidence-reconciled", new
-				{
-					floor = runtime.Floor,
-					floorGeneration = runtime.Generation,
-					phase = _phase.ToString(),
-					evidenceVersion,
-					evidenceReason,
-					hoardEvidenceState = _executor.HoardEvidenceState.ToString(),
-					reason = "non-routable-mandatory-work"
-				});
-				return true;
-			}
-
-			if (!decision.ShouldResumeHoardWork)
-			{
-				RecordReplayEvent("late-hoard-evidence-reconciled", new
-				{
-					floor = runtime.Floor,
-					floorGeneration = runtime.Generation,
-					phase = _phase.ToString(),
-					evidenceVersion,
-					evidenceReason,
-					hoardEvidenceState = _executor.HoardEvidenceState.ToString(),
-					reason = "no-required-hoard-work"
-				});
-				return false;
-			}
-
-			CancelActiveMovement();
-			ResetPatrolPlan();
-			_ctx?.ClearPreferredAggroTarget();
-			_chaseHelper.Reset();
-			_activeWaypoint = null;
-			_searchExecutionKind = startedVisibleBanded
-				? SearchExecutionKind.BandedReentry
-				: SearchExecutionKind.PlannedRoom;
-			if (startedVisibleBanded)
-				ClearPostRoomPomanderRetry();
-			_status = startedVisibleBanded
-				? "Late hoard evidence revealed a banded chest"
-				: "Late hoard evidence reopened search";
-			string reentryReason = startedVisibleBanded
-				? "visible-banded-work"
-				: pendingBanded
-					? "pending-banded-work"
-					: "required-hoard-work";
-			RecordReplayEvent("late-hoard-evidence-reconciled", new
-			{
-				floor = runtime.Floor,
-				floorGeneration = runtime.Generation,
-				evidenceVersion,
-				evidenceReason,
-				hoardEvidenceState = _executor.HoardEvidenceState.ToString(),
-				reason = reentryReason
-			});
-			RecordReplayEvent("floor-active-mechanic-selected", new
-			{
-				mechanic = "Search",
-				reason = $"late-hoard-evidence-{reentryReason}"
-			});
-			return true;
-		}
-
-		private unsafe void UpdateFloorSetup(InstanceContentDeepDungeon* dd)
-		{
-			var player = Service.LocalPlayer;
-			if (player == null)
-			{
-				_status = "Waiting for player position";
-				return;
-			}
-
-			if (_ctx!.Duty.IsBossFloor)
-			{
-				_phase = FloorPhase.BossFloor;
-				_status = "Boss floor";
-				Service.Log.Info("[FloorPhase] Boss floor detected -> BossFloor");
-				return;
-			}
-
-			ResolveCurrentFloorIntuitionTimeoutIfNeeded(dd);
-
-			var normalGraph = _floorRuntime?.NormalGraph;
-			if (normalGraph == null)
-			{
-				_status = "Waiting for room graph...";
-				return;
-			}
-
-			if (_floorRuntime is
-			    {
-				    InheritedIntuitionAttemptId: > 0,
-				    InheritedIntuitionDecision: null
-			    })
-			{
-				_status = "Waiting for inherited Intuition result";
-				return;
-			}
-
-			if (_ctx?.ControlledPtSurvey != null)
-			{
-				if (!PlanningState.SetupPlanGenerated)
-				{
-					if (!ShouldRunGeneralTick())
-						return;
-
-					_executor!.ResetForFloor(dd, SnapshotRunOptions());
-					PlanningState.LastKnownHoardCount = dd->HoardCount;
-					PlanningState.SetupPlanGenerated = true;
-				}
-
-				if (_floorRuntime?.ControlledIntuitionResolved != true)
-				{
-					_status = "Controlled PT: waiting for terminal Intuition semantics";
-					return;
-				}
-
-				_phase = FloorPhase.FloorActive;
-				_status = "Controlled PT floor active";
-				RecordReplayEvent("floor-lifecycle-transition", new
-				{
-					from = FloorPhase.FloorSetup.ToString(),
-					to = FloorPhase.FloorActive.ToString(),
-					reason = "controlled-intuition-terminal"
-				});
-				return;
-			}
-
-			if (!PlanningState.SetupPlanGenerated)
-			{
-				if (!ShouldRunGeneralTick())
-					return;
-
-				_executor!.ResetForFloor(dd, SnapshotRunOptions());
-				PlanningState.LastKnownHoardCount = dd->HoardCount;
-                if (_floorRuntime is { } entryRuntime && EntryIncenseWindowOpen(entryRuntime) &&
-                    _ctx!.Duty.PassageOpen != true && !entryRuntime.NaturalPoisonfruitAttempted &&
-                    !entryRuntime.NaturalMazerootAttemptedOrAdopted &&
-                    DeepDungeonFloorItemUsePolicy.CanUsePtIncense(dd->DeepDungeonBanId) &&
-                    (GetStoneCountAvailableForFloorUse(1) > 0 || GetStoneCountAvailableForFloorUse(2) > 0))
-                {
-                    if (entryRuntime.PendingFloorItemUse != null || !CanAttemptPomanderUse())
-                    {
-                        _status = "Preparing entry incense before exploration";
-                        return;
-                    }
-                    if (TryUseNaturalPassageAcceleration(dd, entryRuntime))
-                        return;
-                }
-				TryUseFloorInitPomander(dd);
-				if (_floorRuntime?.PendingFloorItemUse is
-				    {
-					    BlocksFloorSetup: true
-				    } pendingFloorItemUse)
-				{
-					_status =
-						$"Waiting for {pendingFloorItemUse.Key.Kind} {pendingFloorItemUse.Key.ItemId} use confirmation";
-					return;
-				}
-				if (!RefreshCachedHoardIndicator(dd))
-				{
-					_status = "Waiting for hoard indicator evidence...";
-					return;
-				}
-				long evidenceVersion = PlanningState.PendingEvidenceVersion;
-				_executor.GeneratePlan(dd, normalGraph, _chatWatchers, player.Position, _nativeIntuitionActive);
-				MarkPlanRefreshConsumed(evidenceVersion);
-				PlanningState.SetupPlanGenerated = _executor.HasPlanningSnapshot;
-				if (!PlanningState.SetupPlanGenerated)
-				{
-					_status = "Waiting for floor planning evidence...";
-					return;
-				}
-				RecordNativeIntuitionState("first-floor-plan-generated", force: true, nativeStateAvailable: true, nativeIntuitionActive: _nativeIntuitionActive);
-				RecordReplayEvent("floor-plan-generated", BuildPlanReplayPayload(dd->Floor, "floor-setup-generated"));
-				PublishInitialRunFloorState(dd, player.Position);
-			}
-			else
-			{
-				if (!RefreshCachedHoardIndicator(dd))
-				{
-					_status = "Waiting for hoard indicator evidence...";
-					return;
-				}
-				if (PlanningState.RefreshRequested)
-				{
-					long evidenceVersion = PlanningState.PendingEvidenceVersion;
-					_executor!.GeneratePlan(dd, normalGraph, _chatWatchers, player.Position, _nativeIntuitionActive);
-					MarkPlanRefreshConsumed(evidenceVersion);
-					RecordReplayEvent("floor-plan-regenerated-evidence", BuildPlanReplayPayload(dd->Floor, "floor-setup-evidence-refresh"));
-				}
-			}
-
-			var executor = _executor;
-			if (executor == null)
-			{
-				_status = "Waiting for floor executor...";
-				return;
-			}
-
-			if (executor.HoardEvidenceState == HoardEvidenceState.IntuitionPending ||
-			    (executor.IsComplete && !executor.IsHoardWorkResolved))
-			{
-				_status = $"Waiting for hoard evidence ({executor.HoardEvidenceState})";
-				RecordHoardEvidenceWait("floor-setup-waiting-hoard-evidence");
-				return;
-			}
-			EndHoardEvidenceWait("floor-setup-wait-ended", "floor-setup-waiting-hoard-evidence");
-
-			_phase = FloorPhase.FloorActive;
-			_status = executor.IsComplete ? "Floor active" : "Starting floor objective";
-			RecordReplayEvent("floor-lifecycle-transition", new
-			{
-				from = FloorPhase.FloorSetup.ToString(),
-				to = FloorPhase.FloorActive.ToString(),
-				reason = executor.IsComplete ? "floor-ready-no-initial-route" : "floor-ready-plan-available"
-			});
 		}
 
 		private string BuildRecorderSessionName()
@@ -3360,7 +836,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 			if (info.EvidenceAccepted &&
 			    (info.Reason is "LogMessage7272" or "LogMessage7273") &&
-			    _floorRuntime?.PendingFloorItemUse is
+			    _floorRuntime?.ItemUse.Pending is
 			    {
 				    Key:
 				    {
@@ -3370,27 +846,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			    } pendingIntuitionUse &&
 			    pendingIntuitionUse.IntuitionAttemptId == info.EvidenceAttemptId)
 			{
-				pendingIntuitionUse.AuthoritativeConfirmationObserved = true;
+				pendingIntuitionUse.ObserveAuthoritativeConfirmation();
 			}
 
-			var inheritedRuntime = _floorRuntime;
-			bool inheritedMessage =
-				info.Reason is "LogMessage7272" or "LogMessage7273" or
-					"LogMessage7272Rejected" or "LogMessage7273Rejected";
-			if (inheritedMessage &&
-			    info.EvidenceExpectationKind == IntuitionEvidenceExpectationKind.InheritedFloorResult &&
-			    inheritedRuntime is { IsDisposed: false } &&
-			    inheritedRuntime.Kind == FloorRuntimeKind.Normal &&
-			    inheritedRuntime.InheritedIntuitionDecision == null &&
-			    inheritedRuntime.InheritedIntuitionAttemptId == info.EvidenceAttemptId &&
-			    inheritedRuntime.Floor == info.EvidenceTargetFloor)
-			{
-				inheritedRuntime.InheritedIntuitionEvidence = !info.EvidenceAccepted
-					? InheritedIntuitionEvidenceKind.Rejected
-					: info.Reason == "LogMessage7272"
-						? InheritedIntuitionEvidenceKind.HoardPresent
-						: InheritedIntuitionEvidenceKind.NoHoard;
-			}
+			_floorRuntime?.Survey.ObserveInheritedMessage(info);
 
 			RecordReplayEvent("chat-watchers-state", info);
 			uint semanticMessageId = info.Reason switch
@@ -3401,15 +860,15 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				_ => 0
 			};
 			if (semanticMessageId != 0)
-				_floorRuntime?.EvidenceSession?.ObserveSemanticMessage(semanticMessageId, info.EvidenceAccepted);
+				_floorRuntime?.Survey.EvidenceSession?.ObserveSemanticMessage(semanticMessageId, info.EvidenceAccepted);
 
 			switch (info.Reason)
 			{
 				case "GoldChestOvercapObserved":
-					HandleGoldChestOvercapObserved(info.GoldChestOvercapSlotIndex);
+					_floorRuntime?.HandleGoldChestOvercapObserved(info.GoldChestOvercapSlotIndex);
 					break;
 				case "SilverChestOvercapObserved":
-					HandleSilverChestOvercapObserved(info.SilverChestOvercapDemicloneRowId);
+					_floorRuntime?.HandleSilverChestOvercapObserved(info.SilverChestOvercapDemicloneRowId);
 					break;
 				case "LogMessage7272":
 					PendingIntuition.TryMarkResolved(info.EvidenceAttemptId);
@@ -3435,148 +894,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				RecordNativeIntuitionState($"chat-{info.Reason}", force: true);
 				EndHoardEvidenceWait(info.Reason);
 			}
-		}
-
-		private void ResolveInheritedIntuition(FloorRuntime runtime)
-		{
-			if (runtime.Kind != FloorRuntimeKind.Normal ||
-			    runtime.IsDisposed ||
-			    runtime.InheritedIntuitionAttemptId <= 0 ||
-			    runtime.InheritedIntuitionDecision.HasValue)
-			{
-				return;
-			}
-
-			int elapsedMilliseconds = (int)Math.Clamp(
-				Environment.TickCount64 - runtime.InheritedIntuitionArmedAtMilliseconds,
-				0L,
-				int.MaxValue);
-			var decision = InheritedIntuitionResolutionPlanner.Decide(
-				runtime.InheritedIntuitionEvidence,
-				elapsedMilliseconds,
-				CurrentIntuitionResolutionWindowMilliseconds);
-			if (!decision.Terminal)
-				return;
-
-			_chatWatchers?.CancelExpectedIntuitionResult(runtime.InheritedIntuitionAttemptId);
-			runtime.InheritedIntuitionDecision = decision;
-			runtime.EvidenceSession?.ObserveInheritedIntuitionResolution(
-				decision.Source,
-				decision.ElapsedMilliseconds,
-				CurrentIntuitionResolutionWindowMilliseconds);
-
-			if (decision.NoHoard)
-			{
-				_executor?.MarkInheritedNoHoardInferred();
-				if (HandleNoHoardEvidenceInvalidated("inherited-no-hoard-inferred"))
-					RequestPlanRefresh("inherited-no-hoard-inferred");
-			}
-			else if (decision.HoardPresent)
-			{
-				runtime.ObjectEvidence.Invalidate();
-				RequestPlanRefresh("inherited-hoard-present");
-			}
-			else if (decision.IsError)
-			{
-				Service.Log.Error(
-					$"[FloorPhase] Inherited Intuition protocol anomaly on floor {runtime.Floor}: {decision.Source}.");
-			}
-
-			RecordReplayEvent("inherited-intuition-resolved", new
-			{
-				floor = runtime.Floor,
-				floorGeneration = runtime.Generation,
-				dungeonId = runtime.DungeonId,
-				attemptId = runtime.InheritedIntuitionAttemptId,
-				source = decision.Source.ToString(),
-				decision.HoardPresent,
-				decision.NoHoard,
-				decision.IsError,
-				decision.ElapsedMilliseconds,
-				windowMilliseconds = CurrentIntuitionResolutionWindowMilliseconds
-			});
-			EndHoardEvidenceWait($"inherited-intuition:{decision.Source}");
-		}
-
-		private unsafe bool ResolveCurrentFloorIntuitionTimeoutIfNeeded(InstanceContentDeepDungeon* dd)
-		{
-			if (dd == null || _chatWatchers == null)
-				return false;
-
-			if (!PendingIntuition.TryGetCurrentFloorUseElapsedMilliseconds(dd->Floor, DateTime.UtcNow, out var elapsedMilliseconds))
-				return false;
-
-			var decision = CurrentIntuitionResolutionPlanner.Decide(new CurrentIntuitionResolutionSnapshot
-			{
-				UsedIntuitionThisFloor = _chatWatchers.UsedIntuitionThisFloor,
-				ChatSaysHoard = _chatWatchers.ChatSaysHoard,
-				ChatSaysNoHoard = _chatWatchers.ChatSaysNoHoard,
-				ElapsedMillisecondsSinceUse = elapsedMilliseconds,
-				ResolutionWindowMilliseconds = CurrentIntuitionResolutionWindowMilliseconds
-			});
-
-			if (decision.Kind != CurrentIntuitionResolutionKind.Wait ||
-			    decision.RemainingWaitMilliseconds > 0 ||
-			    !PendingIntuition.TryMarkOverdueRecorded())
-			{
-				return false;
-			}
-
-			RecordReplayEvent("current-intuition-evidence-overdue", new
-			{
-				floor = dd->Floor,
-				windowMilliseconds = CurrentIntuitionResolutionWindowMilliseconds,
-				reason = "authoritative-7272-or-7273-still-required"
-			});
-			return false;
-		}
-
-		private bool HandleNoHoardEvidenceInvalidated(string reason)
-		{
-			var currentPlanEntry = _executor?.CurrentPlanEntry;
-			bool activeChestObjective =
-				_floorRuntime?.ActiveExecution?.ObjectiveRecords.Any(
-					execution => execution.Category == RoomObjectiveCategory.Chests) == true;
-			var decision = HoardWorkInvalidationPlanner.Decide(new HoardWorkInvalidationSnapshot
-			{
-				NoHoardEvidenceActive = true,
-				HasCachedHoardIndicator = _executor?.CachedHoardIndicatorPos.HasValue == true,
-				ActiveWaypointPresent = _activeWaypoint.HasValue,
-				ActiveWaypointIsTrap = _activeWaypoint?.Type == RoomObjectiveType.Trap,
-				CurrentPlanShouldProbeHoard = currentPlanEntry?.ShouldProbeHoard == true,
-				CurrentPlanShouldSearchChests = currentPlanEntry?.ShouldSearchChests == true,
-				ActiveChestObjectivePresent = activeChestObjective,
-				CurrentPlanShouldVisitForIntel = currentPlanEntry?.ShouldVisitForIntel == true
-			});
-
-			if (decision.ClearCachedIndicator && _executor?.ClearCachedHoardIndicator() == true)
-			{
-				RecordReplayEvent("cached-hoard-indicator-cleared", new
-				{
-					reason
-				});
-			}
-
-			if (decision.AbortActiveHoardWork)
-			{
-				int roomIndex = _executor?.RoomContext?.RoomIndex ?? currentPlanEntry?.RoomIndex ?? -1;
-				var objectiveOutcome = new RoomObjectiveOutcomeResult(
-					decision.HoardOutcome,
-					decision.ChestsOutcome,
-					decision.IntelOutcome);
-				if (!TryApplyActiveObjectiveOutcomes(roomIndex, objectiveOutcome, reason))
-					return true;
-				CancelActiveMovement();
-				_executor?.ClearRoomContext();
-				ClearRoomIntelSettle();
-				_status = "No-hoard evidence invalidated hoard work";
-				RecordReplayEvent("hoard-work-aborted-by-no-hoard", new
-				{
-					reason
-				});
-			}
-
-			return decision.RequestPlanRefresh;
 		}
 
 		private void RecordHoardEvidenceWait(string eventType, int? remainingWaitMilliseconds = null)
@@ -3729,52 +1046,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			});
 		}
 
-		private object BuildPlanReplayPayload(byte floor, string reason, int? roomIndex = null)
-		{
-			var plan = _executor?.PlannedRoute ?? Array.Empty<RoomPlanEntry>();
-			var trace = _executor?.LastPlanTrace ?? default;
-			return new
-			{
-				floor,
-				reason,
-				roomIndex,
-				phase = _phase.ToString(),
-				status = _status,
-				hoardEvidenceState = _executor?.HoardEvidenceState.ToString() ?? string.Empty,
-				currentTargetRoomIndex = _executor?.CurrentTargetRoomIndex,
-				planCount = plan.Count,
-				roomPlan = plan.Select(entry => new
-				{
-					entry.RoomIndex,
-					entry.ShouldProbeHoard,
-					entry.ShouldSearchChests,
-					entry.ShouldVisitForIntel,
-					hoardEvidenceState = entry.HoardEvidenceState.ToString()
-				}).ToArray(),
-				candidates = trace.Candidates?.Select(candidate => new
-				{
-					candidate.RoomIndex,
-					candidate.Eligible,
-					candidate.ShouldProbeHoard,
-					candidate.ShouldSearchChests,
-					candidate.ShouldVisitForIntel,
-					hoardEvidenceState = candidate.HoardEvidenceState.ToString(),
-					candidate.BasePriority,
-					candidate.Reason
-				}).ToArray() ?? [],
-				selections = trace.Selections?.Select(selection => new
-				{
-					selection.Step,
-					selection.FromRoomIndex,
-					selection.SelectedRoomIndex,
-					selection.Distance,
-					selection.PassageDistance,
-					selection.BasePriority
-				}).ToArray() ?? [],
-				rejectionReason = trace.RejectionReason ?? string.Empty
-			};
-		}
-
 		private void ObserveDutyTransitionState(byte currentFloor, bool isTransitioning)
 		{
 			if (isTransitioning == _wasTransitioning)
@@ -3789,40 +1060,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			RecordReplayEvent(isTransitioning ? "floor-transition-started" : "floor-transition-ended", new
 			{
 				floor = currentFloor,
-				phase = _phase.ToString(),
-				status = _status
-			});
-		}
-
-		private unsafe void ObserveCurrentRoom(InstanceContentDeepDungeon* dd)
-		{
-			var runtime = _floorRuntime;
-			if (dd == null ||
-			    runtime == null ||
-			    runtime.IsDisposed ||
-			    runtime.Floor != dd->Floor ||
-			    runtime.DungeonId != dd->DeepDungeonId)
-				return;
-
-			int roomIndex = RoomGraph.GetLocalPlayerRoomIndex(dd);
-			if (roomIndex < 0)
-				return;
-
-			runtime.EvidenceSession?.ObserveRoomVisit(roomIndex);
-			if (roomIndex == runtime.LastObservedRoomIndex)
-				return;
-
-			runtime.LastObservedRoomIndex = roomIndex;
-			if (runtime.ActiveRoomNavigationTarget == roomIndex)
-			{
-				runtime.ActiveRoomNavigationTarget = null;
-			}
-
-			RecordReplayEvent("room-entered", new
-			{
-				floor = dd->Floor,
-				floorGeneration = runtime.Generation,
-				roomIndex,
 				phase = _phase.ToString(),
 				status = _status
 			});
@@ -3844,554 +1081,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			_chatWatchers.StateChanged -= OnChatWatchersStateChanged;
 			try { _chatWatchers.Dispose(); } catch { }
 			_chatWatchers = null;
-		}
-
-		private enum FloorRuntimeKind
-		{
-			Normal,
-			Boss
-		}
-
-		private sealed class FloorPlanningState
-		{
-			public DateTime LastGeneralTickAt = DateTime.MinValue;
-			public int LastKnownHoardCount;
-			public bool RefreshRequested;
-			public long PendingEvidenceVersion;
-			public long ReconciledEvidenceVersion;
-			public byte PendingEvidenceFloor = 255;
-			public uint PendingEvidenceDungeonId;
-			public string PendingEvidenceReason = string.Empty;
-			public DateTime NextLateEvidencePollAt = DateTime.MinValue;
-			public bool SetupPlanGenerated;
-		}
-
-		private sealed class FloorRuntime : IDisposable
-		{
-			private readonly Dictionary<RoomObjectiveKey, long> _objectiveIds = new();
-			private readonly Dictionary<FloorItemUseKey, int> _unconfirmedItemUseAttempts = new();
-			private readonly HashSet<FloorItemUseKey> _blockedFloorItems = [];
-			private long _nextObjectiveId;
-			private ObjectiveArbiterSnapshot _objectiveInput;
-			private long _objectiveEvidenceVersion;
-			private long _objectiveOptionsVersion;
-			private long _objectiveLedgerVersion;
-			private bool _hasObjectiveInput;
-
-			public FloorRuntime(
-				long generation,
-				uint dungeonId,
-				byte floor,
-				FloorRuntimeKind kind,
-				DateTime readyAtUtc,
-				NormalFloorGraphSnapshot? normalGraph,
-				bool? nativeIntuitionActive,
-				DetailedMapRunSnapshot detailedMap,
-				RunFloorTelemetryTrace? runTelemetry)
-			{
-				Generation = generation;
-				DungeonId = dungeonId;
-				Floor = floor;
-				Kind = kind;
-				ReadyAtUtc = readyAtUtc;
-				NormalGraph = normalGraph;
-				ObjectiveLedger = new FloorObjectiveLedger(generation);
-				Executor = kind == FloorRuntimeKind.Normal
-					? new AutoPilotExecutor(GetRoomProgress, detailedMap)
-					: null;
-				NativeIntuitionActive = nativeIntuitionActive;
-				ObjectEvidence = new FloorObjectEvidenceTracker();
-				RunTelemetry = runTelemetry;
-			}
-
-			public long Generation { get; }
-			public uint DungeonId { get; }
-			public byte Floor { get; }
-			public FloorRuntimeKind Kind { get; }
-			public DateTime ReadyAtUtc { get; }
-			public NormalFloorGraphSnapshot? NormalGraph { get; private set; }
-			public AutoPilotExecutor? Executor { get; }
-			public bool? NativeIntuitionActive { get; set; }
-			public FloorObjectiveLedger ObjectiveLedger { get; }
-			public ObjectiveExecution? ActiveExecution { get; private set; }
-			public FloorPlanningState PlanningState { get; } = new();
-			public PendingIntuitionState PendingIntuition { get; } = new();
-			public PendingFloorItemUse? PendingFloorItemUse { get; private set; }
-			public bool BossNavigationResolved { get; set; }
-            public DateTime NextBossDiagnosticAtUtc { get; set; }
-            public bool BossSerenityAwaitingBuff { get; set; }
-            public MobMechanicsMovementGuard MobMechanicsGuard { get; } = new();
-            public bool MobMechanicsYielding { get; set; }
-            public DateTime NextMobMechanicsCheckUtc { get; set; }
-            public DateTime NextMobMechanicsDiagnosticUtc { get; set; }
-			public FloorSearchState SearchState { get; } = new();
-			public FloorObjectEvidenceTracker ObjectEvidence { get; }
-			public RunFloorTelemetryTrace? RunTelemetry { get; }
-			public RunFloorStateCumulativePublisher? RunFloorStatePublisher { get; set; }
-			public int LastObservedRoomIndex { get; set; } = -1;
-			public int? ActiveRoomNavigationTarget { get; set; }
-			public BandedRevealExpectation? BandedRevealExpectation { get; set; }
-			public FloorEvidenceSession? EvidenceSession { get; set; }
-			public bool SightResearchDispatched { get; set; }
-			public bool NaturalRevealInventoryBaselineEstablished { get; set; }
-			public int NaturalPreviousSightStock { get; set; }
-			public int NaturalPreviousMazerootStock { get; set; }
-			public long NaturalPreviousSightLogSequence { get; set; }
-			public long NaturalPreviousMazerootLogSequence { get; set; }
-			public bool NaturalRevealDispatched { get; set; }
-			public SightResearchRevealResource NaturalRevealResource { get; set; }
-			public long NaturalSightLogSequenceAtDispatch { get; set; }
-			public long NaturalMazerootLogSequenceAtDispatch { get; set; }
-			public bool NaturalRevealConfirmed { get; set; }
-			public long NaturalRevealConfirmationRefreshSequence { get; set; }
-			public long NaturalRevealConfirmationFullScanCount { get; set; }
-			public bool NaturalCandidateUniverseResolved { get; set; }
-			public RawWorldPosition[] NaturalCandidateUniverse { get; set; } = [];
-			public HashSet<ControlledTrapWitnessKey> NaturalObservedTrapWitnesses { get; } = [];
-			public float NaturalMaximumTrapWitnessDistance { get; set; }
-			public bool NaturalJointScanComplete { get; set; }
-			public bool NaturalPoisonfruitAttempted { get; set; }
-			public bool NaturalMazerootAttemptedOrAdopted { get; set; }
-            public bool FarmingPassageItemConfirmed { get; set; }
-			public bool ControlledSightDispatched { get; set; }
-			public long ControlledSightLogSequenceAtDispatch { get; set; }
-			public long ControlledMazerootLogSequenceAtDispatch { get; set; }
-			public ControlledPtSurveyItemAction ControlledCaptureItem { get; set; }
-			public DateTime ControlledSightDispatchedAt { get; set; }
-			public bool ControlledStrengthHandled { get; set; }
-			public bool ControlledPoisonfruitDispatched { get; set; }
-			public bool ControlledPendingPostCapturePoisonfruit { get; set; }
-			public bool ControlledOpportunityCompleted { get; set; }
-			public bool ControlledPositiveCapturePending { get; set; }
-			public int ControlledHoardRoomIndex { get; set; } = -1;
-			public Vector3 ControlledHoardPosition { get; set; }
-			public bool ControlledHoardPositionResolved { get; set; }
-			public bool ControlledSightConfirmed { get; set; }
-			public long ControlledSightConfirmedAtMilliseconds { get; set; }
-			public long ControlledSightConfirmationRefreshSequence { get; set; }
-			public long ControlledSightConfirmationFullScanCount { get; set; }
-			public bool ControlledCandidateUniverseResolved { get; set; }
-			public RawWorldPosition[] ControlledCandidateUniverse { get; set; } = [];
-			public bool ControlledHoardRoomTargetReached { get; set; }
-			public long ControlledHoardRoomTargetRefreshSequence { get; set; }
-			public long ControlledHoardRoomTargetFullScanCount { get; set; }
-			public HashSet<ControlledTrapWitnessKey> ControlledObservedTrapWitnesses { get; } = [];
-			public float ControlledMaximumTrapWitnessDistance { get; set; }
-			/// <summary>
-			/// TEMPORARY controlled-survey research only: fixed PalacePal candidate audit universe.
-			/// </summary>
-			public bool ControlledCandidateObjectAuditArmed { get; set; }
-			public ControlledCandidateAuditPoint[] ControlledCandidateObjectAuditUniverse { get; set; } = [];
-			public HashSet<ControlledCandidateObjectAuditKey> ControlledCandidateObjectAuditLoggedKeys { get; } = [];
-			public long ControlledIntuitionExpectationStartedAtMilliseconds { get; set; }
-			public long ControlledIntuitionExpectationAttemptId { get; set; }
-			public bool ControlledIntuitionRequiresCurrentUse { get; set; }
-			public bool ControlledIntuitionResolved { get; set; }
-			public bool ControlledIntuitionResolutionPending { get; set; }
-			public ControlledPtIntuitionResolutionDecision? ControlledIntuitionDecision { get; set; }
-			public long InheritedIntuitionArmedAtMilliseconds { get; set; }
-			public long InheritedIntuitionAttemptId { get; set; }
-			public InheritedIntuitionEvidenceKind InheritedIntuitionEvidence { get; set; }
-			public InheritedIntuitionResolutionDecision? InheritedIntuitionDecision { get; set; }
-			public bool ControlledPositiveMessagePendingIndicator { get; set; }
-			public int ControlledIndicatorRoomCursor { get; set; }
-			public bool ControlledDispatchBarrierActive { get; set; }
-			public bool ControlledDispatchRelocationStarted { get; set; }
-			public ObjectiveArbiterDecision ObjectiveDecision { get; private set; }
-			public bool HasObjectiveDecision { get; private set; }
-			public bool IsDisposed { get; private set; }
-
-			public bool IsFloorItemBlocked(FloorItemUseKey key) =>
-				_blockedFloorItems.Contains(key);
-
-			public PendingFloorItemUse BeginFloorItemUse(
-				FloorItemUseKey key,
-				FloorItemUsePurpose purpose,
-				int countBeforeDispatch,
-				DateTime dispatchedAtUtc,
-				string reason,
-				bool blocksFloorSetup,
-				long sightLogSequenceBeforeDispatch,
-				long mazerootLogSequenceBeforeDispatch,
-				long intuitionAttemptId,
-				long intuitionExpectedAtMilliseconds)
-			{
-				int attemptNumber = _unconfirmedItemUseAttempts.TryGetValue(key, out int previous)
-					? previous + 1
-					: 1;
-				_unconfirmedItemUseAttempts[key] = attemptNumber;
-				PendingFloorItemUse = new PendingFloorItemUse
-				{
-					Key = key,
-					Purpose = purpose,
-					CountBeforeDispatch = countBeforeDispatch,
-					AttemptNumber = attemptNumber,
-					DispatchedAtUtc = dispatchedAtUtc,
-					Reason = reason,
-					BlocksFloorSetup = blocksFloorSetup,
-					SightLogSequenceBeforeDispatch = sightLogSequenceBeforeDispatch,
-					MazerootLogSequenceBeforeDispatch = mazerootLogSequenceBeforeDispatch,
-					IntuitionAttemptId = intuitionAttemptId,
-					IntuitionExpectedAtMilliseconds = intuitionExpectedAtMilliseconds
-				};
-				return PendingFloorItemUse;
-			}
-
-			public void ConfirmFloorItemUse(PendingFloorItemUse pending)
-			{
-				if (!ReferenceEquals(PendingFloorItemUse, pending))
-					return;
-
-				_unconfirmedItemUseAttempts.Remove(pending.Key);
-				PendingFloorItemUse = null;
-			}
-
-			public void ReleaseFloorItemUseForRetry(PendingFloorItemUse pending)
-			{
-				if (ReferenceEquals(PendingFloorItemUse, pending))
-					PendingFloorItemUse = null;
-			}
-
-			public void ExhaustFloorItemUse(PendingFloorItemUse pending)
-			{
-				if (!ReferenceEquals(PendingFloorItemUse, pending))
-					return;
-
-				_blockedFloorItems.Add(pending.Key);
-				PendingFloorItemUse = null;
-			}
-
-			public void ReplaceObjectiveExecution(FloorObjectiveKind objective, NavigationHelper navigation)
-			{
-				ActiveExecution?.Dispose();
-				ActiveExecution = objective == FloorObjectiveKind.None
-					? null
-					: new ObjectiveExecution(objective, navigation);
-			}
-
-			private (bool HoardSearched, bool ChestsSearched, bool IntelVisited) GetRoomProgress(int roomIndex)
-			{
-				bool hoardSearched = false;
-				bool chestsSearched = false;
-				bool intelVisited = false;
-				foreach (var pair in _objectiveIds)
-				{
-					if (pair.Key.RoomIndex != roomIndex || !ObjectiveLedger.TryGetObjective(pair.Value, out var objective))
-						continue;
-
-					switch (pair.Key.Category)
-					{
-						case RoomObjectiveCategory.Hoard:
-							hoardSearched |= objective.Outcome == ObjectiveOutcomeKind.Succeeded;
-							break;
-						case RoomObjectiveCategory.Chests:
-							chestsSearched |= objective.Outcome is ObjectiveOutcomeKind.Succeeded or ObjectiveOutcomeKind.Skipped;
-							break;
-						case RoomObjectiveCategory.Intel:
-							intelVisited |= objective.Outcome == ObjectiveOutcomeKind.Succeeded;
-							break;
-					}
-				}
-				return (hoardSearched, chestsSearched, intelVisited);
-			}
-
-			public ObjectiveRecord GetOrCreateObjective(
-				RoomObjectiveKey key,
-				FloorObjectiveKind kind,
-				bool required)
-			{
-				if (!_objectiveIds.TryGetValue(key, out long objectiveId))
-				{
-					objectiveId = ++_nextObjectiveId;
-					_objectiveIds.Add(key, objectiveId);
-					ObjectiveLedger.AddObjective(objectiveId, kind, required);
-				}
-
-				if (!ObjectiveLedger.TryGetObjective(objectiveId, out var objective))
-					throw new InvalidOperationException($"Floor objective {objectiveId} is missing from generation {Generation} ledger.");
-				return objective;
-			}
-
-			public bool SetObjectiveDecision(ObjectiveArbiterDecision decision)
-			{
-				if (IsDisposed ||
-				    HasObjectiveDecision &&
-				    ObjectiveDecision == decision)
-					return false;
-
-				ObjectiveDecision = decision;
-				HasObjectiveDecision = true;
-				return true;
-			}
-
-			public bool RefreshObjectiveDecision(
-				ObjectiveArbiterSnapshot input,
-				long evidenceVersion,
-				long optionsVersion,
-				long ledgerVersion,
-				out ObjectiveArbiterDecision decision)
-			{
-				decision = ObjectiveDecision;
-				if (IsDisposed ||
-				    _hasObjectiveInput &&
-				    _objectiveInput == input &&
-				    _objectiveEvidenceVersion == evidenceVersion &&
-				    _objectiveOptionsVersion == optionsVersion &&
-				    _objectiveLedgerVersion == ledgerVersion)
-				{
-					return false;
-				}
-
-				_objectiveInput = input;
-				_objectiveEvidenceVersion = evidenceVersion;
-				_objectiveOptionsVersion = optionsVersion;
-				_objectiveLedgerVersion = ledgerVersion;
-				_hasObjectiveInput = true;
-				decision = ObjectiveArbiter.Decide(input);
-				return SetObjectiveDecision(decision);
-			}
-
-			public void ClearObjectiveDecision()
-			{
-				ObjectiveDecision = default;
-				HasObjectiveDecision = false;
-				_hasObjectiveInput = false;
-			}
-
-			public void Dispose()
-			{
-				if (IsDisposed)
-					return;
-
-				IsDisposed = true;
-				NormalGraph = null;
-				NativeIntuitionActive = null;
-				LastObservedRoomIndex = -1;
-				ActiveRoomNavigationTarget = null;
-				BandedRevealExpectation = null;
-				EvidenceSession = null;
-				PendingFloorItemUse = null;
-				_unconfirmedItemUseAttempts.Clear();
-				_blockedFloorItems.Clear();
-				_objectiveIds.Clear();
-				ActiveExecution?.Dispose();
-				ActiveExecution = null;
-				ObjectEvidence.Dispose();
-				RunFloorStatePublisher = null;
-				ClearObjectiveDecision();
-			}
-		}
-
-		private sealed class PendingIntuitionState
-		{
-			private bool _hasPending;
-			private byte _sourceFloor;
-			private DateTime _lastUsedAtUtc = DateTime.MinValue;
-			private long _attemptId;
-			private bool _overdueRecorded;
-
-			public void Reset()
-			{
-				_hasPending = false;
-				_sourceFloor = 0;
-				_lastUsedAtUtc = DateTime.MinValue;
-				_attemptId = 0;
-				_overdueRecorded = false;
-			}
-
-			public void MarkUsed(byte sourceFloor, DateTime usedAtUtc, long attemptId)
-			{
-				_hasPending = true;
-				_sourceFloor = sourceFloor;
-				_lastUsedAtUtc = usedAtUtc;
-				_attemptId = attemptId;
-				_overdueRecorded = false;
-			}
-
-			public void CancelAttempt(long attemptId)
-			{
-				if (!_hasPending || attemptId == 0 || attemptId != _attemptId)
-					return;
-
-				Reset();
-			}
-
-			public bool TryMarkResolved(long attemptId)
-			{
-				if (!_hasPending || attemptId == 0 || attemptId != _attemptId)
-					return false;
-
-				Reset();
-				return true;
-			}
-
-			public bool TryMarkOverdueRecorded()
-			{
-				if (!_hasPending || _overdueRecorded)
-					return false;
-
-				_overdueRecorded = true;
-				return true;
-			}
-
-			public bool TryGetCurrentFloorUseElapsedMilliseconds(byte floor, DateTime nowUtc, out int elapsedMilliseconds)
-			{
-				elapsedMilliseconds = 0;
-				if (!_hasPending ||
-				    _sourceFloor != floor ||
-				    _lastUsedAtUtc == DateTime.MinValue)
-				{
-					return false;
-				}
-
-				elapsedMilliseconds = (int)Math.Max(0, (nowUtc - _lastUsedAtUtc).TotalMilliseconds);
-				return true;
-			}
-		}
-
-		private unsafe void UpdateBossFloor(InstanceContentDeepDungeon* dd)
-		{
-			var player = Service.LocalPlayer;
-			if (player == null)
-			{
-				_status = "Boss floor - waiting for player";
-				return;
-			}
-
-			if (Service.Condition[ConditionFlag.BetweenAreas] ||
-			    Service.Condition[ConditionFlag.BetweenAreas51])
-			{
-				_status = "Boss floor - waiting for floor load to complete";
-				_navHelper?.Cancel();
-				_pt30DivineFavorFlashHelper?.Reset();
-				_pt50ChaseOutputGuard?.Reset();
-				return;
-			}
-            if (TryUpdatePt99ResultTransfer(dd)) return;
-			if (!RequireMovementPermission("boss objective", FloorObjectiveKind.DefeatBoss))
-			{
-				_pt30DivineFavorFlashHelper?.Reset();
-				_pt50ChaseOutputGuard?.Reset();
-				return;
-			}
-
-            RecordBossCombatSnapshot();
-			bool externalMovement = _ctx?.Configuration.BossMechanicsActive == true;
-            bool bmrBossHandling = _ctx?.Configuration.BossMechanics.UsesBmrBossHandling() == true;
-            if (bmrBossHandling) _pt30DivineFavorFlashHelper?.Update(dd);
-            else _pt30DivineFavorFlashHelper?.Reset();
-            _pt50ChaseOutputGuard?.Update(dd, externalMovement && bmrBossHandling);
-            if (dd->DeepDungeonId == 4 && dd->Floor == 99 && externalMovement && bmrBossHandling)
-            {
-                _navHelper?.Cancel();
-                TryMaintainBossBuffs(dd);
-                _status = "PT99 - external color/mechanic movement; dual-boss targeting active";
-                return;
-            }
-
-			if (Service.Condition[ConditionFlag.InCombat])
-			{
-                TryMaintainBossBuffs(dd);
-				if (!BossNavigationResolved)
-				{
-					_navHelper?.Cancel();
-					BossNavigationResolved = true;
-					Service.Log.Info("[FloorPhase] Boss combat started -> canceling boss navigation");
-				}
-
-				_status = _pt30DivineFavorFlashHelper?.IsDivineFavorMovementActive == true
-					? "Boss floor - PT30 Divine Favor movement override active"
-					: "Boss floor - combat assist active";
-				return;
-			}
-
-			var boss = Runtime.Helpers.CombatTargetingHelpers.PickNearestHostile(60f, out _);
-			if (boss == null)
-			{
-				if (bmrBossHandling && !externalMovement && _pt30DivineFavorFlashHelper?.TryUpdateBossEngageMovement(dd, player.Position, out var pt30EngageStatus) == true)
-				{
-					_navHelper?.Cancel();
-					_status = pt30EngageStatus;
-					return;
-				}
-
-				_status = "Boss floor - waiting for boss target";
-				return;
-			}
-
-            TryMaintainBossBuffs(dd);
-			if (BossNavigationResolved)
-			{
-				var currentTarget = Service.TargetManager.Target as IBattleChara;
-				if (currentTarget != null &&
-				    currentTarget.GameObjectId == boss.GameObjectId &&
-				    !currentTarget.IsDead &&
-				    IsWithinBossEngageRadius(player.Position, boss.Position))
-				{
-					_status = "Boss floor - waiting for boss combat";
-					return;
-				}
-
-				BossNavigationResolved = false;
-				RecordReplayEvent("boss-navigation-reset", new
-				{
-					floor = dd->Floor,
-					reason = "combat-ended-or-target-lost",
-					bossId = boss.GameObjectId,
-					currentTargetId = currentTarget?.GameObjectId ?? 0
-				});
-			}
-
-			if (bmrBossHandling && !externalMovement && _pt30DivineFavorFlashHelper?.TryUpdateBossEngageMovement(dd, player.Position, out var pt30BossEngageStatus) == true)
-			{
-				_navHelper?.Cancel();
-				_status = pt30BossEngageStatus;
-				return;
-			}
-
-			var withinRange = IsWithinBossEngageRadius(player.Position, boss.Position);
-			if (withinRange)
-			{
-				_navHelper?.Cancel();
-				BossNavigationResolved = true;
-				_status = "Boss floor - at boss";
-				Service.Log.Info("[FloorPhase] Boss navigation complete -> in engage range");
-				return;
-			}
-
-			var state = _navHelper!.Navigate(boss.Position, player.Position, BossNavigationArrivalTolerance, retryIntervalSeconds: 5.0);
-			switch (state)
-			{
-				case NavigationState.Moving:
-					_status = "Boss floor - navigating to boss";
-					break;
-				case NavigationState.Arrived:
-					BossNavigationResolved = true;
-					_status = "Boss floor - at boss";
-					Service.Log.Info("[FloorPhase] Boss navigation complete -> arrived");
-					break;
-				case NavigationState.StuckRepathing:
-					_status = $"Boss floor - repathing to boss ({_navHelper.StuckRetryCount}/3)";
-					break;
-				case NavigationState.StuckGiveUp:
-					BossNavigationResolved = true;
-					_status = "Boss floor - boss navigation failed";
-					Service.Log.Warning("[FloorPhase] Boss navigation gave up");
-					break;
-				case NavigationState.Failed:
-					BossNavigationResolved = true;
-					_status = "Boss floor - boss navigation unavailable";
-					Service.Log.Warning("[FloorPhase] Boss navigation failed to start");
-					break;
-			}
-		}
-
-		private static bool IsWithinBossEngageRadius(Vector3 playerPosition, Vector3 bossPosition)
-		{
-			var dx = playerPosition.X - bossPosition.X;
-			var dz = playerPosition.Z - bossPosition.Z;
-			return dx * dx + dz * dz <=
-			       BossNavigationArrivalTolerance * BossNavigationArrivalTolerance;
 		}
 
 		private unsafe bool TryMarkPlayerDeathFatal(InstanceContentDeepDungeon* dd)
@@ -4460,99 +1149,105 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			};
 		}
 
-		private unsafe NavDriveResult NavigateToRoom(InstanceContentDeepDungeon* dd, int targetRoom, global::Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter player)
+		private unsafe void RecordPassageExitDelayedByCombat(InstanceContentDeepDungeon* dd)
 		{
-			var runtime = _floorRuntime;
-			if (runtime == null ||
-			    runtime.IsDisposed ||
-			    runtime.Floor != dd->Floor ||
-			    runtime.DungeonId != dd->DeepDungeonId)
-			{
-				return NavDriveResult.Failed;
-			}
+			var now = DateTime.UtcNow;
+			if ((now - _lastPassageExitDelayEventAt).TotalMilliseconds < 1000)
+				return;
 
-			if (!MapPos.TryGetRoomCenter(dd, targetRoom, out var target))
+			_lastPassageExitDelayEventAt = now;
+			RecordReplayEvent("passage-open-exit-delayed", new
 			{
-				_status = $"Can't resolve room {targetRoom} center";
-				return NavDriveResult.Failed;
-			}
-			int playerRoom = GameState.RoomGraph.GetLocalPlayerRoomIndex(dd);
-
-			var result = _navDriver!.Drive(target, player.Position, 1.2f, dd, playerRoom, targetRoom);
-
-			switch (result)
-			{
-				case NavDriveResult.Moving:
-					if (runtime.ActiveRoomNavigationTarget != targetRoom)
-					{
-						runtime.ActiveRoomNavigationTarget = targetRoom;
-						RecordReplayEvent("room-navigation-started", new
-						{
-							floor = dd->Floor,
-							floorGeneration = runtime.Generation,
-							fromRoom = playerRoom,
-							targetRoom,
-							mode = "Moving",
-							stage = _navDriver.StageLabel
-						});
-					}
-					_status = _navDriver.IsStaging
-						? $"Navigating to room {targetRoom} ({_navDriver.StageLabel})"
-						: $"Navigating to room {targetRoom}";
-					break;
-				case NavDriveResult.Staging:
-					if (runtime.ActiveRoomNavigationTarget != targetRoom)
-					{
-						runtime.ActiveRoomNavigationTarget = targetRoom;
-						RecordReplayEvent("room-navigation-started", new
-						{
-							floor = dd->Floor,
-							floorGeneration = runtime.Generation,
-							fromRoom = playerRoom,
-							targetRoom,
-							mode = "Staging",
-							stage = _navDriver.StageLabel
-						});
-					}
-					_status = $"Staging: {_navDriver.StageLabel}";
-					break;
-				case NavDriveResult.Arrived:
-					runtime.ActiveRoomNavigationTarget = null;
-					break;
-				case NavDriveResult.StuckRetrying:
-					runtime.RunTelemetry?.ObserveNavigationIssue();
-					_status = $"Repathing ({_navDriver.StuckRetryCount}/3)";
-					break;
-				case NavDriveResult.Failed:
-					runtime.RunTelemetry?.ObserveNavigationIssue();
-					runtime.ActiveRoomNavigationTarget = null;
-					Service.Log.Warning($"[FloorPhase] Room {targetRoom} navigation failed");
-					_navDriver.Cancel();
-					break;
-			}
-			return result;
+				floor = dd->Floor,
+				reason = "in-combat",
+				phase = _phase.ToString(),
+				status = _status
+			});
 		}
 
-		private void HandleDirectNavState(NavigationState state, string context)
+		private void RecordChaseTargetEvent(string eventType, EnemyChaseTarget target)
 		{
-			switch (state)
+			var now = DateTime.UtcNow;
+			string key = $"{eventType}:{target.GameObjectId}:{target.Reason}";
+			if (string.Equals(key, _lastChaseTargetEventKey, StringComparison.Ordinal) &&
+			    (now - _lastChaseTargetEventAt).TotalMilliseconds < 1000)
 			{
-				case NavigationState.Arrived:
-					_status = $"{context}: arrived";
-					break;
-				case NavigationState.StuckRepathing:
-					_floorRuntime?.RunTelemetry?.ObserveNavigationIssue();
-					_status = $"{context}: stuck ({_navHelper?.StuckRetryCount ?? 0}/3)";
-					break;
-				case NavigationState.StuckGiveUp:
-					_floorRuntime?.RunTelemetry?.ObserveNavigationIssue();
-					_status = $"{context}: failed";
-					break;
-				case NavigationState.Failed:
-					_floorRuntime?.RunTelemetry?.ObserveNavigationIssue();
-					_status = $"{context}: navigation unavailable";
-					break;
+				return;
 			}
+
+			_lastChaseTargetEventKey = key;
+			var npc = CombatTargetingHelpers.GetBattleCharaByGameObjectId(target.GameObjectId);
+			_lastChaseTargetEventAt = now;
+			RecordReplayEvent(eventType, new
+			{
+				phase = _phase.ToString(),
+				targetId = target.GameObjectId,
+				nameId = npc?.NameId,
+				baseId = npc?.BaseId,
+				hp = npc?.CurrentHp, maxHp = npc?.MaxHp,
+				livePosition = new { target.LivePosition.X, target.LivePosition.Y, target.LivePosition.Z },
+				inCombat = Service.Condition[ConditionFlag.InCombat],
+				currentTargetId = Service.TargetManager.Target?.GameObjectId,
+				attackWindowStartedUtc = _floorRuntime?.AttackWindowStartedAt,
+				attackHoldActive = _floorRuntime?.IsAttackHolding(now),
+				reason = target.Reason.ToString(),
+				acquisitionPlayerRoom = target.AcquisitionPlayerRoomIndex,
+				acquisitionTargetRoom = target.AcquisitionTargetRoomIndex,
+				acquisitionGraphHops = target.AcquisitionGraphHops,
+				x = target.Position.X,
+				y = target.Position.Y,
+				z = target.Position.Z
+			});
 		}
+
+		private unsafe void RecordChaseAcquisitionFailure(
+			InstanceContentDeepDungeon* dd,
+			EnemyChaseAcquisitionFailure failure)
+		{
+			string key = $"{dd->Floor}:{_floorRuntime?.Generation ?? 0}:{failure}";
+			if (string.Equals(key, _lastChaseAcquisitionFailureKey, StringComparison.Ordinal))
+				return;
+
+			_lastChaseAcquisitionFailureKey = key;
+			RecordReplayEvent("clearing-target-acquisition-failed", new
+			{
+				floor = dd->Floor,
+				floorGeneration = _floorRuntime?.Generation ?? 0,
+				phase = _phase.ToString(),
+				reason = failure.ToString()
+			});
+		}
+
+		private void RecordPassageNavigationEvent(string eventType, string result, bool usedActor, int passageRoomIndex, int playerRoom)
+		{
+			var now = DateTime.UtcNow;
+			string key = $"{eventType}:{result}:{usedActor}:{passageRoomIndex}:{playerRoom}";
+			if (string.Equals(key, _lastPassageNavigationEventKey, StringComparison.Ordinal) &&
+			    (now - _lastPassageNavigationEventAt).TotalMilliseconds < 1000)
+			{
+				return;
+			}
+
+			_lastPassageNavigationEventKey = key;
+			_lastPassageNavigationEventAt = now;
+			RecordReplayEvent(eventType, new
+			{
+				phase = _phase.ToString(),
+				result,
+				usedActor,
+				passageRoomIndex,
+				playerRoom,
+				playerPosition = Service.LocalPlayer is { } player ? new { player.Position.X, player.Position.Y, player.Position.Z } : null,
+				actorPosition = usedActor ? new { _passageDestination.ActorPosition.X, _passageDestination.ActorPosition.Y, _passageDestination.ActorPosition.Z } : null,
+				walkingPosition = usedActor ? new { _passageDestination.WalkingPosition.X, _passageDestination.WalkingPosition.Y, _passageDestination.WalkingPosition.Z } : null,
+				projected = usedActor && _passageDestination.Projected,
+				pathRunning = moveHelper.VNav.Path.IsRunning(),
+				pathfindPending = moveHelper.VNav.SimpleMove.PathfindInProgress()
+			});
+		}
+
+        public void TickInteractionChannel(IFramework framework) => _floorRuntime?.TickInteractionChannel(framework);
+        private void RequestPlanRefresh(string reason) => _floorRuntime?.RequestPlanRefresh(reason);
+        private bool HandleNoHoardEvidenceInvalidated(string reason) => _floorRuntime?.HandleNoHoardEvidenceInvalidated(reason) == true;
 	}
 }

@@ -5,7 +5,7 @@ using DeepDungeon.Fsd.Dalamud.Runtime;
 
 namespace DeepDungeon.Fsd.Dalamud;
 
-public sealed class FsdApplication : IFsdApplication
+public sealed partial class FsdApplication : IFsdApplication
 {
     private readonly string _hostIdentity;
     private readonly string _hostVersion;
@@ -87,39 +87,16 @@ public sealed class FsdApplication : IFsdApplication
         _module.ActiveDetailedMapReleaseId;
     public DeepDungeonStateSnapshot CurrentDeepDungeonState => _module.CurrentDeepDungeonState;
 
-    public object Start() => Start(null);
-
-    public object Start(int? stopAfterFloor, int? diagnosticStartFloor = null, int? resumeSlot = null,
-        bool holdOnFailure = false)
+    public FsdControlResult Start(FsdStartRequest? request = null)
     {
         ThrowIfDisposed();
-        if (_settings.NecromancerFsdScenarioIndex == 2)
-        {
-            if (diagnosticStartFloor.HasValue || resumeSlot.HasValue || holdOnFailure)
-                return new { ok = false, error = "Diagnostic checkpoints are unavailable for controlled survey capture." };
-            if (!_detailedMapHostOptions.SupportsControlledPtSurvey)
-            {
-                return new
-                {
-                    ok = false,
-                    error = "Controlled reusable-save survey capture is unavailable for this FSD host."
-                };
-            }
-
-            return StartControlledPilgrimsTraverseCapture(
-                Math.Max(1, _settings.NecromancerFsdLoopCount),
-                _settings.NecromancerFsdLoopInfinite,
-                "start-controlled-pt-capture");
-        }
-        bool started = _module.StartSelectedFarming(out string error, stopAfterFloor, diagnosticStartFloor,
-            resumeSlot, holdOnFailure);
-        return new { ok = started, error };
+        return _module.StartSelectedFarming(request ?? new FsdStartRequest());
     }
 
-    public object Stop()
+    public FsdControlResult Stop()
     {
         ThrowIfDisposed();
-        return StopDeepDungeonFsd();
+        return _module.StopDeepDungeonFsd();
     }
 
     public void Update(IFramework framework)
@@ -157,15 +134,15 @@ public sealed class FsdApplication : IFsdApplication
     public object GetMobPilotSnapshot() { ThrowIfDisposed(); return _module.GetMobPilotSnapshot(); }
     public object GetPilgrimsTraverseFsdPreflight(int startFloor) { ThrowIfDisposed(); return _module.GetPilgrimsTraverseFsdPreflight(startFloor); }
     public object StartPilgrimsTraverseFsd(int startFloor, int targetLoops, bool infinite, string? confirmation, string? leaveModeOverride = null) { ThrowIfDisposed(); return _module.StartPilgrimsTraverseFsd(startFloor, targetLoops, infinite, confirmation, leaveModeOverride); }
-    public object StartFarming(DeepDungeon.Fsd.Core.FarmingMode mode, DeepDungeon.Fsd.Core.SaveUse saveUse,
-        int startFloor, int cycles, bool infinite, bool hoard, bool gold, bool silver, bool bronze)
+    public FsdControlResult StartFarming(FsdFarmingRequest request)
     {
         ThrowIfDisposed();
-        bool started = _module.TryStartFarming(mode, saveUse, startFloor, cycles, infinite,
-            hoard, gold, silver, bronze, out string error);
-        return new { ok = started, error };
+        ArgumentNullException.ThrowIfNull(request);
+        bool started = _module.TryStartFarming(request, out string error);
+        return new FsdControlResult(started, error);
     }
-    public object StopDeepDungeonFsd() { ThrowIfDisposed(); return _module.StopDeepDungeonFsd(); }
+
+    public FsdControlResult StopDeepDungeonFsd() => Stop();
     public object StartDeepDungeonLeaveDuty(string? confirmation) { ThrowIfDisposed(); return _module.StartDeepDungeonLeaveDuty(confirmation); }
     public object CloseDeepDungeonEntryWindowsForBridge() { ThrowIfDisposed(); return _module.CloseDeepDungeonEntryWindowsForBridge(); }
     public object StartPilgrimsTraverseDeleteSaveSlot(int slotNumber, string? confirmation) { ThrowIfDisposed(); return _module.StartPilgrimsTraverseDeleteSaveSlot(slotNumber, confirmation); }
@@ -183,18 +160,9 @@ public sealed class FsdApplication : IFsdApplication
 
         return _module.ArmControlledReusableSaveSurveyCapture();
     }
-    public object StartControlledPilgrimsTraverseCapture(int targetLoops, bool infinite, string? confirmation)
+    public FsdControlResult StartControlledPilgrimsTraverseCapture(int targetLoops, bool infinite, string? confirmation)
     {
         ThrowIfDisposed();
-        if (!_detailedMapHostOptions.SupportsControlledPtSurvey)
-        {
-            return new
-            {
-                ok = false,
-                error = "Controlled reusable-save survey capture is unavailable for this FSD host."
-            };
-        }
-
         return _module.StartControlledPilgrimsTraverseCapture(targetLoops, infinite, confirmation);
     }
 
@@ -202,8 +170,8 @@ public sealed class FsdApplication : IFsdApplication
     {
         if (!_lifecycle.TryDispose())
             return;
-        _module.Dispose();
-        _lease.Dispose();
+        try { _module.Dispose(); }
+        finally { _lease.Dispose(); }
     }
 
     private void ThrowIfDisposed() => _lifecycle.EnsureActive();

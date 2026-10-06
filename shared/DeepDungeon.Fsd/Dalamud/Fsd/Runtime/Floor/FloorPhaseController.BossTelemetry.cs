@@ -7,6 +7,7 @@ using DeepDungeon.Fsd.Dalamud.Actions;
 using DeepDungeon.Fsd.Dalamud.Runtime.Helpers;
 using global::Dalamud.Game.ClientState.Conditions;
 using global::Dalamud.Game.ClientState.Objects.Types;
+using global::Dalamud.Game.ClientState.Objects.SubKinds;
 
 namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor;
 
@@ -35,18 +36,13 @@ public sealed partial class FloorPhaseController
         return new { target = target.HasValue ? new { target.Value.X, target.Value.Y, target.Value.Z } : null, pathSafe, forbiddenZones };
     }
 
-    private unsafe void RecordBossCombatSnapshot()
+    private unsafe void RecordBossCombatSnapshot(byte floor, IPlayerCharacter player)
     {
-        var runtime = _floorRuntime;
-        var player = Service.LocalPlayer;
-        var now = DateTime.UtcNow;
-        if (runtime == null || player == null || now < runtime.NextBossDiagnosticAtUtc) return;
-        runtime.NextBossDiagnosticAtUtc = now.AddSeconds(1);
         var actionManager = ActionManager.Instance();
         bool potionKnown = DeepDungeonHelper.TryGetRecoveryPotionForCurrentDungeon(out uint potionId, out _);
         RecordReplayEvent("boss-combat-snapshot", new
         {
-            floor = runtime.Floor,
+            floor = floor,
             player = new { hp = player.CurrentHp, maxHp = player.MaxHp, job = player.ClassJob.RowId,
                 position = new { player.Position.X, player.Position.Y, player.Position.Z },
                 player.Rotation, player.IsDead, player.IsCasting, player.CastActionId,
@@ -59,8 +55,8 @@ public sealed partial class FloorPhaseController
             mechanicsActive = _ctx?.Configuration.BossMechanicsActive == true,
             pt30OrbitActive = _pt30DivineFavorFlashHelper?.IsDivineFavorMovementActive == true,
             pt50ChaseOutputSuppressed = _pt50ChaseOutputGuard?.IsActive == true,
-            pt99TargetDecision = runtime.Floor == 99 ? _ctx?.CombatAssist.Pt99Decision : null,
-            pendingItem = runtime.PendingFloorItemUse?.Key,
+            pt99TargetDecision = floor == 99 ? _ctx?.CombatAssist.Pt99Decision : null,
+            pendingItem = _floorRuntime!.ItemUse.Pending?.Key,
             strengthStock = _pomanderManager.GetCount(2), steelStock = _pomanderManager.GetCount(3), hasteStock = _pomanderManager.GetCount(11),
             strengthUsable = _pomanderManager.IsUsable(2), steelUsable = _pomanderManager.IsUsable(3),
             recoveryPotion = potionKnown ? (uint?)potionId : null,
@@ -73,9 +69,19 @@ public sealed partial class FloorPhaseController
                     position = new { e.Position.X, e.Position.Y, e.Position.Z } }).ToArray(),
             // PT20 roots are event objects, and their helpers are non-combatant battle NPCs.
             // Keeping only combatants hid the actual persistent hazard in the first wipe trace.
-            roots = runtime.Floor == 20 ? Service.GameObjects.Where(e => e.BaseId == 0x1EBE4B)
+            roots = floor == 20 ? Service.GameObjects.Where(e => e.BaseId == 0x1EBE4B)
                 .Select(e => new { id = e.GameObjectId, e.BaseId, e.Rotation,
                     position = new { e.Position.X, e.Position.Y, e.Position.Z } }).ToArray() : null
         });
+    }
+    private int ReadMobForbiddenZoneCount()
+    {
+        try
+        {
+            _bossForbiddenZonesIpc ??= Service.PluginInterface.GetIpcSubscriber<int>("BossMod.Hints.ForbiddenZonesCount");
+            if (_bossForbiddenZonesIpc.HasFunction) return _bossForbiddenZonesIpc.InvokeFunc();
+        }
+        catch { /* Missing optional IPC cannot acquire movement ownership. */ }
+        return 0;
     }
 }

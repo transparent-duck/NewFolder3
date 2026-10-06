@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Threading;
+using DeepDungeon.Fsd.Core;
 using DeepDungeon.Fsd.Dalamud.GameState;
 using DeepDungeon.Fsd.Dalamud.Runtime.Combat;
 using DeepDungeon.Fsd.Dalamud.Runtime.Helpers;
@@ -29,6 +30,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		public readonly IRunOptionsProvider RunOptions;
 		internal readonly DetailedMapRunSnapshot DetailedMap;
 		internal readonly CombatAssistPolicy CombatAssist;
+		internal CombatRecoveryBudget CombatRecoveryBudget = new();
 		internal readonly FsdChestInteraction ChestInteraction;
 		internal ControlledPtSurveySession? ControlledPtSurvey;
         internal DeepDungeon.Fsd.Core.FarmingPlan? FarmingPlan;
@@ -250,6 +252,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 	{
 		if (targetId == 0)
 			return false;
+		if (CombatRecoveryBudget.IsTargetExhausted(targetId))
+			return true;
 
 		lock (_preferredAggroLock)
 		{

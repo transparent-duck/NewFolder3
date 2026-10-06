@@ -11,8 +11,32 @@ using Treasure = FFXIVClientStructs.FFXIV.Client.Game.Object.Treasure;
 
 namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor;
 
-public sealed partial class FloorPhaseController
+internal sealed partial class TerminalRoomController
 {
+    private RunContext? _ctx;
+    private NavigationHelper? _navHelper;
+    private readonly Action<string> _setStatus;
+    private readonly Action<string, object> RecordReplayEvent;
+    private readonly Action<byte, string> DestroyFloorRuntime;
+    private readonly Func<Vector3, Vector3> ResolvePassageWalkingPosition;
+    private string Status { set => _setStatus(value); }
+
+    public TerminalRoomController(Action<string> setStatus, Action<string, object> record,
+        Action<byte, string> endFloor, Func<Vector3, Vector3> walkingPosition)
+    {
+        _setStatus = setStatus;
+        RecordReplayEvent = record;
+        DestroyFloorRuntime = endFloor;
+        ResolvePassageWalkingPosition = walkingPosition;
+    }
+
+    public void Initialize(RunContext context, NavigationHelper navigation)
+    {
+        ResetResultRoom();
+        _ctx = context;
+        _navHelper = navigation;
+    }
+
     private readonly HashSet<ulong> _resultOpened = new();
     private IGameObject? _resultChest;
     private DateTime _resultNextTick, _resultStarted, _resultChestStarted, _resultNextInteract, _resultInteractedAt;
@@ -23,7 +47,7 @@ public sealed partial class FloorPhaseController
 
     // PT100 uses its observed altar event; native completion at 99 cannot skip it.
     // The explicit diagnostic boundary still retains the room before interaction.
-    private unsafe void UpdateResultRoom()
+    public unsafe void UpdateResultRoom()
     {
         var context = _ctx;
         var player = Service.LocalPlayer;
@@ -55,7 +79,7 @@ public sealed partial class FloorPhaseController
             _navHelper?.Cancel();
             context.Navigator.CancelAll();
             context.TerminalReviewRequested = true;
-            context.StatusLine = _status = "已到達100層；停止並保留終局房間，等待地圖／獎勵物件驗收。";
+            context.StatusLine = Status = "已到達100層；停止並保留終局房間，等待地圖／獎勵物件驗收。";
             RecordReplayEvent("result-room-diagnostic-stop", new { floor = context.Duty.Floor, opened = _resultOpened.Count });
             Service.Log.Info("[ResultRoom] Diagnostic boundary reached: floor=100; retained room before reward navigation/interaction.");
             return;
@@ -111,7 +135,7 @@ public sealed partial class FloorPhaseController
             }
             if (_resultChest == null)
             {
-                _status = "100層：等待獎勵箱物件";
+                Status = "100層：等待獎勵箱物件";
                 if ((now - _resultStarted).TotalSeconds >= 10)
                     StopResultReview($"100層已確認開啟 {_resultOpened.Count} 個獎勵箱；請驗收獎勵與出口，FSD 已停止並保留現場。", now);
                 return;
@@ -119,7 +143,7 @@ public sealed partial class FloorPhaseController
             _resultChestStarted = now;
         }
         var navigation = _navHelper!.Navigate(_resultChest.Position, player.Position, 2.5f);
-        _status = $"100層：前往獎勵箱 {_resultChest.BaseId}";
+        Status = $"100層：前往獎勵箱 {_resultChest.BaseId}";
         if (navigation is NavigationState.Failed or NavigationState.StuckGiveUp)
         {
             StopResultReview("獎勵房導航失敗；請驗收100層地圖。", now);
@@ -158,7 +182,7 @@ public sealed partial class FloorPhaseController
             _navHelper?.Cancel();
             context.Navigator.CancelAll();
             context.TerminalRewardsRequired = false;
-            context.StatusLine = _status = "100層祭壇互動完成；正常退本。";
+            context.StatusLine = Status = "100層祭壇互動完成；正常退本。";
             RecordReplayEvent("result-altar-completed", new
             {
                 altar.GameObjectId, altar.BaseId, before = _resultAltarCompletionBefore,
@@ -174,7 +198,7 @@ public sealed partial class FloorPhaseController
         }
         if (altar == null || !altar.IsTargetable)
         {
-            _status = "100層：等待祭壇物件／完成事件";
+            Status = "100層：等待祭壇物件／完成事件";
             return;
         }
         if (_resultAltarInteractedId != 0 && altar.GameObjectId != _resultAltarInteractedId)
@@ -186,7 +210,7 @@ public sealed partial class FloorPhaseController
             Service.Condition[ConditionFlag.OccupiedInQuestEvent] ||
             Service.Condition[ConditionFlag.OccupiedInCutSceneEvent]) return;
         var navigation = _navHelper!.Navigate(ResolvePassageWalkingPosition(altar.Position), player.Position, 2.5f);
-        context.StatusLine = _status = "100層：前往小型祭壇";
+        context.StatusLine = Status = "100層：前往小型祭壇";
         if (navigation is NavigationState.Failed or NavigationState.StuckGiveUp)
         {
             StopResultReview("100層祭壇導航失敗；已保留現場。", now);
@@ -213,7 +237,7 @@ public sealed partial class FloorPhaseController
     private void StopResultReview(string message, DateTime now)
     {
         _navHelper?.Cancel();
-        _ctx!.StatusLine = _status = message;
+        _ctx!.StatusLine = Status = message;
         _ctx.StatusIsError = true;
         RecordReplayEvent("result-room-review-required", new
         {

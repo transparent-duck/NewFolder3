@@ -15,7 +15,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 	/// <summary>
 	/// Planning-only executor: keeps floor-scoped search state, rebuilds the room visit plan,
 	/// manages per-room waypoint queues, and exposes a query+notification API.
-	/// All execution (navigation, timers, distance checks) is handled by FloorPhaseController.
+	/// All execution (navigation, timers, distance checks) is handled by FloorExplorationController.
 	/// </summary>
 	public class AutoPilotExecutor
 	{

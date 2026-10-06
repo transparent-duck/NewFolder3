@@ -8,12 +8,12 @@ using global::Dalamud.Game.ClientState.Objects.Types;
 
 namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor;
 
-public sealed partial class FloorPhaseController
+internal sealed partial class TerminalRoomController
 {
     private DateTime _terminalTransferStarted, _terminalTransferNextTick, _terminalTransferNextInteract;
     private bool _terminalTransferLandingObserved;
 
-    private unsafe bool TryUpdatePt99ResultTransfer(InstanceContentDeepDungeon* dd)
+    public unsafe bool TryUpdatePt99ResultTransfer(InstanceContentDeepDungeon* dd)
     {
         if (!Pt99TransitionPolicy.CanApproach(dd->DeepDungeonId, dd->Floor,
             Service.Condition[ConditionFlag.InCombat], _ctx?.Duty.PassageOpen == true)) return false;
@@ -70,13 +70,13 @@ public sealed partial class FloorPhaseController
                 });
             }
             var passageNavigation = _navHelper!.Navigate(ResolvePassageWalkingPosition(passage.Position), player.Position, 0.5f);
-            _status = _ctx.StatusLine = "99層已通關：跨越峽谷後前往傳送裝置，等待100層";
+            Status = _ctx.StatusLine = "99層已通關：跨越峽谷後前往傳送裝置，等待100層";
             if (passageNavigation is NavigationState.Failed or NavigationState.StuckGiveUp)
                 StopResultReview("99層跨越峽谷後的傳送裝置導航失敗；已保留副本。", now);
             return true;
         }
         var navigation = _navHelper!.Navigate(portal.Position, player.Position, 2.5f);
-        _status = _ctx.StatusLine = "99層已通關：前往終局房間傳送物件";
+        Status = _ctx.StatusLine = "99層已通關：前往終局房間傳送物件";
         if (navigation is NavigationState.Failed or NavigationState.StuckGiveUp)
         {
             StopResultReview("99層終局房間傳送物件導航失敗；已保留副本。", now);

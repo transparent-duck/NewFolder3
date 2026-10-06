@@ -9,54 +9,51 @@ using FFXIVClientStructs.FFXIV.Client.Game.InstanceContent;
 
 namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor;
 
-public sealed partial class FloorPhaseController
+internal sealed partial class FloorExplorationController
 {
     private unsafe void PublishInitialRunFloorState(
         InstanceContentDeepDungeon* dd,
         Vector3 origin)
     {
-        FloorRuntime? runtime = _floorRuntime;
         if (_runTelemetryObserver == null ||
-            runtime is not { IsDisposed: false, Kind: FloorRuntimeKind.Normal } ||
-            runtime.RunFloorStatePublisher != null ||
+            (IsDisposed || Kind != FloorRuntimeKind.Normal) ||
+            this.RunFloorStatePublisher != null ||
             _ctx?.ControlledPtSurvey != null ||
-            runtime.NormalGraph == null ||
-            runtime.ObjectEvidence.Current?.Available != true)
+            this.NormalGraph == null ||
+            this.ObjectEvidence.Current?.Available != true)
         {
             return;
         }
 
-        RunFloorStateTelemetry state = BuildRunFloorState(dd, runtime, origin);
-        runtime.RunFloorStatePublisher = new RunFloorStateCumulativePublisher(state);
-        NotifyRunFloorState(runtime.RunFloorStatePublisher.LastPublished);
+        RunFloorStateTelemetry state = BuildRunFloorState(dd, origin);
+        this.RunFloorStatePublisher = new RunFloorStateCumulativePublisher(state);
+        NotifyRunFloorState(this.RunFloorStatePublisher.LastPublished);
     }
 
-    private unsafe void PublishAuthoritativeRunFloorStateIfChanged(
-        InstanceContentDeepDungeon* dd,
-        FloorRuntime runtime)
+    internal unsafe void PublishAuthoritativeRunFloorStateIfChanged(
+        InstanceContentDeepDungeon* dd)
     {
-        RunFloorStateCumulativePublisher? publisher = runtime.RunFloorStatePublisher;
+        RunFloorStateCumulativePublisher? publisher = this.RunFloorStatePublisher;
         if (_runTelemetryObserver == null || publisher == null ||
-            runtime.IsDisposed || runtime.Kind != FloorRuntimeKind.Normal ||
-            runtime.ObjectEvidence.Current?.Available != true)
+            this.IsDisposed || this.Kind != FloorRuntimeKind.Normal ||
+            this.ObjectEvidence.Current?.Available != true)
         {
             return;
         }
 
         ResolveAuthoritativeHoardFacts(
-            runtime,
             out RawWorldPosition? exact,
             out RawWorldPosition? banded);
         RawWorldPosition[] observedSightTraps =
-            (runtime.Executor?.ObservedSightTrapPositions ?? Array.Empty<Vector3>())
+            (this.Executor?.ObservedSightTrapPositions ?? Array.Empty<Vector3>())
             .Select(ToRawPosition)
             .ToArray();
         FloorsetHoardOpportunity floorsetHoardOpportunity =
-            DeepDungeonFloorsetTracker.GetCurrentOpportunity(runtime.Floor);
+            DeepDungeonFloorsetTracker.GetCurrentOpportunity(this.Floor);
         RunFloorStateTelemetry? state = publisher.PublishFactual(
             DateTime.UtcNow,
             floorsetHoardOpportunity,
-            runtime.Executor?.HasOpenedHoardThisFloor == true,
+            this.Executor?.HasOpenedHoardThisFloor == true,
             exact,
             banded,
             observedSightTraps,
@@ -79,10 +76,9 @@ public sealed partial class FloorPhaseController
 
     private unsafe RunFloorStateTelemetry BuildRunFloorState(
         InstanceContentDeepDungeon* dd,
-        FloorRuntime runtime,
         Vector3 origin)
     {
-        NormalFloorGraphSnapshot graph = runtime.NormalGraph ??
+        NormalFloorGraphSnapshot graph = this.NormalGraph ??
             throw new InvalidOperationException("Normal floor state requires a room graph.");
         FloorRoomBinding[] bindings = FloorEvidenceSession.BuildRoomBindings(
             dd,
@@ -111,30 +107,28 @@ public sealed partial class FloorPhaseController
         DetailedMapCatalog? catalog = runMap.Catalog;
         HoardYieldCatalog? yield = runMap.HoardYield;
         FloorsetHoardOpportunity floorsetHoardOpportunity =
-            DeepDungeonFloorsetTracker.GetCurrentOpportunity(runtime.Floor);
+            DeepDungeonFloorsetTracker.GetCurrentOpportunity(this.Floor);
         RawWorldPosition[] observedSightTraps =
-            (runtime.Executor?.ObservedSightTrapPositions ?? Array.Empty<Vector3>())
+            (this.Executor?.ObservedSightTrapPositions ?? Array.Empty<Vector3>())
             .Select(ToRawPosition)
             .ToArray();
         RunFloorCandidateFact[] candidates = BuildCandidateFacts(
             dd->ActiveLayoutIndex,
-            runtime.Floor,
+            this.Floor,
             rooms,
             observedSightTraps,
             catalog,
             yield);
         double? hoardExistsProbability = yield?.FloorEstimates
-            .SingleOrDefault(estimate => estimate.Floor == runtime.Floor)
+            .SingleOrDefault(estimate => estimate.Floor == this.Floor)
             ?.EstimatedHoardProbability;
         ResolveAuthoritativeHoardFacts(
-            runtime,
             out RawWorldPosition? exact,
             out RawWorldPosition? banded);
         RunFloorVisibleChestFact[] visibleChests =
-            BuildVisibleChestFacts(runtime, rooms);
+            BuildVisibleChestFacts(rooms);
         BuildRetainedRouteFacts(
             dd,
-            runtime,
             origin,
             rooms,
             visibleChests,
@@ -146,17 +140,17 @@ public sealed partial class FloorPhaseController
             TimestampUtc = DateTime.UtcNow,
             Trigger = RunFloorStateTrigger.StableSetup,
             JobId = Service.LocalPlayer?.ClassJob.RowId ?? 0,
-            DungeonId = runtime.DungeonId,
+            DungeonId = this.DungeonId,
             TerritoryId = Service.ClientState.TerritoryType,
-            FloorsetStart = ((runtime.Floor - 1) / 10) * 10 + 1,
-            Floor = runtime.Floor,
-            FloorGeneration = runtime.Generation,
+            FloorsetStart = ((this.Floor - 1) / 10) * 10 + 1,
+            Floor = this.Floor,
+            FloorGeneration = this.Generation,
             ControlledSurvey = false,
             ActiveLayoutIndex = dd->ActiveLayoutIndex,
             DetailedMapActive = runMap.Policy == DetailedMapRuntimePolicy.DetailedMap,
             YieldAvailable = yield != null,
             FloorsetHoardOpportunity = floorsetHoardOpportunity,
-            HoardOpenedThisFloor = runtime.Executor?.HasOpenedHoardThisFloor == true,
+            HoardOpenedThisFloor = this.Executor?.HasOpenedHoardThisFloor == true,
             CatalogReleaseId = catalog?.ReleaseId,
             CatalogModelSha256 = catalog?.ModelSha256,
             HoardYieldSha256 = catalog?.HoardYieldSha256,
@@ -175,9 +169,8 @@ public sealed partial class FloorPhaseController
         };
     }
 
-    private static unsafe void BuildRetainedRouteFacts(
+    private unsafe void BuildRetainedRouteFacts(
         InstanceContentDeepDungeon* dd,
-        FloorRuntime runtime,
         Vector3 origin,
         IReadOnlyList<RunFloorRoomFact> rooms,
         IReadOnlyList<RunFloorVisibleChestFact> visibleChests,
@@ -186,7 +179,7 @@ public sealed partial class FloorPhaseController
     {
         route = [];
         unavailableReason = null;
-        AutoPilotExecutor? executor = runtime.Executor;
+        AutoPilotExecutor? executor = this.Executor;
         if (executor?.HasPlanningSnapshot != true)
         {
             unavailableReason = "normal planning snapshot is unavailable";
@@ -408,11 +401,10 @@ public sealed partial class FloorPhaseController
         return targets.ToArray();
     }
 
-    private static RunFloorVisibleChestFact[] BuildVisibleChestFacts(
-        FloorRuntime runtime,
+    private RunFloorVisibleChestFact[] BuildVisibleChestFacts(
         IReadOnlyList<RunFloorRoomFact> rooms)
     {
-        FloorObjectEvidenceSnapshot? evidence = runtime.ObjectEvidence.Current;
+        FloorObjectEvidenceSnapshot? evidence = this.ObjectEvidence.Current;
         if (evidence?.Available != true)
             return [];
         var facts = new List<RunFloorVisibleChestFact>();
@@ -459,13 +451,12 @@ public sealed partial class FloorPhaseController
         return result;
     }
 
-    private static void ResolveAuthoritativeHoardFacts(
-        FloorRuntime runtime,
+    private void ResolveAuthoritativeHoardFacts(
         out RawWorldPosition? exact,
         out RawWorldPosition? banded)
     {
-        FloorObjectEvidenceSnapshot? evidence = runtime.ObjectEvidence.Current;
-        Vector3? exactPosition = runtime.Executor?.CachedHoardIndicatorPos;
+        FloorObjectEvidenceSnapshot? evidence = this.ObjectEvidence.Current;
+        Vector3? exactPosition = this.Executor?.CachedHoardIndicatorPos;
         if (!exactPosition.HasValue && evidence?.HoardIndicators.Count > 0)
             exactPosition = evidence.HoardIndicators[0].Object.Position;
         Vector3? bandedPosition = null;
@@ -556,7 +547,7 @@ internal sealed class RunFloorStateCumulativePublisher
              !RawWorldPosition.CanonicallyEquals(
                  previous.VisibleBanded.Value,
                  visibleBanded.Value));
-        bool sightChanged = !FloorPhaseController.CanonicalPositionSetsEqual(
+        bool sightChanged = !FloorExplorationController.CanonicalPositionSetsEqual(
             previous.ObservedSightTraps,
             currentSight);
         bool floorsetOpportunityChanged =

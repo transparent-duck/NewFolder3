@@ -98,7 +98,9 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 				_scenarioFactory = scenarioFactory;
 				_detailedMapRunSnapshot = detailedMapRunSnapshot ??
 					throw new ArgumentNullException(nameof(detailedMapRunSnapshot));
-				_multiLoopDriver = new MultiLoopDriver(_configuration, targetLoops, infinite);
+				var multiLoopDriver = new MultiLoopDriver(targetLoops, infinite);
+				NormalizeLegacyEndMode();
+				_multiLoopDriver = multiLoopDriver;
 				_lastStatus = string.Empty;
 				_lastStatusIsError = false;
 				DeepDungeonUi.CloseDeepDungeonEntryWindows();
@@ -209,7 +211,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 
 			try
 			{
-				_multiLoopDriver.ObserveDutyState(_dutyState);
 				MarkPlayerDeathFatalIfObserved();
 				StopInDutyMovementAfterDutyExit();
 				_attachedScenario.Update(framework);
@@ -250,9 +251,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 						return;
 					}
 
-					if (_attachedScenario.CountsAsCycle && _multiLoopDriver.ShouldStopAfterCurrentRun(_dutyState))
+					if (_attachedScenario.CountsAsCycle && _multiLoopDriver.ShouldStopAfterCurrentRun())
 					{
 						string stopReason = _multiLoopDriver.LastStopReason;
+						Service.Log.Info($"[MultiLoop] Stopping FSD: {stopReason}");
 						if (!string.IsNullOrWhiteSpace(stopReason))
 						{
 							_lastStatus = stopReason;
@@ -460,11 +462,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
         public void SetFarmingTargets(bool hoard, bool gold, bool silver, bool bronze)
         {
             if (_attachedScenario is not Scenarios.FarmingScenario farming) return;
-            if (!FarmingTargetPolicy.IsValid(farming.Session.Plan.Mode, new(hoard, gold, silver, bronze))) return;
-            farming.Session.BandedEnabled = hoard;
-            farming.Session.OpenGold = gold;
-            farming.Session.OpenSilver = silver;
-            farming.Session.OpenBronze = bronze;
+            if (!farming.Session.TrySetTargets(new(hoard, gold, silver, bronze))) return;
             _context?.RunOptions.Update(o => { o.BandedEnabled = hoard; o.OpenGold = gold; o.OpenSilver = silver; o.OpenBronze = bronze; });
         }
         public void SetCycleTargets(int cycles, bool infinite)
@@ -494,6 +492,20 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		}
 
 		// ===== Dispose =====
+
+	private void NormalizeLegacyEndMode()
+	{
+		try
+		{
+			if (_configuration.NecromancerFsdEndMode == 0) return;
+			_configuration.NecromancerFsdEndMode = 0;
+			_configuration.Save();
+		}
+		catch
+		{
+			// A failed legacy settings save must not prevent the loop-only runtime from starting.
+		}
+	}
 
 	public void Dispose()
 	{

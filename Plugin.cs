@@ -197,7 +197,14 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
                 _configuration.Fsd.NecromancerFsdScenarioIndex));
     }
 
-    private void OnCommand(string command, string arguments) => _window.Toggle();
+    private void OnCommand(string command, string arguments)
+    {
+        var args = arguments.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (args.Length > 0 && args[0].Equals("fsd", StringComparison.OrdinalIgnoreCase))
+            _application.HandleCommand(args[1..]);
+        else
+            _window.Toggle();
+    }
     private void OpenWindow() => _window.IsOpen = true;
 
     public void Dispose()

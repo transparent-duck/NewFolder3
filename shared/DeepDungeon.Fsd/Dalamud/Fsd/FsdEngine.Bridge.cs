@@ -137,9 +137,10 @@ namespace DeepDungeon.Fsd.Dalamud
 			}
 
 			int requestedLoops = Math.Max(1, targetLoops);
-            if (!TryStartFarming(FarmingMode.Hoard, SaveUse.Create, startFloor, requestedLoops, infinite,
-                    _configuration.NecromancerAutoBandedFarmEnabled, _configuration.NecromancerAutoOpenGoldChest,
-                    _configuration.NecromancerAutoOpenSilverChest, _configuration.NecromancerAutoOpenBronzeChest, out var startError))
+            var request = new FsdFarmingRequest(FarmingMode.Hoard, SaveUse.Create, startFloor, requestedLoops, infinite,
+                new FarmingTargets(_configuration.NecromancerAutoBandedFarmEnabled, _configuration.NecromancerAutoOpenGoldChest,
+                    _configuration.NecromancerAutoOpenSilverChest, _configuration.NecromancerAutoOpenBronzeChest));
+            if (!TryStartFarming(request, out var startError))
 			{
 				return new
 				{
@@ -180,16 +181,11 @@ namespace DeepDungeon.Fsd.Dalamud
 			};
 		}
 
-		public object StopDeepDungeonFsd()
+		public FsdControlResult StopDeepDungeonFsd()
 		{
 			if (_ddHost == null || !_ddHost.FsdActive)
 			{
-				return new
-				{
-					ok = false,
-					error = "Deep Dungeon FSD is not active.",
-					snapshot = GetMobPilotSnapshot()
-				};
+				return new FsdControlResult(false, "Deep Dungeon FSD is not active.", Snapshot: GetMobPilotSnapshot());
 			}
 
 			_ddHost.StopFsd();
@@ -197,19 +193,10 @@ namespace DeepDungeon.Fsd.Dalamud
 				_bossMechanics.Stop();
 			if (_ddHost.FsdActive)
 			{
-				return new
-				{
-					ok = false,
-					error = "Deep Dungeon FSD stop request did not stop the active session.",
-					snapshot = GetMobPilotSnapshot()
-				};
+				return new FsdControlResult(false, "Deep Dungeon FSD stop request did not stop the active session.", Snapshot: GetMobPilotSnapshot());
 			}
 
-			return new
-			{
-				ok = true,
-				snapshot = GetMobPilotSnapshot()
-			};
+			return new FsdControlResult(true, Snapshot: GetMobPilotSnapshot());
 		}
 
 		public object ArmControlledReusableSaveSurveyCapture()
