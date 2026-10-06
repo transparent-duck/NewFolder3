@@ -12,9 +12,7 @@ internal enum CombatSight { Unknown, Clear, Blocked }
 internal sealed unsafe class CombatPositionNavigation
 {
     private ICallGateSubscriber<Vector3, float, float, Vector3?>? _nearest;
-    private ICallGateSubscriber<Vector3, Vector3, CancellationToken,
-        Task<(int Status, Vector3 FinalDestination, List<Vector3> Waypoints, long Generation)>>? _path;
-    private ICallGateSubscriber<long>? _generation;
+    private ICallGateSubscriber<Vector3, Vector3, bool, CancellationToken, Task<List<Vector3>>>? _path;
     private ICallGateSubscriber<List<Vector3>, bool, object>? _move;
     private ICallGateSubscriber<float, object>? _tolerance;
 
@@ -22,14 +20,11 @@ internal sealed unsafe class CombatPositionNavigation
     {
         get
         {
-            _path ??= Service.PluginInterface.GetIpcSubscriber<Vector3, Vector3, CancellationToken,
-                Task<(int, Vector3, List<Vector3>, long)>>("vnavmesh.Nav.PathfindGroundDetailed");
-            _generation ??= Service.PluginInterface.GetIpcSubscriber<long>("vnavmesh.Nav.Generation");
-            return _path.HasFunction && _generation.HasFunction && moveHelper.VNav.NavmeshReady();
+            _path ??= Service.PluginInterface.GetIpcSubscriber<Vector3, Vector3, bool, CancellationToken,
+                Task<List<Vector3>>>("vnavmesh.Nav.PathfindCancelable");
+            return _path.HasFunction && moveHelper.VNav.NavmeshReady();
         }
     }
-
-    public long Generation => _generation?.HasFunction == true ? _generation.InvokeFunc() : -1;
 
     public Vector3? GroundPoint(Vector3 seed, float horizontalExtent = 0.4f, float verticalExtent = 1.6f)
     {
@@ -42,8 +37,8 @@ internal sealed unsafe class CombatPositionNavigation
                Math.Abs(p.Y - seed.Y) <= verticalExtent ? p : null;
     }
 
-    public Task<(int Status, Vector3 FinalDestination, List<Vector3> Waypoints, long Generation)> FindPath(
-        Vector3 from, Vector3 to, CancellationToken cancel) => _path!.InvokeFunc(from, to, cancel);
+    public Task<List<Vector3>> FindPath(Vector3 from, Vector3 to, CancellationToken cancel) =>
+        _path!.InvokeFunc(from, to, false, cancel);
 
     public void Move(List<Vector3> path)
     {

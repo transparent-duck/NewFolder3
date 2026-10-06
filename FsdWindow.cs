@@ -26,7 +26,7 @@ internal sealed class FsdWindow : Window
             ImGui.Separator();
             ImGui.Spacing();
             ImGui.TextWrapped("它也許可以幫助你挖到一些寶藏");
-            ImGui.TextWrapped("推薦設定是: 啟用寶藏+金箱. 啟用自動選中. 如果輸出外掛會主動開怪, 選擇召喚/黑魔, 否則啟用主動開怪並選擇機工.");
+            ImGui.TextWrapped("推薦設定: 啟用寶藏+金銀, 如果陶片不足啟用銅.\n啟用 NewFolder3 自動選中 + 你所用輸出外掛的主動攻擊\n死靈術士模式需要較高輸出的職業, 如黑魔.");
             ImGui.EndTabItem();
         }
 

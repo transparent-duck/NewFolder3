@@ -25,14 +25,13 @@ internal sealed class CombatPositionRecoveryController : IDisposable
     private readonly EnemyChaseAttackWindow _attackWindow = new();
     private readonly List<Vector3> _seeds = new(264), _candidates = new(32), _rejected = new(3);
     private CancellationTokenSource? _cancel;
-    private Task<(int Status, Vector3 FinalDestination, List<Vector3> Waypoints, long Generation)>? _pending;
+    private Task<List<Vector3>>? _pending;
     private Phase _phase;
     private ulong _targetId;
     private uint _observedHp;
     private DateTime _lastProgressAt, _lastDamageAt, _deadline, _nextGeometryAt, _verifyAt, _lastMoveAt;
     private Vector3 _targetAtPlan, _startPosition, _destination, _lastMovePosition;
     private int _seedIndex, _candidateIndex, _pathQueries, _failedPositions, _playerRoom;
-    private long _pathGeneration;
     private float _actionRange, _playerRadius, _targetRadius;
     private bool _ownsPath;
     private bool _resumeSearch;
@@ -97,7 +96,7 @@ internal sealed class CombatPositionRecoveryController : IDisposable
             ? TimeSpan.Zero : now - _attackWindow.StartedAt) >= CombatPositionPolicy.UnknownNoProgressLimit;
         if ((!inRange || sight != CombatSight.Blocked || now - _lastDamageAt < TimeSpan.FromSeconds(1)) && !stalled) return false;
         if (_budget.IsTargetExhausted(_targetId)) return false;
-        if (!_geometry.Ready) { Stop("Complete ground-path verification is unavailable. Update the navigation plugin."); return true; }
+        if (!_geometry.Ready) { Stop("Ground pathfinding is unavailable. Enable the navigation plugin."); return true; }
         _deadline = now + CombatPositionPolicy.AttemptLimit;
         _cancel = CancellationTokenSource.CreateLinkedTokenSource(_ctx.Token);
         _cancel.CancelAfter(CombatPositionPolicy.AttemptLimit);
@@ -164,30 +163,32 @@ internal sealed class CombatPositionRecoveryController : IDisposable
         }
         if (_phase == Phase.Querying)
         {
-            _status("Verifying a complete ground path");
+            _status("Verifying the returned ground-path endpoint");
             if (_pending == null || !_pending.IsCompleted) return true;
             try
             {
                 var result = _pending.GetAwaiter().GetResult(); _pending = null;
                 float length = 0;
-                if (result.Generation != _geometry.Generation ||
-                    !CombatPositionPolicy.ValidateCompletePath(result.Status, player.Position, _destination,
-                        result.FinalDestination, result.Waypoints, out length, out _))
+                if (!CombatPositionPolicy.ValidatePathEndpoint(player.Position, _destination,
+                        result, out length, out var reason))
                 {
-                    _record("sight-recovery-path-rejected", new { targetId = _targetId, status = result.Status, generation = result.Generation });
+                    _record("sight-recovery-path-rejected", new { targetId = _targetId, reason });
                     if (_candidateIndex < _candidates.Count && _pathQueries < 4) StartPathQuery(player.Position);
-                    else Fail("no-complete-local-path", current);
+                    else Fail("no-local-path-to-position", current);
                     return true;
                 }
+                var requested = _destination;
+                _destination = result[^1];
                 if (!_geometry.HasStandingMargin(_destination, current.Position, _actionRange, _playerRadius, _targetRadius))
                 { BeginSearch(dd, player.Position, current.Position); return true; }
-                _geometry.Move(result.Waypoints); _ownsPath = true; _pathGeneration = result.Generation;
+                _geometry.Move(result); _ownsPath = true;
                 _phase = Phase.Moving; _lastMoveAt = now; _lastMovePosition = player.Position;
                 _record("sight-recovery-path-started", new
                 {
-                    targetId = _targetId, status = "Complete", pathLength = length, margin = CombatPositionPolicy.StandingMargin,
+                    targetId = _targetId, status = "EndpointVerified", pathLength = length, margin = CombatPositionPolicy.StandingMargin,
+                    requested = new { requested.X, requested.Y, requested.Z },
                     destination = new { _destination.X, _destination.Y, _destination.Z }, offsets = new[] { 0, -7 },
-                    generation = _pathGeneration, deadlineUtc = _deadline
+                    deadlineUtc = _deadline
                 });
             }
             catch (Exception error) { Fail("path-query-failed: " + error.Message, current); }
@@ -196,7 +197,6 @@ internal sealed class CombatPositionRecoveryController : IDisposable
         if (_phase == Phase.Moving)
         {
             _status("Moving to a clear combat position");
-            if (_pathGeneration != _geometry.Generation) { BeginSearch(dd, player.Position, current.Position); return true; }
             if (Vector3.DistanceSquared(player.Position, _destination) <= CombatPositionPolicy.ArrivalRadius * CombatPositionPolicy.ArrivalRadius)
             {
                 StopPath(); _phase = Phase.Verifying; _verifyAt = now; _attackWindow.Observe(true, true, now);

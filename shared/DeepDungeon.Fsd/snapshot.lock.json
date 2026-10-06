@@ -8,7 +8,7 @@
     },
     {
       "path": "Core/CombatPositionPolicy.cs",
-      "sha256": "651fb06bb5acdb60f002fa5ec18b52a65e2818e6e981779e21e3804e3241c1d2"
+      "sha256": "454573a75317264207e23415177a03a716b43c6a9123f459ab3f7fda9cd485a2"
     },
     {
       "path": "Core/ControlledPtSurveyPolicy.cs",
@@ -440,7 +440,7 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/CombatPositionRecoveryController.cs",
-      "sha256": "4c885555300b45a047797e9538ff8bb27e1c42319a7067b912048ac26177a353"
+      "sha256": "8ecc62122f7158e49bcfbb27d8831efeb479449ebf4f46933b73ff079cfb5672"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/EnemyChaseHelper.cs",
@@ -576,7 +576,7 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Navigation/CombatPositionNavigation.cs",
-      "sha256": "f785137b98f3d18937c51d0307f3c297476476b993e609de4507a7577df28dd4"
+      "sha256": "f6f4fe105145f28a97c8b847016077897695ee7047dc17c0b92e308c9b410330"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Navigation/INavigator.cs",

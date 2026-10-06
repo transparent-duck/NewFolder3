@@ -35,18 +35,18 @@ public static class CombatPositionPolicy
                Math.Abs(position.Y + yOffset - target.Y) <= vertical;
     }
 
-    public static bool ValidateCompletePath(int status, Vector3 start, Vector3 requested, Vector3 actual,
-        IReadOnlyList<Vector3> path, out float length, out string reason)
+    public static bool ValidatePathEndpoint(Vector3 start, Vector3 requested,
+        IReadOnlyList<Vector3>? path, out float length, out string reason)
     {
         length = 0;
-        reason = status == 3 ? "partial-path" : "path-not-complete";
-        if (status != 1) return false;
-        if (!IsFinite(start) || !IsFinite(requested) || !IsFinite(actual) || path.Count == 0)
+        if (!IsFinite(start) || !IsFinite(requested) || path == null || path.Count == 0)
         { reason = "invalid-path"; return false; }
+        var actual = path[^1];
+        if (!IsFinite(actual)) { reason = "non-finite-path"; return false; }
         float dx = actual.X - requested.X, dz = actual.Z - requested.Z;
         if (dx * dx + dz * dz > MaximumEndpointHorizontalError * MaximumEndpointHorizontalError ||
             Math.Abs(actual.Y - requested.Y) > MaximumEndpointVerticalError)
-        { reason = "endpoint-projection-mismatch"; return false; }
+        { reason = "path-endpoint-mismatch"; return false; }
         var previous = start;
         foreach (var point in path)
         {
@@ -54,10 +54,8 @@ public static class CombatPositionPolicy
             length += Vector3.Distance(previous, point);
             previous = point;
         }
-        if (Vector3.DistanceSquared(previous, actual) > 0.25f)
-        { reason = "path-endpoint-mismatch"; return false; }
         if (length > MaximumPathLength) { reason = "path-too-long"; return false; }
-        reason = "complete";
+        reason = "endpoint-verified";
         return true;
     }
 }
