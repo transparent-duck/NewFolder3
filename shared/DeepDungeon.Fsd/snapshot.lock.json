@@ -312,7 +312,7 @@
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Rotation.cs",
-      "sha256": "522a3757dd45085153c446480e87628b95184897a1bd9204cd6e0348ee03f884"
+      "sha256": "665b9dd7118ffce8db9d2d4124944ddebb39868b332a2b9c932716384fa17591"
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Ui.cs",

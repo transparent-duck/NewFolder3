@@ -132,9 +132,9 @@ internal partial class FsdEngine
             bool succeeded;
             if (provider == FsdRotationProvider.RotationSolverReborn)
             {
-                // Dalamud converts the string to the provider's enum. Direct mode setting avoids /rotation Auto's toggle policy.
+                // Dalamud converts the string to the provider's enum. Manual keeps hostile target selection with FSD; direct mode setting avoids slash-command toggles.
                 (_rsrRotationMode ??= Service.PluginInterface.GetIpcSubscriber<string, object>("RotationSolverReborn.ChangeOperatingMode"))
-                    .InvokeAction(enabled ? "Auto" : "Off");
+                    .InvokeAction(enabled ? "Manual" : "Off");
                 succeeded = true;
             }
             else succeeded = provider switch
