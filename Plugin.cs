@@ -148,7 +148,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
             });
             commandRegistered = true;
 
-            _pluginInterface.UiBuilder.Draw += _windows.Draw;
+            _pluginInterface.UiBuilder.Draw += Draw;
             drawSubscribed = true;
             _pluginInterface.UiBuilder.OpenConfigUi += OpenWindow;
             configSubscribed = true;
@@ -160,7 +160,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
             var rollbackErrors = new List<Exception>();
             RollBack(() => { if (frameworkSubscribed) _framework.Update -= OnFrameworkUpdate; }, rollbackErrors);
             RollBack(() => { if (configSubscribed) _pluginInterface.UiBuilder.OpenConfigUi -= OpenWindow; }, rollbackErrors);
-            RollBack(() => { if (drawSubscribed) _pluginInterface.UiBuilder.Draw -= _windows.Draw; }, rollbackErrors);
+            RollBack(() => { if (drawSubscribed) _pluginInterface.UiBuilder.Draw -= Draw; }, rollbackErrors);
             RollBack(() => { if (commandRegistered) _commandManager.RemoveHandler(ProductIdentity.Command); }, rollbackErrors);
             RollBack(_windows.RemoveAllWindows, rollbackErrors);
             RollBack(() => yAxis?.Dispose(), rollbackErrors);
@@ -188,6 +188,12 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         {
             errors.Add(error);
         }
+    }
+
+    private void Draw()
+    {
+        _windows.Draw();
+        _yAxis.DrawOverlay();
     }
 
     private void OnFrameworkUpdate(IFramework framework)
@@ -221,7 +227,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
             return;
         _framework.Update -= OnFrameworkUpdate;
         _pluginInterface.UiBuilder.OpenConfigUi -= OpenWindow;
-        _pluginInterface.UiBuilder.Draw -= _windows.Draw;
+        _pluginInterface.UiBuilder.Draw -= Draw;
         _commandManager.RemoveHandler(ProductIdentity.Command);
         _windows.RemoveAllWindows();
         _yAxis.Dispose();

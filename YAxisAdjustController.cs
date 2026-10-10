@@ -1,11 +1,13 @@
 using Dalamud.Bindings.ImGui;
 using Dalamud.Hooking;
 using Dalamud.Plugin.Services;
+using DeepDungeon.Fsd.Dalamud;
 using DeepDungeon.Fsd.Runtime;
 using FFXIVClientStructs.FFXIV.Application.Network;
 using OmenTools;
 using OmenTools.Extensions;
 using OmenTools.Info.Game.Packets.Upstream;
+using System.Numerics;
 
 namespace NewFolder3;
 
@@ -20,7 +22,8 @@ internal sealed unsafe class YAxisAdjustController : IDisposable
     private bool _unavailable;
     private bool _disposed;
     private DateTime _lastPacketErrorAtUtc;
-    private string _status = "已停用";
+    private float _overlayOffset = float.NaN;
+    private string _overlayLabel = string.Empty;
 
     public YAxisAdjustController(Configuration configuration, IObjectTable objects, IPartyList party, IPluginLog log)
     {
@@ -56,7 +59,6 @@ internal sealed unsafe class YAxisAdjustController : IDisposable
             _hook?.Dispose();
             _hook = null;
             _unavailable = false;
-            _status = float.IsFinite(delta) ? "已停用" : "偏移值無效";
             return;
         }
         if (_hook != null || _unavailable)
@@ -73,14 +75,12 @@ internal sealed unsafe class YAxisAdjustController : IDisposable
             _hook.Enable();
             if (!_hook.IsEnabled)
                 throw new InvalidOperationException("Y-axis packet hook did not enable.");
-            _status = "已啟用，等待移動封包";
         }
         catch (Exception error)
         {
             _hook?.Dispose();
             _hook = null;
             _unavailable = true;
-            _status = "封包處理不可用";
             _log.Warning($"[YAxis] Could not enable movement packet adjustment: {error.Message}");
         }
     }
@@ -93,15 +93,13 @@ internal sealed unsafe class YAxisAdjustController : IDisposable
             {
                 int opcode = *(ushort*)packet;
                 if ((opcode == UpstreamOpcode.PositionUpdateOpcode || opcode == UpstreamOpcode.PositionUpdateInstanceOpcode) &&
-                    _objects.LocalPlayer is { } player &&
+                    _objects.LocalPlayer is { } player)
                     YAxisPacketAdjustment.TryAdjust(packet, opcode == UpstreamOpcode.PositionUpdateInstanceOpcode,
-                        _configuration.MovementYSubtract, player.Position))
-                    _status = "已處理移動封包";
+                        _configuration.MovementYSubtract, player.Position);
             }
         }
         catch (Exception error)
         {
-            _status = "封包處理失敗";
             DateTime now = DateTime.UtcNow;
             if (now - _lastPacketErrorAtUtc >= TimeSpan.FromSeconds(2))
             {
@@ -118,6 +116,31 @@ internal sealed unsafe class YAxisAdjustController : IDisposable
         _configuration.Save(_configuration.Fsd);
     }
 
+    public void DrawOverlay()
+    {
+        float offset = _configuration.MovementYSubtract;
+        if (_disposed || !float.IsFinite(offset) || Math.Abs(offset) <= 0.0001f ||
+            _objects.LocalPlayer is not { } player)
+            return;
+
+        offset = Math.Clamp(offset, -15f, 15f);
+        if (_overlayOffset != offset)
+        {
+            _overlayOffset = offset;
+            _overlayLabel = $"Y offset\n{offset:+0.0;-0.0}m";
+        }
+
+        WorldDrawHelper.DrawWorldLabel(
+            ImGui.GetBackgroundDrawList(),
+            player.Position + new Vector3(0f, 2.2f, 0f),
+            _overlayLabel,
+            ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 0.95f, 0.5f, 1f)),
+            ImGui.ColorConvertFloat4ToU32(new Vector4(0f, 0f, 0f, 0.72f)),
+            borderColor: ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 0.75f, 0.25f, 0.95f)),
+            anchorY: 1.0f,
+            rounding: 2f);
+    }
+
     public void DrawSettings()
     {
         ImGui.Text("座標Y軸偏移");
@@ -129,6 +152,7 @@ internal sealed unsafe class YAxisAdjustController : IDisposable
         if (ImGui.Button("設定為-7")) SetOffset(-7f);
         ImGui.SameLine();
         if (ImGui.Button("設定為+11")) SetOffset(11f);
+        ImGui.Spacing();
 
         bool automatic = _configuration.AutoYAxisAdjustment;
         if (ImGui.Checkbox("於深宮自動設定偏移", ref automatic))
@@ -146,7 +170,7 @@ internal sealed unsafe class YAxisAdjustController : IDisposable
             _configuration.Save(_configuration.Fsd);
         }
         ImGui.EndDisabled();
-        ImGui.TextUnformatted(_status);
+        ImGui.Spacing();
     }
 
     public void Dispose()
