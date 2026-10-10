@@ -21,6 +21,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
     private readonly CommunityUsageTelemetryCollector? _usageTelemetryCollector;
     private readonly CommunityLongRunLogCollector? _longRunLogCollector;
     private readonly FsdApplication _application;
+    private readonly YAxisAdjustController _yAxis;
     private readonly FsdWindow _window;
     private bool _disposed;
 
@@ -30,13 +31,16 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         IDalamudPluginInterface pluginInterface,
         ICommandManager commandManager,
         IFramework framework,
-        IPluginLog pluginLog)
+        IPluginLog pluginLog,
+        IObjectTable objectTable,
+        IPartyList partyList)
     {
         _pluginInterface = pluginInterface ?? throw new ArgumentNullException(nameof(pluginInterface));
         _commandManager = commandManager ?? throw new ArgumentNullException(nameof(commandManager));
         _framework = framework ?? throw new ArgumentNullException(nameof(framework));
 
         FsdApplication? application = null;
+        YAxisAdjustController? yAxis = null;
         CommunityEvidenceCollector? communityEvidenceCollector = null;
         CommunityUsageTelemetryCollector? usageTelemetryCollector = null;
         CommunityLongRunLogCollector? longRunLogCollector = null;
@@ -133,7 +137,9 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
                 fsdStartDenialNoticeProvider: () => _accessGate.FsdStartDenialNotice);
             _application = application;
 
-            _window = new FsdWindow(_application);
+            yAxis = new YAxisAdjustController(_configuration, objectTable, partyList, pluginLog);
+            _yAxis = yAxis;
+            _window = new FsdWindow(_application, _yAxis);
             _windows.AddWindow(_window);
 
             _commandManager.AddHandler(ProductIdentity.Command, new CommandInfo(OnCommand)
@@ -157,6 +163,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
             RollBack(() => { if (drawSubscribed) _pluginInterface.UiBuilder.Draw -= _windows.Draw; }, rollbackErrors);
             RollBack(() => { if (commandRegistered) _commandManager.RemoveHandler(ProductIdentity.Command); }, rollbackErrors);
             RollBack(_windows.RemoveAllWindows, rollbackErrors);
+            RollBack(() => yAxis?.Dispose(), rollbackErrors);
             RollBack(() => application?.Dispose(), rollbackErrors);
             RollBack(() => communityEvidenceCollector?.Dispose(), rollbackErrors);
             RollBack(() => usageTelemetryCollector?.Dispose(), rollbackErrors);
@@ -186,6 +193,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
     private void OnFrameworkUpdate(IFramework framework)
     {
         _application.Update(framework);
+        _yAxis.Update(_application.CurrentDeepDungeonState);
         _communityEvidenceCollector?.ObserveRunState(
             _application.IsRunActive,
             _configuration.Fsd.UseDetailedMap,
@@ -216,6 +224,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         _pluginInterface.UiBuilder.Draw -= _windows.Draw;
         _commandManager.RemoveHandler(ProductIdentity.Command);
         _windows.RemoveAllWindows();
+        _yAxis.Dispose();
         _application.Dispose();
         _communityEvidenceCollector?.Dispose();
         _usageTelemetryCollector?.Dispose();

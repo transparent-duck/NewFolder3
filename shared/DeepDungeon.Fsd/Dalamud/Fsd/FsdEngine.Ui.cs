@@ -430,7 +430,6 @@ namespace DeepDungeon.Fsd.Dalamud
 			}
 			
 			ImGui.Spacing();
-			ImGui.Separator();
 		}
 
 		private void DrawDetailedMapSettings(bool runActive)
@@ -548,7 +547,6 @@ namespace DeepDungeon.Fsd.Dalamud
 			}
 
 			ImGui.TextDisabled($"當血量低於 {hpThreshold}% 時自動使用目前迷宮的恢復藥劑");
-			ImGui.Separator();
 		}
 		
 		private void DrawDeepDungeonOverlayToggles()

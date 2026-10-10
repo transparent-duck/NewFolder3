@@ -6,6 +6,7 @@
     <LangVersion>preview</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>NewFolder3.ContractTests</AssemblyName>
   </PropertyGroup>
   <PropertyGroup>
@@ -13,6 +14,7 @@
     <DalamudLibPath Condition="Exists('$(appdata)\XIVLauncherCN\addon\Hooks\dev\')">$(appdata)\XIVLauncherCN\addon\Hooks\dev\</DalamudLibPath>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\..\YAxisPacketAdjustment.cs" Link="YAxisPacketAdjustment.cs" />
     <Compile Include="..\..\CommunityEvidenceCollector.cs" Link="CommunityEvidenceCollector.cs" />
     <Compile Include="..\..\CommunityLongRunLogCollector.cs" Link="CommunityLongRunLogCollector.cs" />
     <Compile Include="..\..\CommunityUsageTelemetryCollector.cs" Link="CommunityUsageTelemetryCollector.cs" />

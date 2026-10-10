@@ -15,6 +15,7 @@ internal static class Program
     public static int Main()
     {
         int passed = 0;
+        passed += Run("y-axis-movement-packets", YAxisPacketTests.Run);
         passed += Run("public-no-service-build-profile", TestPublicNoServiceBuildProfile);
         passed += Run("public-allow-all-access-gate", TestPublicAllowAllAccessGate);
         passed += Run("detailed-map-host-options-no-service", TestDetailedMapHostOptionsNoService);

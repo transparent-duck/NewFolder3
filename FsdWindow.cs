@@ -7,11 +7,13 @@ namespace NewFolder3;
 internal sealed class FsdWindow : Window
 {
     private readonly FsdApplication _application;
+    private readonly YAxisAdjustController _yAxis;
 
-    public FsdWindow(FsdApplication application)
+    public FsdWindow(FsdApplication application, YAxisAdjustController yAxis)
         : base("你是壞孩子###NewFolder3")
     {
         _application = application ?? throw new ArgumentNullException(nameof(application));
+        _yAxis = yAxis ?? throw new ArgumentNullException(nameof(yAxis));
     }
 
     public override void Draw()
@@ -36,6 +38,7 @@ internal sealed class FsdWindow : Window
             ImGui.Separator();
             ImGui.Text("通用輔助");
             _application.DrawGeneralAssistantSettings();
+            _yAxis.DrawSettings();
             ImGui.EndTabItem();
         }
 

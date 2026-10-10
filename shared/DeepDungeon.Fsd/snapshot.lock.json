@@ -296,7 +296,7 @@
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Companions.cs",
-      "sha256": "25518954c8c39189a2341a9be79ddd03fc5087e3221d034d310d35532eda48b8"
+      "sha256": "7031326010f62e9115ad37f7af7c5784151ac7927dbf1b32a9bba8786aa48204"
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.cs",
@@ -320,7 +320,7 @@
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Ui.cs",
-      "sha256": "a5972f41990735c39bd634f935928a3136dda4fc2929ba016767c7f2ec7c05ac"
+      "sha256": "77cced7c5033be4f9aaaba89ec3cee9be4fe888f23e1a628fc0c80cc1ef6cfcf"
     },
     {
       "path": "Dalamud/Fsd/GameState/DeepDungeonFloorsetTracker.cs",

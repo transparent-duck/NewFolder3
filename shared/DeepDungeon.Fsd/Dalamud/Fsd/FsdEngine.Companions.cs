@@ -10,7 +10,6 @@ internal partial class FsdEngine
     private DateTime _nextCompanionCheck;
     private bool _vnavInstalled;
     private bool _palacePalInstalled;
-    private bool _ichingInstalled;
     private bool _bmrInstalled;
     private bool _wrathInstalled, _rsrInstalled, _promeInstalled, _inh3Installed;
     // Display order is independent of persisted provider values (Custom remains 4).
@@ -27,13 +26,12 @@ internal partial class FsdEngine
         if (DateTime.UtcNow >= _nextCompanionCheck)
         {
             _nextCompanionCheck = DateTime.UtcNow.AddSeconds(1);
-            _vnavInstalled = _palacePalInstalled = _ichingInstalled = _bmrInstalled = false;
+            _vnavInstalled = _palacePalInstalled = _bmrInstalled = false;
             _wrathInstalled = _rsrInstalled = _promeInstalled = _inh3Installed = false;
             foreach (var plugin in Service.PluginInterface.InstalledPlugins)
             {
                 _vnavInstalled |= Matches(plugin.InternalName, "vnavmesh");
                 _palacePalInstalled |= Matches(plugin.InternalName, "PalacePal");
-                _ichingInstalled |= Matches(plugin.InternalName, "I-Ching") || Matches(plugin.InternalName, "IChing") || Matches(plugin.InternalName, "I-Ching-GL") || Matches(plugin.Name, "I-Ching");
                 _bmrInstalled |= Matches(plugin.InternalName, "BossModReborn");
                 _wrathInstalled |= Matches(plugin.InternalName, "WrathCombo");
                 _rsrInstalled |= Matches(plugin.InternalName, "RotationSolver") || Matches(plugin.InternalName, "RotationSolverReborn");
@@ -57,7 +55,7 @@ internal partial class FsdEngine
         {
             ImGui.TableSetupColumn("##Name", ImGuiTableColumnFlags.WidthStretch, 1);
             ImGui.TableSetupColumn("##Provider", ImGuiTableColumnFlags.WidthStretch, 1.4f);
-            ImGui.TableSetupColumn("##Status", ImGuiTableColumnFlags.WidthFixed, ImGui.CalcTextSize("未安裝").X);
+            ImGui.TableSetupColumn("##Status", ImGuiTableColumnFlags.WidthFixed, ImGui.CalcTextSize("循此苦旅 以抵繁星").X);
             DrawCompanionRow("vnavmesh", "", _vnavInstalled);
             DrawCompanionRow("PalacePal", "", _palacePalInstalled);
             DrawCompanionRow("自動輸出", GetRotationProviderLabel(_configuration.Rotation.Provider), _configuration.Rotation.Provider switch
@@ -68,7 +66,11 @@ internal partial class FsdEngine
                 FsdRotationProvider.InsertNameHere3 => _inh3Installed,
                 _ => (bool?)null
             });
-            DrawCompanionRow("I-Ching", "", _ichingInstalled);
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.TextUnformatted("I-Ching");
+            ImGui.TableSetColumnIndex(2);
+            ImGui.TextUnformatted("循此苦旅 以抵繁星");
             DrawCompanionRow("機制走位", bmr ? "Bossmod Reborn" : "自訂", bmr ? _bmrInstalled : null);
             ImGui.EndTable();
         }

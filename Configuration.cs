@@ -13,6 +13,9 @@ public sealed class Configuration : IPluginConfiguration, IFsdSettingsStore
 
     public int Version { get; set; } = 1;
     public FsdSettings Fsd { get; set; } = new();
+    public float MovementYSubtract { get; set; }
+    public bool AutoYAxisAdjustment { get; set; }
+    public bool MovementYDisableInParty { get; set; }
     public string CommunityEvidenceInstallationToken { get; set; } = string.Empty;
 
     public void Initialize(IDalamudPluginInterface pluginInterface)
