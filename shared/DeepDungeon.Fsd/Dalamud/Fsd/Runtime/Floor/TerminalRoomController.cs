@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using DeepDungeon.Fsd.Core;
+using DeepDungeon.Fsd.Dalamud.GameState;
 using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
 using global::Dalamud.Game.ClientState.Conditions;
 using global::Dalamud.Game.ClientState.Objects.Enums;
@@ -13,28 +14,23 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor;
 
 internal sealed partial class TerminalRoomController
 {
-    private RunContext? _ctx;
-    private NavigationHelper? _navHelper;
+    private readonly RunContext _ctx;
+    private readonly NavigationHelper _navHelper;
     private readonly Action<string> _setStatus;
     private readonly Action<string, object> RecordReplayEvent;
     private readonly Action<byte, string> DestroyFloorRuntime;
     private readonly Func<Vector3, Vector3> ResolvePassageWalkingPosition;
     private string Status { set => _setStatus(value); }
 
-    public TerminalRoomController(Action<string> setStatus, Action<string, object> record,
+    public TerminalRoomController(RunContext context, NavigationHelper navigation, Action<string> setStatus, Action<string, object> record,
         Action<byte, string> endFloor, Func<Vector3, Vector3> walkingPosition)
     {
+        _ctx = context;
+        _navHelper = navigation;
         _setStatus = setStatus;
         RecordReplayEvent = record;
         DestroyFloorRuntime = endFloor;
         ResolvePassageWalkingPosition = walkingPosition;
-    }
-
-    public void Initialize(RunContext context, NavigationHelper navigation)
-    {
-        ResetResultRoom();
-        _ctx = context;
-        _navHelper = navigation;
     }
 
     private readonly HashSet<ulong> _resultOpened = new();
@@ -43,15 +39,16 @@ internal sealed partial class TerminalRoomController
     private bool _resultEntered;
     private ulong _resultAltarInteractedId;
     private long _resultAltarCompletionBefore;
+    private ulong _resultExitBefore;
     private bool _resultAltarComplete;
 
-    // PT100 uses its observed altar event; native completion at 99 cannot skip it.
+    // Each observed altar uses its own completion evidence; earlier boss events cannot skip it.
     // The explicit diagnostic boundary still retains the room before interaction.
     public unsafe void UpdateResultRoom()
     {
         var context = _ctx;
         var player = Service.LocalPlayer;
-        if (context == null || player == null) return;
+        if (player == null) return;
         var now = DateTime.UtcNow;
         if (now < _resultNextTick) return;
         _resultNextTick = now.AddMilliseconds(500);
@@ -76,19 +73,25 @@ internal sealed partial class TerminalRoomController
         }
         if (context.FarmingPlan?.StopsForTerminalReview == true)
         {
-            _navHelper?.Cancel();
+            _navHelper.Cancel();
             context.Navigator.CancelAll();
             context.TerminalReviewRequested = true;
-            context.StatusLine = Status = "已到達100層；停止並保留終局房間，等待地圖／獎勵物件驗收。";
+            context.StatusLine = Status = $"已到達{context.Duty.Floor}層；停止並保留終局房間，等待地圖／獎勵物件驗收。";
             RecordReplayEvent("result-room-diagnostic-stop", new { floor = context.Duty.Floor, opened = _resultOpened.Count });
-            Service.Log.Info("[ResultRoom] Diagnostic boundary reached: floor=100; retained room before reward navigation/interaction.");
+            Service.Log.Info($"[ResultRoom] Diagnostic boundary reached: floor={context.Duty.Floor}; retained room before reward navigation/interaction.");
             return;
         }
         if (Service.Condition[ConditionFlag.InCombat] || player.IsCasting) return;
 
-        if (context.Duty.DungeonId == 4 && context.Duty.Floor == 100)
+        if (Potd200RewardPolicy.IsTerminal(context.Duty.DungeonId, context.Duty.Floor))
         {
-            UpdatePt100Altar(now);
+            UpdatePotd200(now);
+            return;
+        }
+
+        if (ResultAltarPolicy.TryGet(context.Duty.DungeonId, context.Duty.Floor, out var altarProfile))
+        {
+            UpdateResultAltar(altarProfile, now);
             return;
         }
 
@@ -142,7 +145,7 @@ internal sealed partial class TerminalRoomController
             }
             _resultChestStarted = now;
         }
-        var navigation = _navHelper!.Navigate(_resultChest.Position, player.Position, 2.5f);
+        var navigation = _navHelper.Navigate(_resultChest.Position, player.Position, 2.5f);
         Status = $"100層：前往獎勵箱 {_resultChest.BaseId}";
         if (navigation is NavigationState.Failed or NavigationState.StuckGiveUp)
         {
@@ -150,45 +153,37 @@ internal sealed partial class TerminalRoomController
             return;
         }
         if (navigation != NavigationState.Arrived || now < _resultNextInteract) return;
-        _resultNextInteract = now.AddSeconds(3);
+        _resultNextInteract = now.Add(InteractionTiming.GetRetryInterval());
         GameInteraction.InteractWith(_resultChest, 3f, false, out var failure, out bool dispatched);
         if (dispatched && _resultInteractedAt == default) _resultInteractedAt = now;
         RecordReplayEvent("result-chest-interaction", new { _resultChest.GameObjectId,
             _resultChest.BaseId, dispatched, failure });
     }
 
-    private void ResetResultRoom()
+    private void UpdateResultAltar(ResultAltarProfile profile, DateTime now)
     {
-        _resultOpened.Clear();
-        _resultChest = null;
-        _resultEntered = false;
-        _resultAltarInteractedId = 0;
-        _resultAltarCompletionBefore = 0;
-        _resultAltarComplete = false;
-        _resultNextTick = _resultStarted = _resultChestStarted = _resultNextInteract = _resultInteractedAt = default;
-    }
-
-    private void UpdatePt100Altar(DateTime now)
-    {
-        var context = _ctx!;
+        var context = _ctx;
         var player = Service.LocalPlayer;
         if (player == null || _resultAltarComplete) return;
         var altar = Service.GameObjects.FirstOrDefault(obj => obj.ObjectKind == ObjectKind.EventObj &&
-            obj.BaseId == Pt100AltarPolicy.AltarBaseId);
-        if (altar != null && Pt100AltarPolicy.CanConfirm(_resultAltarInteractedId, altar.GameObjectId,
-            altar.IsTargetable, _resultAltarCompletionBefore, context.DutyCompletionSequence, context.DutyFailureObserved))
+            obj.BaseId == profile.BaseId);
+        var exit = Service.GameObjects.FirstOrDefault(obj => obj.ObjectKind == ObjectKind.EventObj &&
+            obj.BaseId == ResultAltarPolicy.ExitBaseId && obj.IsTargetable);
+        if (altar != null && ResultAltarPolicy.CanConfirm(profile, _resultAltarInteractedId, altar.GameObjectId,
+            altar.IsTargetable, _resultAltarCompletionBefore, context.DutyCompletionSequence,
+            _resultExitBefore, exit?.GameObjectId ?? 0, context.DutyFailureObserved))
         {
             _resultAltarComplete = true;
-            _navHelper?.Cancel();
-            context.Navigator.CancelAll();
-            context.TerminalRewardsRequired = false;
-            context.StatusLine = Status = "100層祭壇互動完成；正常退本。";
+            bool stayInDuty = context.Duty.DungeonId == DungeonCatalog.HeavenOnHigh.DutyDungeonId ||
+                context.FarmingPlan?.HoldAfterClear == true;
+            FinishResult(stayInDuty);
             RecordReplayEvent("result-altar-completed", new
             {
                 altar.GameObjectId, altar.BaseId, before = _resultAltarCompletionBefore,
-                after = context.DutyCompletionSequence
+                after = context.DutyCompletionSequence, evidence = profile.Evidence.ToString(),
+                exitBefore = _resultExitBefore, exitNow = exit?.GameObjectId
             });
-            Service.Log.Info("[ResultRoom] PT100 altar state transition and fresh duty completion confirmed; normal leave enabled, no exit-object interaction required.");
+            Service.Log.Info($"[ResultRoom] Dungeon {context.Duty.DungeonId} altar {altar.BaseId} confirmed by {profile.Evidence}; stayInDuty={stayInDuty}.");
             return;
         }
         if ((now - _resultStarted).TotalSeconds > 60)
@@ -209,7 +204,7 @@ internal sealed partial class TerminalRoomController
         if (Service.Condition[ConditionFlag.OccupiedInEvent] ||
             Service.Condition[ConditionFlag.OccupiedInQuestEvent] ||
             Service.Condition[ConditionFlag.OccupiedInCutSceneEvent]) return;
-        var navigation = _navHelper!.Navigate(ResolvePassageWalkingPosition(altar.Position), player.Position, 2.5f);
+        var navigation = _navHelper.Navigate(ResolvePassageWalkingPosition(altar.Position), player.Position, 2.5f);
         context.StatusLine = Status = "100層：前往小型祭壇";
         if (navigation is NavigationState.Failed or NavigationState.StuckGiveUp)
         {
@@ -217,8 +212,9 @@ internal sealed partial class TerminalRoomController
             return;
         }
         if (navigation != NavigationState.Arrived || now < _resultNextInteract) return;
-        _resultNextInteract = now.AddSeconds(3);
+        _resultNextInteract = now.Add(InteractionTiming.GetRetryInterval());
         long completionBefore = context.DutyCompletionSequence;
+        ulong exitBefore = exit?.GameObjectId ?? 0;
         GameInteraction.InteractWith(altar, 3f, false, out var failure, out bool dispatched);
         if (dispatched)
         {
@@ -226,18 +222,31 @@ internal sealed partial class TerminalRoomController
             {
                 _resultAltarInteractedId = altar.GameObjectId;
                 _resultAltarCompletionBefore = completionBefore;
+                _resultExitBefore = exitBefore;
             }
             _navHelper.Cancel();
         }
         RecordReplayEvent("result-altar-interaction", new { altar.GameObjectId, altar.BaseId,
             dispatched, failure, completionBefore });
-        Service.Log.Info($"[ResultRoom] PT100 altar interaction: id={altar.GameObjectId}, dispatched={dispatched}, reason={failure}; awaiting altar state and native completion.");
+        Service.Log.Info($"[ResultRoom] Dungeon {context.Duty.DungeonId} altar interaction: id={altar.GameObjectId}, dispatched={dispatched}, reason={failure}; awaiting {profile.Evidence}.");
+    }
+
+    private void FinishResult(bool stayInDuty)
+    {
+        _navHelper.Cancel();
+        _ctx.Navigator.CancelAll();
+        _ctx.TerminalRewardsRequired = false;
+        if (!_ctx.DutyCompletionObserved) _ctx.MarkDutyCompleted();
+        _ctx.TerminalStayRequested = stayInDuty;
+        _ctx.StatusLine = Status = stayInDuty
+            ? $"{_ctx.Duty.Floor} 層獎勵已領取，FSD 結束。"
+            : "100層祭壇互動完成；正常退本。";
     }
 
     private void StopResultReview(string message, DateTime now)
     {
-        _navHelper?.Cancel();
-        _ctx!.StatusLine = Status = message;
+        _navHelper.Cancel();
+        _ctx.StatusLine = Status = message;
         _ctx.StatusIsError = true;
         RecordReplayEvent("result-room-review-required", new
         {

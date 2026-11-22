@@ -328,7 +328,6 @@ internal sealed class CommunityLongRunLogCollector : IRunTelemetryObserver, IDis
     private static readonly TimeSpan MaximumRetryDelay = TimeSpan.FromHours(1);
 
     private readonly string _pendingDirectory;
-    private readonly string _rejectedDirectory;
     private readonly string _installationToken;
     private readonly string _clientVersion;
     private readonly Uri _endpoint;
@@ -367,7 +366,6 @@ internal sealed class CommunityLongRunLogCollector : IRunTelemetryObserver, IDis
         ArgumentNullException.ThrowIfNull(log);
 
         _pendingDirectory = Path.Combine(pluginConfigDirectory, "LongRunLogs", "pending");
-        _rejectedDirectory = Path.Combine(pluginConfigDirectory, "LongRunLogs", "rejected");
         _installationToken = installationToken;
         _clientVersion = clientVersion;
         _endpoint = endpoint;
@@ -378,7 +376,6 @@ internal sealed class CommunityLongRunLogCollector : IRunTelemetryObserver, IDis
         _httpClient.Timeout = TimeSpan.FromSeconds(30);
 
         Directory.CreateDirectory(_pendingDirectory);
-        Directory.CreateDirectory(_rejectedDirectory);
         _worker = Task.Run(WorkerLoopAsync);
     }
 
@@ -619,10 +616,10 @@ internal sealed class CommunityLongRunLogCollector : IRunTelemetryObserver, IDis
         catch (Exception error) when (
             error is IOException or UnauthorizedAccessException or InvalidDataException)
         {
-            MoveToRejected(selectedFile, "invalid-local-entry");
+            File.Delete(selectedFile);
             _log.Error(
                 error,
-                "Long-run log spool entry {FileName} is invalid and was retained under rejected.",
+                "Long-run log spool entry {FileName} is invalid and was deleted.",
                 Path.GetFileName(selectedFile));
             return UploadAttemptResult.LocalEntryRejected;
         }
@@ -647,7 +644,7 @@ internal sealed class CommunityLongRunLogCollector : IRunTelemetryObserver, IDis
                 HttpStatusCode.RequestEntityTooLarge or
                 HttpStatusCode.UnsupportedMediaType)
             {
-                MoveToRejected(selectedFile, $"server-{(int)response.StatusCode}");
+                File.Delete(selectedFile);
                 _log.Error(
                     "Long-run log {PayloadId} was permanently rejected with HTTP {StatusCode}.",
                     payloadId,
@@ -688,19 +685,6 @@ internal sealed class CommunityLongRunLogCollector : IRunTelemetryObserver, IDis
             MaximumRetryDelay.TotalSeconds);
         double jitter = 0.85 + Random.Shared.NextDouble() * 0.3;
         return TimeSpan.FromSeconds(seconds * jitter);
-    }
-
-    private void MoveToRejected(string sourcePath, string reason)
-    {
-        string destinationPath = Path.Combine(
-            _rejectedDirectory,
-            $"{reason}-{Path.GetFileName(sourcePath)}");
-        if (File.Exists(destinationPath))
-        {
-            File.Delete(sourcePath);
-            return;
-        }
-        File.Move(sourcePath, destinationPath);
     }
 
     private static bool IsLowerHex(string value, int expectedLength)

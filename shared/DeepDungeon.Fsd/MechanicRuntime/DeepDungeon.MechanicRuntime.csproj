@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <AssemblyName>DeepDungeon.MechanicRuntime</AssemblyName>
+    <RootNamespace>BossMod</RootNamespace>
+    <Nullable>enable</Nullable>
+    <LangVersion>preview</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!-- Vendored from Refs/MasterPlayer/MechanicRuntime (BossModReborn fork, BSD).
+         Track upstream via SourceChanges.json + exclusion list; see research/automation-rewrite D-10. -->
+  </PropertyGroup>
+  <PropertyGroup>
+    <DalamudLibPath Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(appdata)\XIVLauncher\addon\Hooks\dev\</DalamudLibPath>
+    <DalamudLibPath Condition="$([MSBuild]::IsOSPlatform('Linux'))">$(HOME)/.xlcore/dalamud/Hooks/dev/</DalamudLibPath>
+    <DalamudLibPath Condition="Exists('$(appdata)\XIVLauncherCN\addon\Hooks\dev\')">$(appdata)\XIVLauncherCN\addon\Hooks\dev\</DalamudLibPath>
+    <DalamudLibPath Condition="$(DALAMUD_HOME) != ''">$(DALAMUD_HOME)/</DalamudLibPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Core\DeepDungeon.Fsd.Core.csproj" />
+    <InternalsVisibleTo Include="PilgrimsBossChecks" />
+    <Compile Include="Upstream\**\*.cs" />
+    <Compile Include="Hosting\**\*.cs" />
+    <Using Include="System" />
+    <Using Include="System.Collections" />
+    <Using Include="System.Collections.Concurrent" />
+    <Using Include="System.Collections.Generic" />
+    <Using Include="System.Collections.Immutable" />
+    <Using Include="System.Runtime.InteropServices" />
+    <Using Include="System.Runtime.CompilerServices" />
+    <Using Include="System.Linq" />
+    <Using Include="System.Numerics" />
+    <Using Include="System.Threading.Tasks" />
+    <Using Include="System.Text" />
+    <Reference Include="Dalamud" HintPath="$(DalamudLibPath)Dalamud.dll" Private="false" />
+    <Reference Include="Dalamud.Common" HintPath="$(DalamudLibPath)Dalamud.Common.dll" Private="false" />
+    <Reference Include="Dalamud.Bindings.ImGui" HintPath="$(DalamudLibPath)Dalamud.Bindings.ImGui.dll" Private="false" />
+    <Reference Include="Dalamud.Bindings.ImPlot" HintPath="$(DalamudLibPath)Dalamud.Bindings.ImPlot.dll" Private="false" />
+    <Reference Include="ImGuiScene" HintPath="$(DalamudLibPath)ImGuiScene.dll" Private="false" />
+    <Reference Include="FFXIVClientStructs" HintPath="$(DalamudLibPath)FFXIVClientStructs.dll" Private="false" />
+    <Reference Include="InteropGenerator.Runtime" HintPath="$(DalamudLibPath)InteropGenerator.Runtime.dll" Private="false" />
+    <Reference Include="Lumina" HintPath="$(DalamudLibPath)Lumina.dll" Private="false" />
+    <Reference Include="Lumina.Excel" HintPath="$(DalamudLibPath)Lumina.Excel.dll" Private="false" />
+    <PackageReference Include="TerraFX.Interop.Windows" Version="10.0.26100.6" />
+    <EmbeddedResource Include="Upstream\Pathfinding\ObstacleMaps\*">
+      <LogicalName>BossModReborn.Pathfinding.ObstacleMaps.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+</Project>

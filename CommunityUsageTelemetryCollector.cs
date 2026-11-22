@@ -166,7 +166,6 @@ internal sealed class CommunityUsageTelemetryCollector : IRunTelemetryObserver, 
     private static readonly TimeSpan MaximumRetryDelay = TimeSpan.FromHours(1);
 
     private readonly string _pendingDirectory;
-    private readonly string _rejectedDirectory;
     private readonly string _installationToken;
     private readonly string _clientVersion;
     private readonly Uri _endpoint;
@@ -203,7 +202,6 @@ internal sealed class CommunityUsageTelemetryCollector : IRunTelemetryObserver, 
         ArgumentNullException.ThrowIfNull(log);
 
         _pendingDirectory = Path.Combine(pluginConfigDirectory, "UsageTelemetry", "pending");
-        _rejectedDirectory = Path.Combine(pluginConfigDirectory, "UsageTelemetry", "rejected");
         _installationToken = installationToken;
         _clientVersion = clientVersion;
         _endpoint = endpoint;
@@ -214,7 +212,6 @@ internal sealed class CommunityUsageTelemetryCollector : IRunTelemetryObserver, 
         _httpClient.Timeout = TimeSpan.FromSeconds(20);
 
         Directory.CreateDirectory(_pendingDirectory);
-        Directory.CreateDirectory(_rejectedDirectory);
         _worker = Task.Run(WorkerLoopAsync);
         DateTime pluginActiveUtc = DateTime.UtcNow;
         QueueEvent(
@@ -447,10 +444,10 @@ internal sealed class CommunityUsageTelemetryCollector : IRunTelemetryObserver, 
             catch (Exception error) when (
                 error is IOException or UnauthorizedAccessException or InvalidDataException)
             {
-                MoveToRejected(file, "invalid-local-entry");
+                File.Delete(file);
                 _log.Error(
                     error,
-                    "Usage telemetry spool entry {FileName} is invalid and was retained under rejected.",
+                    "Usage telemetry spool entry {FileName} is invalid and was deleted.",
                     Path.GetFileName(file));
                 return UploadAttemptResult.LocalEntryRejected;
             }
@@ -467,8 +464,8 @@ internal sealed class CommunityUsageTelemetryCollector : IRunTelemetryObserver, 
         catch (InvalidDataException error)
         {
             foreach (string file in selectedFiles)
-                MoveToRejected(file, "invalid-local-batch");
-            _log.Error(error, "Usage telemetry batch was invalid and retained under rejected.");
+                File.Delete(file);
+            _log.Error(error, "Usage telemetry batch was invalid and its entries were deleted.");
             return UploadAttemptResult.LocalEntryRejected;
         }
 
@@ -494,7 +491,7 @@ internal sealed class CommunityUsageTelemetryCollector : IRunTelemetryObserver, 
                 HttpStatusCode.UnsupportedMediaType)
             {
                 foreach (string file in selectedFiles)
-                    MoveToRejected(file, $"server-{(int)response.StatusCode}");
+                    File.Delete(file);
                 _log.Error(
                     "Usage telemetry batch {BatchId} was permanently rejected with HTTP {StatusCode}.",
                     batchId,
@@ -535,19 +532,6 @@ internal sealed class CommunityUsageTelemetryCollector : IRunTelemetryObserver, 
             MaximumRetryDelay.TotalSeconds);
         double jitter = 0.85 + Random.Shared.NextDouble() * 0.3;
         return TimeSpan.FromSeconds(seconds * jitter);
-    }
-
-    private void MoveToRejected(string sourcePath, string reason)
-    {
-        string destinationPath = Path.Combine(
-            _rejectedDirectory,
-            $"{reason}-{Path.GetFileName(sourcePath)}");
-        if (File.Exists(destinationPath))
-        {
-            File.Delete(sourcePath);
-            return;
-        }
-        File.Move(sourcePath, destinationPath);
     }
 
     private string CreateDailyPluginActiveEventId(DateTime nowUtc)

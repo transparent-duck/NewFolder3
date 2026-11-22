@@ -8,8 +8,7 @@ public sealed class DetailedMapHostOptions
     public DetailedMapHostOptions(
         Uri? catalogBaseUri,
         bool contributesAnonymousEvidence,
-        bool deleteCatalogsWhenDisabled,
-        bool supportsControlledPtSurvey)
+        bool deleteCatalogsWhenDisabled)
     {
         if (catalogBaseUri != null)
         {
@@ -43,7 +42,6 @@ public sealed class DetailedMapHostOptions
 
         ContributesAnonymousEvidence = contributesAnonymousEvidence;
         DeleteCatalogsWhenDisabled = deleteCatalogsWhenDisabled;
-        SupportsControlledPtSurvey = supportsControlledPtSurvey;
     }
 
     /// <summary>
@@ -56,5 +54,12 @@ public sealed class DetailedMapHostOptions
 
     public bool ContributesAnonymousEvidence { get; }
     public bool DeleteCatalogsWhenDisabled { get; }
-    public bool SupportsControlledPtSurvey { get; }
+    // Keep older standalone hosts buildable when they supply the disabled flag.
+    public DetailedMapHostOptions(Uri? catalogBaseUri, bool contributesAnonymousEvidence,
+        bool deleteCatalogsWhenDisabled, bool supportsControlledPtSurvey)
+        : this(catalogBaseUri, contributesAnonymousEvidence, deleteCatalogsWhenDisabled)
+    {
+        if (supportsControlledPtSurvey)
+            throw new ArgumentException("Controlled PT survey has been removed.", nameof(supportsControlledPtSurvey));
+    }
 }

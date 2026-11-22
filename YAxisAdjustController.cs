@@ -25,6 +25,15 @@ internal sealed unsafe class YAxisAdjustController : IDisposable
     private float _overlayOffset = float.NaN;
     private string _overlayLabel = string.Empty;
 
+    internal float ActualYOffset
+    {
+        get
+        {
+            float offset = _configuration.MovementYSubtract;
+            return _hook is { IsEnabled: true } && float.IsFinite(offset) ? Math.Clamp(offset, -15f, 15f) : 0f;
+        }
+    }
+
     public YAxisAdjustController(Configuration configuration, IObjectTable objects, IPartyList party, IPluginLog log)
     {
         _configuration = configuration;

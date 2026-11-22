@@ -27,8 +27,9 @@ internal sealed class FsdWindow : Window
             ImGui.Spacing();
             ImGui.Separator();
             ImGui.Spacing();
-            ImGui.TextWrapped("它也許可以幫助你挖到一些寶藏");
-            ImGui.TextWrapped("推薦設定: 啟用寶藏+金銀, 如果陶片不足啟用銅.\n啟用 NewFolder3 自動選中 + 你所用輸出外掛的主動攻擊\n死靈術士模式需要較高輸出的職業, 如黑魔.");
+            ImGui.TextWrapped("它也許可以幫助你挖到一些寶藏並成為死靈術士");
+            ImGui.TextWrapped("請啟用你所用輸出外掛的非戰鬥時主動攻擊能力.\n請關閉任意其他外掛的目標選擇.\n請關閉任意其他外掛的移動速度修正.");
+            ImGui.TextWrapped("死靈術士需要強強PC, 請勿制限低幀");
             ImGui.EndTabItem();
         }
 

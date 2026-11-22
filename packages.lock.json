@@ -7,6 +7,32 @@
         "resolved": "3.1.0",
         "contentHash": "KebM3/iZtZWgeFuGTQJyWu+VQKAeq1xXY9bkSSDv27hALxDtSdJAfPnT8dWpl7ti2B3ajnMj70/VLXY4D3bupg=="
       },
+      "Microsoft.NETCore.Platforms": {
+        "type": "Transitive",
+        "resolved": "1.1.0",
+        "contentHash": "kz0PEW2lhqygehI/d6XsPCQzD7ff7gUJaVGPVETX611eadGsA3A877GdSlU0LRVMCTH/+P3o2iDTak+S08V2+A=="
+      },
+      "NETStandard.Library": {
+        "type": "Transitive",
+        "resolved": "1.6.1",
+        "contentHash": "WcSp3+vP+yHNgS8EV5J7pZ9IRpeDuARBPN28by8zqff1wJQXm26PVU8L3/fYLBJVU7BtDyqNVWq2KlCVvSSR4A==",
+        "dependencies": {
+          "Microsoft.NETCore.Platforms": "1.1.0"
+        }
+      },
+      "SharpDX": {
+        "type": "Transitive",
+        "resolved": "4.2.0",
+        "contentHash": "3pv0LFMvfK/dv1qISJnn8xBeeT6R/FRvr0EV4KI2DGsL84Qlv6P7isWqxGyU0LCwlSVCJN3jgHJ4Bl0KI2PJww==",
+        "dependencies": {
+          "NETStandard.Library": "1.6.1"
+        }
+      },
+      "TerraFX.Interop.Windows": {
+        "type": "Transitive",
+        "resolved": "10.0.26100.6",
+        "contentHash": "QjL9vliSWmscUv6A7bjvsryHjYnY0norqvCNcLXSdEy1VIIzMF6FiS7BuvLTBuGUeN9FY4zJbU65OsHEv7jG9A=="
+      },
       "TinyPinyin": {
         "type": "Transitive",
         "resolved": "1.1.0",
@@ -19,7 +45,10 @@
         "type": "Project",
         "dependencies": {
           "DeepDungeon.Fsd.Core": "[1.0.0, )",
-          "DeepDungeon.Fsd.Runtime": "[1.0.0, )",
+          "DeepDungeon.Fsd.Runtime": "[3.0.1, )",
+          "DeepDungeon.Fsd.Terrain": "[1.0.0, )",
+          "DeepDungeon.MechanicRuntime": "[1.0.0, )",
+          "FFXIVClientStructs.Expansion": "[1.0.0, )",
           "OmenTools": "[1.0.0, )"
         }
       },
@@ -28,6 +57,23 @@
         "dependencies": {
           "DeepDungeon.Fsd.Core": "[1.0.0, )"
         }
+      },
+      "deepdungeon.fsd.terrain": {
+        "type": "Project",
+        "dependencies": {
+          "DeepDungeon.Fsd.Core": "[1.0.0, )",
+          "SharpDX": "[4.2.0, )"
+        }
+      },
+      "deepdungeon.mechanicruntime": {
+        "type": "Project",
+        "dependencies": {
+          "DeepDungeon.Fsd.Core": "[1.0.0, )",
+          "TerraFX.Interop.Windows": "[10.0.26100.6, )"
+        }
+      },
+      "ffxivclientstructs.expansion": {
+        "type": "Project"
       },
       "omentools": {
         "type": "Project",

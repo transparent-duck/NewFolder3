@@ -13,7 +13,10 @@ namespace DeepDungeon.Fsd.Dalamud.Map
             if (dd == null || roomIndex < 0 || roomIndex >= MaxRoomsPerFloor)
                 return false;
 
-            return MapPosGeneration.TryGetRuntimeRoomCenter(dd, roomIndex, out center);
+            if (FloorMapKey.For(dd) is not { } key || FloorMap.Get(key)?.Centers[roomIndex] is not { } position)
+                return false;
+            center = position;
+            return true;
         }
     }
 }

@@ -18,7 +18,6 @@ internal sealed partial class FloorExplorationController
         if (_runTelemetryObserver == null ||
             (IsDisposed || Kind != FloorRuntimeKind.Normal) ||
             this.RunFloorStatePublisher != null ||
-            _ctx?.ControlledPtSurvey != null ||
             this.NormalGraph == null ||
             this.ObjectEvidence.Current?.Available != true)
         {
@@ -45,7 +44,7 @@ internal sealed partial class FloorExplorationController
             out RawWorldPosition? exact,
             out RawWorldPosition? banded);
         RawWorldPosition[] observedSightTraps =
-            (this.Executor?.ObservedSightTrapPositions ?? Array.Empty<Vector3>())
+            ObservedSightTrapPositions
             .Select(ToRawPosition)
             .ToArray();
         FloorsetHoardOpportunity floorsetHoardOpportunity =
@@ -53,7 +52,7 @@ internal sealed partial class FloorExplorationController
         RunFloorStateTelemetry? state = publisher.PublishFactual(
             DateTime.UtcNow,
             floorsetHoardOpportunity,
-            this.Executor?.HasOpenedHoardThisFloor == true,
+            HoardAcquired,
             exact,
             banded,
             observedSightTraps,
@@ -109,7 +108,7 @@ internal sealed partial class FloorExplorationController
         FloorsetHoardOpportunity floorsetHoardOpportunity =
             DeepDungeonFloorsetTracker.GetCurrentOpportunity(this.Floor);
         RawWorldPosition[] observedSightTraps =
-            (this.Executor?.ObservedSightTrapPositions ?? Array.Empty<Vector3>())
+            ObservedSightTrapPositions
             .Select(ToRawPosition)
             .ToArray();
         RunFloorCandidateFact[] candidates = BuildCandidateFacts(
@@ -127,13 +126,9 @@ internal sealed partial class FloorExplorationController
             out RawWorldPosition? banded);
         RunFloorVisibleChestFact[] visibleChests =
             BuildVisibleChestFacts(rooms);
-        BuildRetainedRouteFacts(
-            dd,
-            origin,
-            rooms,
-            visibleChests,
-            out RunFloorRoutePointFact[] retainedRoute,
-            out string? retainedRouteUnavailableReason);
+        var (retainedRoute, retainedRouteUnavailableReason) = _siteDriver != null
+            ? _siteDriver.BuildNonHoardRoute(origin, RoomGraph.GetLocalPlayerRoomIndex(dd))
+            : (Array.Empty<RunFloorRoutePointFact>(), "floor route is not available");
 
         return new RunFloorStateTelemetry
         {
@@ -150,7 +145,7 @@ internal sealed partial class FloorExplorationController
             DetailedMapActive = runMap.Policy == DetailedMapRuntimePolicy.DetailedMap,
             YieldAvailable = yield != null,
             FloorsetHoardOpportunity = floorsetHoardOpportunity,
-            HoardOpenedThisFloor = this.Executor?.HasOpenedHoardThisFloor == true,
+            HoardOpenedThisFloor = HoardAcquired,
             CatalogReleaseId = catalog?.ReleaseId,
             CatalogModelSha256 = catalog?.ModelSha256,
             HoardYieldSha256 = catalog?.HoardYieldSha256,
@@ -167,153 +162,6 @@ internal sealed partial class FloorExplorationController
             RetainedRoute = retainedRoute,
             RetainedRouteUnavailableReason = retainedRouteUnavailableReason
         };
-    }
-
-    private unsafe void BuildRetainedRouteFacts(
-        InstanceContentDeepDungeon* dd,
-        Vector3 origin,
-        IReadOnlyList<RunFloorRoomFact> rooms,
-        IReadOnlyList<RunFloorVisibleChestFact> visibleChests,
-        out RunFloorRoutePointFact[] route,
-        out string? unavailableReason)
-    {
-        route = [];
-        unavailableReason = null;
-        AutoPilotExecutor? executor = this.Executor;
-        if (executor?.HasPlanningSnapshot != true)
-        {
-            unavailableReason = "normal planning snapshot is unavailable";
-            return;
-        }
-
-        int originRoom = RoomGraph.GetLocalPlayerRoomIndex(dd);
-        int passageRoom = RoomGraph.GetPassageRoomIndex(dd);
-        if (!TryFindRoom(rooms, originRoom, out _) ||
-            !TryFindRoom(rooms, passageRoom, out RunFloorRoomFact passage))
-        {
-            unavailableReason =
-                "origin or passage room is absent from generated room bindings";
-            return;
-        }
-
-        for (int chestIndex = 0; chestIndex < visibleChests.Count; chestIndex++)
-        {
-            RunFloorVisibleChestFact chest = visibleChests[chestIndex];
-            if (IsChestRetained(chest.Kind, executor.ConfigSnapshot) &&
-                !TryFindRoom(rooms, chest.RoomIndex, out _))
-            {
-                unavailableReason =
-                    "a retained visible chest is absent from generated room bindings";
-                return;
-            }
-        }
-
-        var result = new List<RunFloorRoutePointFact>(
-            executor.RetainedNonHoardRoute.Count + visibleChests.Count + 2)
-        {
-            new(
-                originRoom,
-                ToRawPosition(origin),
-                RunFloorRoutePointKind.Origin)
-        };
-        IReadOnlyList<RoomPlanEntry> retained =
-            executor.SnapshotRetainedNonHoardRoute();
-        for (int planIndex = 0; planIndex < retained.Count; planIndex++)
-        {
-            RoomPlanEntry entry = retained[planIndex];
-            if (!entry.ShouldSearchChests)
-                continue;
-            if (!TryFindRoom(rooms, entry.RoomIndex, out RunFloorRoomFact room))
-            {
-                unavailableReason =
-                    $"retained chest room {entry.RoomIndex} is absent from generated room bindings";
-                return;
-            }
-
-            result.Add(new RunFloorRoutePointFact(
-                room.RoomIndex,
-                room.Center,
-                RunFloorRoutePointKind.RetainedChestRoom));
-            AppendRetainedVisibleChests(
-                result,
-                room.RoomIndex,
-                visibleChests,
-                executor.ConfigSnapshot);
-        }
-
-        result.Add(new RunFloorRoutePointFact(
-            passage.RoomIndex,
-            passage.Center,
-            RunFloorRoutePointKind.Passage));
-        route = result.ToArray();
-    }
-
-    private static void AppendRetainedVisibleChests(
-        List<RunFloorRoutePointFact> route,
-        int roomIndex,
-        IReadOnlyList<RunFloorVisibleChestFact> visibleChests,
-        RunOptions options)
-    {
-        var remaining = new List<RunFloorVisibleChestFact>();
-        for (int index = 0; index < visibleChests.Count; index++)
-        {
-            RunFloorVisibleChestFact chest = visibleChests[index];
-            if (chest.RoomIndex == roomIndex && IsChestRetained(chest.Kind, options))
-                remaining.Add(chest);
-        }
-
-        RawWorldPosition current = route[^1].Position;
-        while (remaining.Count > 0)
-        {
-            int bestIndex = 0;
-            double bestDistance = double.MaxValue;
-            for (int index = 0; index < remaining.Count; index++)
-            {
-                double dx = current.X - remaining[index].Position.X;
-                double dz = current.Z - remaining[index].Position.Z;
-                double distance = dx * dx + dz * dz;
-                if (distance < bestDistance)
-                {
-                    bestDistance = distance;
-                    bestIndex = index;
-                }
-            }
-            RunFloorVisibleChestFact next = remaining[bestIndex];
-            route.Add(new RunFloorRoutePointFact(
-                roomIndex,
-                next.Position,
-                RunFloorRoutePointKind.RetainedVisibleChest));
-            current = next.Position;
-            remaining.RemoveAt(bestIndex);
-        }
-    }
-
-    private static bool IsChestRetained(
-        RunFloorVisibleChestKind kind,
-        RunOptions options) =>
-        kind switch
-        {
-            RunFloorVisibleChestKind.Bronze => options.OpenBronze,
-            RunFloorVisibleChestKind.Silver => options.OpenSilver,
-            RunFloorVisibleChestKind.Gold => options.OpenGold,
-            _ => false
-        };
-
-    private static bool TryFindRoom(
-        IReadOnlyList<RunFloorRoomFact> rooms,
-        int roomIndex,
-        out RunFloorRoomFact room)
-    {
-        for (int index = 0; index < rooms.Count; index++)
-        {
-            if (rooms[index].RoomIndex == roomIndex)
-            {
-                room = rooms[index];
-                return true;
-            }
-        }
-        room = default;
-        return false;
     }
 
     internal static RunFloorCandidateFact[] BuildCandidateFacts(
@@ -456,7 +304,7 @@ internal sealed partial class FloorExplorationController
         out RawWorldPosition? banded)
     {
         FloorObjectEvidenceSnapshot? evidence = this.ObjectEvidence.Current;
-        Vector3? exactPosition = this.Executor?.CachedHoardIndicatorPos;
+        Vector3? exactPosition = _ctx.Knowledge.Floor?.ExactHoardPosition;
         if (!exactPosition.HasValue && evidence?.HoardIndicators.Count > 0)
             exactPosition = evidence.HoardIndicators[0].Object.Position;
         Vector3? bandedPosition = null;

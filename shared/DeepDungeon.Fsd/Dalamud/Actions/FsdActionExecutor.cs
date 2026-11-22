@@ -19,6 +19,7 @@ public static class FsdActionExecutor
         float? animationLock = manager != null ? manager->AnimationLock : null;
         bool accepted = Cast(actionId, target);
         string result = accepted ? "native-call-accepted" :
+            MasterPlayer.MechanicRuntime.MechanicExecutionState.ActionsBlocked ? "mechanic-action-restriction" :
             player == null || player.Address == 0 ? "player-unavailable" : player.IsDead ? "player-dead" :
             actionId == 0 ? "no-action" : between ? "transition" : manager == null ? "action-manager-unavailable" :
             animationLock > 0.05f ? "animation-lock" : "native-call-rejected";
@@ -30,6 +31,7 @@ public static class FsdActionExecutor
 
     public static unsafe bool TryUseAction(ActionType actionType, uint actionId, ulong target, bool requireReady)
     {
+        if (MasterPlayer.MechanicRuntime.MechanicExecutionState.ActionsBlocked) return false;
         var player = Service.LocalPlayer;
         if (player == null || player.Address == 0 || player.IsDead || actionId == 0)
             return false;

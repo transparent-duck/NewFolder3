@@ -1,7 +1,6 @@
 namespace DeepDungeon.Fsd.Core;
 
 public readonly record struct NaturalPassageAccelerationSnapshot(
-    bool ControlledSurveyActive,
     bool EntryWindowOpen,
     bool PassageOpen,
     int PoisonfruitStock,
@@ -25,8 +24,7 @@ public static class NaturalPassageAccelerationPolicy
     public static NaturalPassageAccelerationAction Decide(
         in NaturalPassageAccelerationSnapshot snapshot)
     {
-        if (snapshot.ControlledSurveyActive ||
-            !snapshot.EntryWindowOpen ||
+        if (!snapshot.EntryWindowOpen ||
             snapshot.PassageOpen ||
             !snapshot.CanDispatch ||
             !snapshot.PassageDispatchSafe ||

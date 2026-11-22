@@ -1,3 +1,4 @@
+using DeepDungeon.Fsd.Core;
 using System.Numerics;
 using global::Dalamud.Game.ClientState.Objects.Types;
 using FFXIVClientStructs.FFXIV.Client.Game.Control;
@@ -6,7 +7,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 {
 	internal static class NpcInteractionGuard
 	{
-		public const float MaxInteractDistance = 5.5f;
+		public static readonly NavigationRange InteractionRange = new(5.5f, NavigationDistanceMetric.Spatial);
+        public static float MaxInteractDistance => InteractionRange.Radius;
 
 		public static unsafe bool TryInteract(uint baseId, string statusPrefix, out string status)
 		{
@@ -25,8 +27,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 				return false;
 			}
 
-			var distance = Vector3.Distance(player.Position, npc.Position);
-			if (distance > MaxInteractDistance)
+			var distance = InteractionRange.Distance(player.Position, npc.Position);
+			if (!InteractionRange.Contains(player.Position, npc.Position))
 			{
 				status = $"{statusPrefix}: NPC too far ({distance:F1}m); move near entry NPC";
 				return false;

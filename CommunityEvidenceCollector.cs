@@ -14,7 +14,6 @@ internal sealed class CommunityEvidenceCollector : IFloorEvidenceObserver, IDisp
     private static readonly TimeSpan MaximumRetryDelay = TimeSpan.FromHours(1);
 
     private readonly string _pendingDirectory;
-    private readonly string _rejectedDirectory;
     private readonly string _installationToken;
     private readonly Uri _endpoint;
     private readonly IPluginLog _log;
@@ -52,10 +51,6 @@ internal sealed class CommunityEvidenceCollector : IFloorEvidenceObserver, IDisp
             pluginConfigDirectory,
             "DetailedMapEvidence",
             "pending");
-        _rejectedDirectory = Path.Combine(
-            pluginConfigDirectory,
-            "DetailedMapEvidence",
-            "rejected");
         _installationToken = installationToken;
         _endpoint = endpoint;
         _log = log;
@@ -65,7 +60,6 @@ internal sealed class CommunityEvidenceCollector : IFloorEvidenceObserver, IDisp
         _httpClient.Timeout = TimeSpan.FromSeconds(20);
 
         Directory.CreateDirectory(_pendingDirectory);
-        Directory.CreateDirectory(_rejectedDirectory);
         _worker = Task.Run(WorkerLoopAsync);
     }
 
@@ -262,10 +256,10 @@ internal sealed class CommunityEvidenceCollector : IFloorEvidenceObserver, IDisp
             catch (Exception error) when (
                 error is IOException or UnauthorizedAccessException or InvalidDataException)
             {
-                MoveToRejected(file, "invalid-local-entry");
+                File.Delete(file);
                 _log.Error(
                     error,
-                    "Detailed-map evidence spool entry {FileName} is invalid and was retained under rejected.",
+                    "Detailed-map evidence spool entry {FileName} is invalid and was deleted.",
                     Path.GetFileName(file));
                 return UploadAttemptResult.LocalEntryRejected;
             }
@@ -283,10 +277,10 @@ internal sealed class CommunityEvidenceCollector : IFloorEvidenceObserver, IDisp
         catch (InvalidDataException error)
         {
             foreach (string file in selectedFiles)
-                MoveToRejected(file, "invalid-local-batch");
+                File.Delete(file);
             _log.Error(
                 error,
-                "Detailed-map evidence batch was invalid and its entries were retained under rejected.");
+                "Detailed-map evidence batch was invalid and its entries were deleted.");
             return UploadAttemptResult.LocalEntryRejected;
         }
 
@@ -317,9 +311,9 @@ internal sealed class CommunityEvidenceCollector : IFloorEvidenceObserver, IDisp
                 HttpStatusCode.UnsupportedMediaType)
             {
                 foreach (string file in selectedFiles)
-                    MoveToRejected(file, $"server-{(int)response.StatusCode}");
+                    File.Delete(file);
                 _log.Error(
-                    "Detailed-map evidence batch {BatchId} was permanently rejected with HTTP {StatusCode}; entries were retained under rejected.",
+                    "Detailed-map evidence batch {BatchId} was permanently rejected with HTTP {StatusCode}; entries were deleted.",
                     batchId,
                     (int)response.StatusCode);
                 return UploadAttemptResult.ServerRejected;
@@ -360,19 +354,6 @@ internal sealed class CommunityEvidenceCollector : IFloorEvidenceObserver, IDisp
             MaximumRetryDelay.TotalSeconds);
         double jitter = 0.85 + Random.Shared.NextDouble() * 0.3;
         return TimeSpan.FromSeconds(seconds * jitter);
-    }
-
-    private void MoveToRejected(string sourcePath, string reason)
-    {
-        string destinationPath = Path.Combine(
-            _rejectedDirectory,
-            $"{reason}-{Path.GetFileName(sourcePath)}");
-        if (File.Exists(destinationPath))
-        {
-            File.Delete(sourcePath);
-            return;
-        }
-        File.Move(sourcePath, destinationPath);
     }
 
     public void Dispose()

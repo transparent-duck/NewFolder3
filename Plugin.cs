@@ -4,6 +4,7 @@ using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using DeepDungeon.Fsd.Dalamud;
 using DeepDungeon.Fsd.Dalamud.Runtime;
+using FFXIVClientStructs.Expansion;
 using OmenTools;
 using OmenTools.OmenService;
 
@@ -33,7 +34,8 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         IFramework framework,
         IPluginLog pluginLog,
         IObjectTable objectTable,
-        IPartyList partyList)
+        IPartyList partyList,
+        ISigScanner sigScanner)
     {
         _pluginInterface = pluginInterface ?? throw new ArgumentNullException(nameof(pluginInterface));
         _commandManager = commandManager ?? throw new ArgumentNullException(nameof(commandManager));
@@ -45,6 +47,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         CommunityUsageTelemetryCollector? usageTelemetryCollector = null;
         CommunityLongRunLogCollector? longRunLogCollector = null;
         var omenInitialized = false;
+        var nativeInteropInitialized = false;
         var commandRegistered = false;
         var drawSubscribed = false;
         var configSubscribed = false;
@@ -62,10 +65,13 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
                     .Disable<TargetManager>()
                     .Disable<UseActionManager>());
             omenInitialized = true;
+            nativeInteropInitialized = true;
+            ExpansionInterop.Initialize(sigScanner.SearchBase);
 
             _configuration =
                 pluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
             _configuration.Initialize(pluginInterface);
+            DeleteLegacyRejectedUploads(pluginInterface.GetPluginConfigDirectory(), pluginLog);
             _accessGate = NewFolder3BuildProfile.CreateAccessGate(pluginInterface, pluginLog);
             string hostVersion = typeof(Plugin).Assembly.GetName().Version?.ToString()
                 ?? throw new InvalidOperationException("Standalone host version is unavailable.");
@@ -125,20 +131,22 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
                     : usageTelemetryCollector ?? (IRunTelemetryObserver?)longRunLogCollector;
 
             // FsdApplication injects the shared Dalamud services required by FSD.
-            application = new FsdApplication(
+            var yAxisController = new YAxisAdjustController(_configuration, objectTable, partyList, pluginLog);
+            yAxis = yAxisController;
+            _yAxis = yAxisController;
+            application = FsdApplication.CreateStandalone(
                 pluginInterface,
                 _configuration,
                 ProductIdentity.HostIdentity,
                 hostVersion,
                 NewFolder3BuildProfile.CreateDetailedMapHostOptions(),
-                _communityEvidenceCollector,
-                runTelemetryObserver,
+                playerYOffsetProvider: () => yAxisController.ActualYOffset,
+                floorEvidenceObserver: _communityEvidenceCollector,
+                runTelemetryObserver: runTelemetryObserver,
                 tryAuthorizeFsdStart: _accessGate.TryAuthorizeFsdStart,
                 fsdStartDenialNoticeProvider: () => _accessGate.FsdStartDenialNotice);
             _application = application;
 
-            yAxis = new YAxisAdjustController(_configuration, objectTable, partyList, pluginLog);
-            _yAxis = yAxis;
             _window = new FsdWindow(_application, _yAxis);
             _windows.AddWindow(_window);
 
@@ -168,6 +176,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
             RollBack(() => communityEvidenceCollector?.Dispose(), rollbackErrors);
             RollBack(() => usageTelemetryCollector?.Dispose(), rollbackErrors);
             RollBack(() => longRunLogCollector?.Dispose(), rollbackErrors);
+            RollBack(() => { if (nativeInteropInitialized) ExpansionInterop.Uninitialize(); }, rollbackErrors);
             RollBack(() => { if (omenInitialized) DService.Uninit(); }, rollbackErrors);
 
             if (rollbackErrors.Count == 0)
@@ -175,6 +184,27 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
 
             rollbackErrors.Insert(0, startupError);
             throw new AggregateException("Standalone FSD startup and rollback both failed.", rollbackErrors);
+        }
+    }
+
+    private static void DeleteLegacyRejectedUploads(string configDirectory, IPluginLog log)
+    {
+        foreach (string spool in new[] { "DetailedMapEvidence", "UsageTelemetry", "LongRunLogs" })
+        {
+            string directory = Path.Combine(configDirectory, spool, "rejected");
+            if (!Directory.Exists(directory))
+                continue;
+            try
+            {
+                foreach (string file in Directory.EnumerateFiles(directory))
+                {
+                    try { File.Delete(file); }
+                    catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                    { log.Warning(error, "Rejected upload could not be deleted: {FileName}", Path.GetFileName(file)); }
+                }
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            { log.Warning(error, "Rejected upload directory could not be cleaned: {Spool}", spool); }
         }
     }
 
@@ -235,6 +265,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         _communityEvidenceCollector?.Dispose();
         _usageTelemetryCollector?.Dispose();
         _longRunLogCollector?.Dispose();
+        ExpansionInterop.Uninitialize();
         DService.Uninit();
         _disposed = true;
     }

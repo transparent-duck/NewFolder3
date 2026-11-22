@@ -1,6 +1,7 @@
 using System;
 using System.Numerics;
 using global::Dalamud.Bindings.ImGui;
+using global::Dalamud.Plugin.Services;
 
 namespace DeepDungeon.Fsd.Dalamud
 {
@@ -58,15 +59,74 @@ namespace DeepDungeon.Fsd.Dalamud
 		}
 
 		/// <summary>
+		/// FSD overload — forwards with the plugin's own Service.GameGui.
+		/// </summary>
+		public static void DrawWorldTriangleFilled(Vector3 a, Vector3 b, Vector3 c, uint color) =>
+			DrawWorldTriangleFilled(ImGui.GetBackgroundDrawList(), Service.GameGui, a, b, c, color);
+
+		/// <summary>
+		/// Draw a world-space triangle clipped against the camera front
+		/// half-space — the visible remainder is filled as a convex fan of
+		/// the clipped boundary points. Projection uses the 3-argument
+		/// WorldToScreen and rejects the WHOLE triangle on a nonfinite
+		/// result — individual vertices are never dropped and reconnected.
+		/// </summary>
+		public static void DrawWorldTriangleFilled(
+			ImDrawListPtr draw, IGameGui gameGui,
+			Vector3 a, Vector3 b, Vector3 c, uint color)
+		{
+			Span<Vector3> clipped = stackalloc Vector3[4];
+			var count = 0;
+			Span<Vector3> tri = stackalloc Vector3[] { a, b, c };
+			for (var i = 0; i < 3; i++)
+			{
+				var cur = tri[i];
+				var nxt = tri[(i + 1) % 3];
+				var curIn = TryProjectWorld(gameGui, cur, out _);
+				var nxtIn = TryProjectWorld(gameGui, nxt, out _);
+				if (curIn)
+					clipped[count++] = cur;
+				if (curIn != nxtIn && count < clipped.Length)
+				{
+					// bounded 16-step edge crossing, same math as line clip
+					var lo = curIn ? nxt : cur;
+					var hi = curIn ? cur : nxt;
+					var crossing = hi;
+					for (var s = 0; s < 16; s++)
+					{
+						var mid = (lo + hi) * 0.5f;
+						if (TryProjectWorld(gameGui, mid, out _))
+						{ crossing = mid; hi = mid; }
+						else lo = mid;
+					}
+					clipped[count++] = crossing;
+				}
+			}
+			if (count < 3)
+				return;
+			Span<Vector2> screen = stackalloc Vector2[4];
+			for (var i = 0; i < count; i++)
+				if (!TryProjectWorld(gameGui, clipped[i], out screen[i]))
+					return;   // reject the whole triangle, never reconnect
+			for (var i = 1; i < count - 1; i++)
+				draw.AddTriangleFilled(screen[0], screen[i], screen[i + 1], color);
+		}
+
+		/// <summary>FSD overload — forwards with Service.GameGui.</summary>
+		public static bool TryClipWorldLineToScreen(Vector3 a, Vector3 b, out Vector2 screenA, out Vector2 screenB) =>
+			TryClipWorldLineToScreen(Service.GameGui, a, b, out screenA, out screenB);
+
+		/// <summary>
 		/// Clip a world-space line against the camera near plane and return screen endpoints.
 		/// When one endpoint is behind the camera, binary-searches to find the near-plane crossing.
 		/// </summary>
-		public static bool TryClipWorldLineToScreen(Vector3 a, Vector3 b, out Vector2 screenA, out Vector2 screenB)
+		public static bool TryClipWorldLineToScreen(
+			IGameGui gameGui, Vector3 a, Vector3 b, out Vector2 screenA, out Vector2 screenB)
 		{
 			try
 			{
-				var aConv = Service.GameGui.WorldToScreen(a, out var aScreen, out var _);
-				var bConv = Service.GameGui.WorldToScreen(b, out var bScreen, out var _);
+				var aConv = TryProjectWorld(gameGui, a, out var aScreen);
+				var bConv = TryProjectWorld(gameGui, b, out var bScreen);
 
 				if (aConv && bConv)
 				{
@@ -84,7 +144,7 @@ namespace DeepDungeon.Fsd.Dalamud
 
 				if (aConv)
 				{
-					if (FindClippedScreenPoint(b, a, out var clipped))
+					if (FindClippedScreenPoint(gameGui, b, a, out var clipped))
 					{
 						screenA = aScreen;
 						screenB = clipped;
@@ -93,7 +153,7 @@ namespace DeepDungeon.Fsd.Dalamud
 				}
 				else
 				{
-					if (FindClippedScreenPoint(a, b, out var clipped))
+					if (FindClippedScreenPoint(gameGui, a, b, out var clipped))
 					{
 						screenA = clipped;
 						screenB = bScreen;
@@ -106,6 +166,17 @@ namespace DeepDungeon.Fsd.Dalamud
 			}
 			screenA = default;
 			screenB = default;
+			return false;
+		}
+
+		/// <summary>3-argument WorldToScreen + finite check — the only
+		/// projection primitive used by the clipped-fill paths.</summary>
+		private static bool TryProjectWorld(IGameGui gameGui, Vector3 pos, out Vector2 screen)
+		{
+			var ok = gameGui.WorldToScreen(pos, out screen, out _);
+			if (ok && float.IsFinite(screen.X) && float.IsFinite(screen.Y))
+				return true;
+			screen = default;
 			return false;
 		}
 
@@ -142,12 +213,12 @@ namespace DeepDungeon.Fsd.Dalamud
 			return true;
 		}
 
-		private static bool FindClippedScreenPoint(Vector3 behind, Vector3 front, out Vector2 screen)
+		private static bool FindClippedScreenPoint(IGameGui gameGui, Vector3 behind, Vector3 front, out Vector2 screen)
 		{
 			screen = default;
 			try
 			{
-				if (!Service.GameGui.WorldToScreen(front, out var frontScreen, out var _))
+				if (!TryProjectWorld(gameGui, front, out var frontScreen))
 					return false;
 
 				var lo = behind;
@@ -162,7 +233,7 @@ namespace DeepDungeon.Fsd.Dalamud
 						(lo.Z + hi.Z) * 0.5f
 					);
 
-					if (Service.GameGui.WorldToScreen(mid, out var midScreen, out var _))
+					if (TryProjectWorld(gameGui, mid, out var midScreen))
 					{
 						result = midScreen;
 						hi = mid;

@@ -18,7 +18,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
         public static unsafe bool CanDispatchItemRequest()
         {
             var manager = ActionManager.Instance();
-            return manager != null && manager->AnimationLock <= 0;
+            return !MasterPlayer.MechanicRuntime.MechanicExecutionState.ActionsBlocked
+                && manager != null && manager->AnimationLock <= 0;
         }
 
 		/// <summary>
@@ -30,8 +31,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 			if (!CanDispatchItemRequest() || !TryGetDeepDungeon(nameof(Use), out var dd))
 				return false;
 
-			dd->UsePomander(pomanderSlotIndex);
-			return true;
+			return Actions.FsdItemExecutor.UsePomander(dd, pomanderSlotIndex);
 		}
 
 		public unsafe bool IsUsable(uint pomanderSlotIndex)
@@ -105,8 +105,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 			{
 				if (stones[i] != stoneId)
 					continue;
-				dd->UseStone((uint)i);
-				return true;
+				return Actions.FsdItemExecutor.UseStone(dd, (uint)i);
 			}
 			return false;
 		}

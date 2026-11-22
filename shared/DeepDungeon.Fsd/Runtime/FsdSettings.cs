@@ -9,11 +9,7 @@ public sealed class FsdSettings
 
     public FarmingSettings Farming { get; set; } = new();
 
-    public FsdBossMechanicsSettings BossMechanics { get; set; } = new();
     public FsdRotationSettings Rotation { get; set; } = new();
-
-    [JsonIgnore, NonSerialized]
-    public bool BossMechanicsActive;
 
     public bool AutoUseRecoveryPotion { get; set; }
     public int RecoveryPotionHpThresholdPercent { get; set; } = 90;
@@ -21,7 +17,7 @@ public sealed class FsdSettings
     public bool NecromancerAutoOpenSilverChest { get; set; }
     public bool NecromancerAutoOpenBronzeChest { get; set; } = true;
     public bool AggressiveChestInteraction { get; set; }
-    public float NecromancerChestInteractDistance { get; set; } = 3.5f;
+    public float NecromancerChestInteractDistance { get; set; } = 2.0f;
     public bool NecromancerShowRoomCenterOverlay { get; set; } = true;
     public bool NecromancerShowTrapOverlay { get; set; } = true;
     public bool NecromancerShowRoomPathOverlay { get; set; } = true;
@@ -30,13 +26,11 @@ public sealed class FsdSettings
     public bool NecromancerAutoBandedFarmEnabled { get; set; } = true;
     public float NecromancerBandedScanRadius { get; set; } = 30f;
     public float NecromancerBandedStandSeconds { get; set; } = 2.5f;
-    public bool NecromancerBandedAutoSelect { get; set; }
-    public bool NecromancerBandedAutoAttract { get; set; }
-    public uint NecromancerBandedAttractSkillId { get; set; } = 2866;
     public int NecromancerAutoLeaveMode { get; set; }
     public int NecromancerAutoLeaveAfterMinutes { get; set; }
     public int NecromancerFsdScenarioIndex { get; set; } = 1;
     public bool UseDetailedMap { get; set; }
+    public bool UseBuiltInFloorMaps { get; set; }
     public int NecromancerFsdEndMode { get; set; }
     public bool NecromancerFsdLoopInfinite { get; set; }
     public int NecromancerFsdLoopCount { get; set; } = 1;

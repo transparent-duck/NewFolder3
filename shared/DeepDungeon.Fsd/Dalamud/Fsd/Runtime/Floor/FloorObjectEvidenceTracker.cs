@@ -4,7 +4,6 @@ using System.Numerics;
 using DeepDungeon.Fsd.Core;
 using DeepDungeon.Fsd.Dalamud.GameState;
 using DeepDungeon.Fsd.Dalamud.Runtime.Search;
-using global::Dalamud.Game.ClientState.Objects.Types;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
 
 namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
@@ -25,7 +24,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		Vector3 Position,
 		bool IsTargetable,
 		string ObjectKind,
-		byte NativeCurrentDistance);
+		byte NativeCurrentDistance,
+        ushort SharedTimelineState = 0);
 
 	internal readonly record struct FloorChestEvidence(
 		FloorObjectEvidence Object,
@@ -42,39 +42,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		byte SubKind,
 		string Address);
 
-	/// <summary>
-	/// TEMPORARY controlled-survey research only: fixed PalacePal candidate audit point.
-	/// Does not participate in trap classification, planning, or community upload.
-	/// </summary>
-	internal readonly record struct ControlledCandidateAuditPoint(
-		int RoomIndex,
-		int SourceCandidateIndex,
-		RawWorldPosition Position);
-
-	/// <summary>
-	/// TEMPORARY controlled-survey research only: object coincident with an audit point.
-	/// Recorder-only; excluded from material-version equality.
-	/// </summary>
-	internal readonly record struct ControlledCandidateObjectMatch(
-		int CandidateRoomIndex,
-		int SourceCandidateIndex,
-		RawWorldPosition CandidatePosition,
-		Vector3 ObjectPosition,
-		ushort ObjectIndex,
-		ulong GameObjectId,
-		uint EntityId,
-		uint BaseId,
-		string ObjectKind,
-		byte SubKind,
-		string Name,
-		uint? NameId,
-		uint LayoutId,
-		uint GimmickId,
-		bool IsTargetable,
-		bool IsDead,
-		float HitboxRadius,
-		byte CurrentDistance);
-
 	internal sealed record FloorObjectEvidenceSnapshot(
 		bool Available,
 		long Version,
@@ -85,8 +52,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		IReadOnlyList<FloorChestEvidence> Chests,
 		IReadOnlyList<FloorHoardIndicatorEvidence> HoardIndicators,
 		IReadOnlyList<FloorObjectEvidence> SightTrapIndicators,
-		IReadOnlyList<FloorObjectEvidence> PassageActors,
-		IReadOnlyList<ControlledCandidateObjectMatch> ControlledCandidateObjectMatches);
+		IReadOnlyList<FloorObjectEvidence> PassageActors);
 
 	internal readonly record struct FloorObjectEvidenceRefreshResult(
 		bool Attempted,
@@ -115,9 +81,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				_invalidationVersion++;
 		}
 
-		public unsafe FloorObjectEvidenceRefreshResult RefreshIfDue(
-			uint dungeonId,
-			IReadOnlyList<ControlledCandidateAuditPoint>? controlledCandidateAuditUniverse = null)
+		public unsafe FloorObjectEvidenceRefreshResult RefreshIfDue(uint dungeonId)
 		{
 			if (IsDisposed)
 				return default;
@@ -144,9 +108,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				var hoardIndicators = new List<FloorHoardIndicatorEvidence>();
 				var sightTrapIndicators = new List<FloorObjectEvidence>();
 				var passageActors = new List<FloorObjectEvidence>();
-				bool auditActive = controlledCandidateAuditUniverse is { Count: > 0 };
-				List<ControlledCandidateObjectMatch>? controlledCandidateObjectMatches =
-					auditActive ? new List<ControlledCandidateObjectMatch>() : null;
 				foreach (var obj in Service.GameObjects)
 				{
 					if (obj == null)
@@ -160,7 +121,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 						obj.Position,
 						obj.IsTargetable,
 						obj.ObjectKind.ToString(),
-						obj.CurrentDistance);
+						obj.CurrentDistance,
+                        obj.ObjectKind == global::Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventObj &&
+                            PassageLocator.IsPassageBase(obj.BaseId)
+                            ? ((EventObject*)obj.Address)->SharedTimelineState : (ushort)0);
 
 					if (FsdChestInteraction.TryClassify(obj, out var chestKind))
 					{
@@ -189,55 +153,14 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 							obj.SubKind,
 							$"0x{obj.Address.ToInt64():X}"));
 					}
-					if (RoomSearchContext.IsSightTrapIndicatorBaseId(dungeonId, obj.BaseId))
+					if (IsSightTrapIndicatorBaseId(dungeonId, obj.BaseId))
 						sightTrapIndicators.Add(evidence);
 					if (PassageLocator.IsPassageBase(obj.BaseId))
 						passageActors.Add(evidence);
 
-					if (!auditActive)
-						continue;
-
-					var objectRaw = new RawWorldPosition(
-						obj.Position.X,
-						obj.Position.Y,
-						obj.Position.Z);
-					uint? nameId = obj is ICharacter character ? character.NameId : null;
-					var native = obj.Address != IntPtr.Zero
-						? (GameObject*)obj.Address
-						: null;
-					uint layoutId = native != null ? native->LayoutId : 0u;
-					uint gimmickId = native != null ? native->GimmickId : 0u;
-					for (int auditIndex = 0; auditIndex < controlledCandidateAuditUniverse!.Count; auditIndex++)
-					{
-						var auditPoint = controlledCandidateAuditUniverse[auditIndex];
-						if (!RawWorldPosition.CanonicallyEquals(auditPoint.Position, objectRaw))
-							continue;
-
-						controlledCandidateObjectMatches!.Add(new ControlledCandidateObjectMatch(
-							auditPoint.RoomIndex,
-							auditPoint.SourceCandidateIndex,
-							auditPoint.Position,
-							obj.Position,
-							obj.ObjectIndex,
-							obj.GameObjectId,
-							obj.EntityId,
-							obj.BaseId,
-							obj.ObjectKind.ToString(),
-							obj.SubKind,
-							obj.Name.ToString(),
-							nameId,
-							layoutId,
-							gimmickId,
-							obj.IsTargetable,
-							obj.IsDead,
-							obj.HitboxRadius,
-							obj.CurrentDistance));
-					}
 				}
 				FullScanCount = FloorObjectEvidenceRefreshPlanner.NextCompletedScanCount(FullScanCount, scanCompleted: true);
 
-				// ControlledCandidateObjectMatches is recorder-only research output and must not
-				// participate in material-version equality / planning / journal / upload.
 				bool changed = Current == null ||
 				               !Current.Available ||
 				               !ChestSequenceEqual(Current.Chests, chests) ||
@@ -255,9 +178,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 					chests.ToArray(),
 					hoardIndicators.ToArray(),
 					sightTrapIndicators.ToArray(),
-					passageActors.ToArray(),
-					controlledCandidateObjectMatches?.ToArray() ??
-					Array.Empty<ControlledCandidateObjectMatch>());
+					passageActors.ToArray());
 				return new FloorObjectEvidenceRefreshResult(true, decision.WasInvalidated, changed, true, Current);
 			}
 			catch (Exception ex)
@@ -274,8 +195,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 					Array.Empty<FloorChestEvidence>(),
 					Array.Empty<FloorHoardIndicatorEvidence>(),
 					Array.Empty<FloorObjectEvidence>(),
-					Array.Empty<FloorObjectEvidence>(),
-					Array.Empty<ControlledCandidateObjectMatch>());
+					Array.Empty<FloorObjectEvidence>());
 				if (changed || _lastErrorAtMs == 0 || nowMs - _lastErrorAtMs >= 2000)
 				{
 					_lastErrorAtMs = nowMs;
@@ -283,6 +203,26 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				}
 				return new FloorObjectEvidenceRefreshResult(true, decision.WasInvalidated, changed, false, Current);
 			}
+		}
+
+		internal static bool IsSightTrapIndicatorBaseId(uint dungeonId, uint baseId)
+		{
+			// Shared Sight trap indicator BaseIds across Deep Dungeons.
+			if (baseId >= 2007182 && baseId <= 2007185)
+				return true;
+
+			// Dungeon-unique transformation trap indicators. Do not treat the
+			// hoard indicator (2007542) as a trap. EO (dungeon 3) has no
+			// live-captured unique transformation ID yet — do not guess.
+			return dungeonId switch
+			{
+				1 => baseId == 2007186, // Palace of the Dead
+				2 => baseId == 2009504, // Heaven on High
+				// Eureka Orthos: unique transformation ID unknown until live capture.
+				3 => false,
+				4 => baseId == 2014939, // Pilgrim's Traverse
+				_ => false
+			};
 		}
 
 		public void Dispose()
@@ -355,6 +295,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			left.BaseId == right.BaseId &&
 			left.Position == right.Position &&
 			left.IsTargetable == right.IsTargetable &&
-			left.ObjectKind == right.ObjectKind;
+			left.ObjectKind == right.ObjectKind &&
+            left.SharedTimelineState == right.SharedTimelineState;
 	}
 }

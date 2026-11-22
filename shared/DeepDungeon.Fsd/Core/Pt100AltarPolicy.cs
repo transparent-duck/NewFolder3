@@ -7,6 +7,6 @@ public static class Pt100AltarPolicy
 
     public static bool CanConfirm(ulong interactedId, ulong observedId, bool targetable,
         long completionBeforeInteraction, long completionNow, bool failed) =>
-        interactedId != 0 && interactedId == observedId && !targetable &&
-        completionNow > completionBeforeInteraction && !failed;
+        ResultAltarPolicy.CanConfirm(new(AltarBaseId, ResultAltarEvidence.FreshDutyCompletion),
+            interactedId, observedId, targetable, completionBeforeInteraction, completionNow, 0, 0, failed);
 }

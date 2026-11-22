@@ -11,7 +11,7 @@ internal sealed partial class FloorExplorationController
     {
         var ctx = _ctx;
         if (ctx?.FarmingPlan?.ReusesSave != true || this.Kind != FloorRuntimeKind.Normal ||
-            _phase != FloorPhase.FloorActive || _executor == null) return false;
+            _phase != FloorPhase.FloorActive) return false;
         if (ctx.HarvestComplete || ctx.AttemptAborted) return true;
         if (ctx.FarmingPlan.Mode == FarmingMode.HoardDiscovery)
         {
@@ -22,9 +22,10 @@ internal sealed partial class FloorExplorationController
                 ctx.HoardDiscoveries++;
                 ctx.HarvestComplete = true;
             }
-            else if (_chatWatchers?.ChatSaysNoHoard == true)
+            else if (ctx.Knowledge.Floor is { ChatSaysNoHoard: true, ChatSaysHoard: false,
+                         ExactHoardPosition: null })
                 ctx.HarvestComplete = true;
-            else if (_executor.IsHoardWorkResolved && _executor.IsComplete && !_activeWaypoint.HasValue)
+            else if (HarvestWorkResolved(ctx!))
             {
                 // Candidate exhaustion without authoritative absence is unknown, never a confirmed empty round.
                 ctx.AttemptAborted = true;
@@ -34,8 +35,7 @@ internal sealed partial class FloorExplorationController
         }
         else
         {
-            bool chestWorkComplete = _executor.IsHoardWorkResolved && _executor.PlannedRouteCount == 0 &&
-                _executor.IsComplete && !_activeWaypoint.HasValue;
+            bool chestWorkComplete = HarvestWorkResolved(ctx!);
             bool canSkip = EntryIncenseWindowOpen() &&
                 DeepDungeonFloorItemUsePolicy.CanUsePtIncense(dd->DeepDungeonBanId) &&
                 !this.Survey.NaturalPoisonfruitAttempted && !this.Survey.NaturalMazerootAttemptedOrAdopted &&
@@ -52,4 +52,13 @@ internal sealed partial class FloorExplorationController
         _status = ctx.AttemptAborted ? ctx.StatusLine : "本次採集完成；退本並驗證準備存檔。";
         return true;
     }
+
+    private static bool HarvestWorkResolved(RunContext ctx)
+    {
+        var fk = ctx.Knowledge.Floor;
+        return fk?.WorkDecisionInitialized == true &&
+            fk.SearchObligationsResolved && fk.RequiredWorkRemaining == 0 &&
+            fk.PendingWorkCount == 0;
+    }
+
 }

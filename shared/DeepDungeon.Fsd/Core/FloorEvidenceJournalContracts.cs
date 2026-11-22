@@ -1,5 +1,38 @@
 namespace DeepDungeon.Fsd.Core;
 
+// Values used by historical reusable-save survey evidence.
+public enum ControlledPtSurveyTargetOutcome
+{
+    None,
+    Pending,
+    IntuitionNegative,
+    InheritedNoHoardInferred,
+    InheritedStateInconsistent,
+    PositiveJointSampleIncomplete,
+    PositiveCaptured
+}
+
+public enum ControlledPtIntuitionResolutionSource
+{
+    None,
+    CurrentUseHoardPresent,
+    CurrentUseNoHoard,
+    InheritedHoardPresent,
+    InheritedNoHoardInferred,
+    CurrentUseTimeoutError,
+    InvalidInheritedNoHoardMessage,
+    RejectedInheritedEvidence
+}
+
+public enum ControlledPtSurveyItemAction
+{
+    None,
+    UseIntuition,
+    UseSight,
+    UseMazeroot,
+    UsePoisonfruit
+}
+
 public enum FloorEvidenceAcquisitionMode
 {
     NaturalGameplay,

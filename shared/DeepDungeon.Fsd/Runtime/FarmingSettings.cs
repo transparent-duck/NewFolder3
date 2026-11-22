@@ -4,12 +4,14 @@ namespace DeepDungeon.Fsd.Runtime;
 
 public sealed class FarmingSettings
 {
+    public uint DungeonId { get; set; } = 4;
     public FarmingMode Mode { get; set; }
     public Dictionary<string, FarmingPreferences> Preferences { get; set; } = new();
 
-    public FarmingPreferences GetPreferences(FsdSettings legacy)
+    public FarmingPreferences GetPreferences(FsdSettings legacy, FarmingMode? modeOverride = null)
     {
-        string key = Mode switch
+        var mode = modeOverride ?? Mode;
+        string key = mode switch
         {
             FarmingMode.Hoard => "Hoard:Create",
             FarmingMode.Aetherpool => "Aetherpool:Prepared",
@@ -20,16 +22,16 @@ public sealed class FarmingSettings
         {
             value = new FarmingPreferences
             {
-                OpenGold = Mode != FarmingMode.HoardDiscovery && legacy.NecromancerAutoOpenGoldChest,
-                OpenSilver = Mode == FarmingMode.Aetherpool || Mode != FarmingMode.HoardDiscovery && legacy.NecromancerAutoOpenSilverChest,
-                OpenBronze = Mode == FarmingMode.Aetherpool || Mode != FarmingMode.HoardDiscovery && legacy.NecromancerAutoOpenBronzeChest,
+                OpenGold = mode != FarmingMode.HoardDiscovery && legacy.NecromancerAutoOpenGoldChest,
+                OpenSilver = mode == FarmingMode.Aetherpool || mode != FarmingMode.HoardDiscovery && legacy.NecromancerAutoOpenSilverChest,
+                OpenBronze = mode == FarmingMode.Aetherpool || mode != FarmingMode.HoardDiscovery && legacy.NecromancerAutoOpenBronzeChest,
                 Cycles = legacy.NecromancerFsdLoopCount,
                 Infinite = legacy.NecromancerFsdLoopInfinite
             };
             Preferences.Add(key, value);
         }
-        value.BandedEnabled ??= Mode == FarmingMode.Hoard && legacy.NecromancerAutoBandedFarmEnabled;
-        var targets = FarmingTargetPolicy.Constrain(Mode, new(value.BandedEnabled.Value,
+        value.BandedEnabled ??= mode == FarmingMode.Hoard && legacy.NecromancerAutoBandedFarmEnabled;
+        var targets = FarmingTargetPolicy.Constrain(mode, new(value.BandedEnabled.Value,
             value.OpenGold, value.OpenSilver, value.OpenBronze));
         value.BandedEnabled = targets.Hoard;
         value.OpenGold = targets.Gold;

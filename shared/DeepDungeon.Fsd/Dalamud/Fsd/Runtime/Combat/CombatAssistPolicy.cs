@@ -1,444 +1,159 @@
 using System;
 using System.Numerics;
-using global::Dalamud.Plugin.Ipc;
+using MasterPlayer.MechanicRuntime;
 using global::Dalamud.Game.ClientState.Conditions;
 using global::Dalamud.Game.ClientState.Objects.Types;
 using DeepDungeon.Fsd.Dalamud.Runtime;
-using DeepDungeon.Fsd.Dalamud.Runtime.Helpers;
+using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
 
-namespace DeepDungeon.Fsd.Dalamud.Runtime.Combat
-{
+namespace DeepDungeon.Fsd.Dalamud.Runtime.Combat;
+
 /// <summary>
 /// Shared combat-assist policy used by both manual banded farming and FullSelfDelving controllers.
-/// Encapsulates target selection and out-of-combat attract casting based on configuration.
+/// Encapsulates target selection. Attacks are owned by the selected rotation plugin.
 /// Run-scoped state is maintained between calls.
 /// </summary>
 internal sealed class CombatAssistPolicy
-	{
-        private readonly Pt99CombatController _pt99 = new();
-        internal DeepDungeon.Fsd.Core.Pt99TargetDecision Pt99Decision => _pt99.Decision;
-		private DateTime _nextAttractCastAt = DateTime.MinValue;
-		private bool _prevInCombat = false;
-		private uint _cachedEngageRangeSkillId = uint.MaxValue;
-		private float _cachedEngageRange;
-        private DateTime _nextDiagnosticAt;
-        private DateTime _lastDiagnosticAt;
-        private string _lastDiagnosticStatus = string.Empty;
-        private ulong _lastDiagnosticTarget;
+{
+    private readonly ICombatTargetProvider _encounter = new EncounterTargetProvider();
+    private readonly ICombatTargetProvider _default = new DefaultTargetProvider();
+    private CombatTargetChoice _decision;
+    private DateTime _decisionFrame;
+    internal string? TargetSource => _decision.Source;
+    internal ulong SelectedId { get; private set; }
 
-    public void Tick(FsdSettings configuration, RunContext? context, bool isBossFloor, bool passageOpen,
-        out string status, out string selectStatus, out string attractStatus)
+    internal void Suspend()
     {
-        TickCore(configuration, context, isBossFloor, passageOpen, out status, out selectStatus, out attractStatus);
-        if (context?.RecordDiagnostic == null) return;
-        var now = DateTime.UtcNow;
-        if (now - _lastDiagnosticAt < TimeSpan.FromSeconds(1)) return;
-        var player = Service.LocalPlayer;
-        var target = Service.TargetManager.Target as IBattleChara;
-        ulong targetId = target?.GameObjectId ?? 0;
-        if (now < _nextDiagnosticAt && status == _lastDiagnosticStatus && targetId == _lastDiagnosticTarget) return;
-        _nextDiagnosticAt = now.AddSeconds(5);
-        _lastDiagnosticAt = now;
-        _lastDiagnosticStatus = status;
-        _lastDiagnosticTarget = targetId;
-        context.RecordDiagnostic("combat-assist-state", new {
-            floor = context.Duty.Floor, status, selectStatus, attractStatus,
-            configuration.NecromancerBandedAutoSelect, configuration.NecromancerBandedAutoAttract,
-            requestedActionId = configuration.NecromancerBandedAttractSkillId,
-            inCombat = Service.Condition[ConditionFlag.InCombat], passageOpen,
-            playerAvailable = player != null, playerDead = player?.IsDead, casting = player?.IsCasting,
-            currentTargetId = targetId, preferredTargetId = context.TryGetPreferredAggroTarget(out var preferred) ? preferred : 0,
-            targetHp = target?.CurrentHp, targetMaxHp = target?.MaxHp, targetable = target?.IsTargetable,
-            playerPosition = player == null ? null : new { player.Position.X, player.Position.Y, player.Position.Z },
-            targetPosition = target == null ? null : new { target.Position.X, target.Position.Y, target.Position.Z },
-            nextAttemptUtc = _nextAttractCastAt.ToUniversalTime() });
+        // Release only our last selection; a user's unrelated target is not ours.
+        if (SelectedId != 0 && Service.TargetManager.Target?.GameObjectId == SelectedId)
+            Service.TargetManager.Target = null;
+        SelectedId = 0;
+        _decision = default;
+        _decisionFrame = default;
     }
 
-	/// <summary>
-	/// Apply combat-assist behavior for the current tick.
-	/// </summary>
-	/// <param name="configuration">Global configuration (Necromancer* options).</param>
-	/// <param name="context">Current run context.</param>
-	/// <param name="isBossFloor">Whether the current floor is treated as a boss floor.</param>
-	/// <param name="passageOpen">If true, passage is open; combat assist will not engage new targets.</param>
-	/// <param name="status">Primary status line (combined select/attract summary).</param>
-	/// <param name="selectStatus">Status line focused on target selection.</param>
-	/// <param name="attractStatus">Status line focused on attract casting.</param>
-	private void TickCore(FsdSettings configuration, RunContext? context, bool isBossFloor, bool passageOpen,
-		out string status, out string selectStatus, out string attractStatus)
-		{
-		status = "Assist: Idle";
-		selectStatus = configuration.NecromancerBandedAutoSelect ? "active" : "off";
-		attractStatus = configuration.NecromancerBandedAutoAttract ? "active" : "off";
-
-		try
-		{
-			var player = Service.LocalPlayer;
-			if (player == null || player.IsDead)
-				return;
-
-            if (configuration.BossMechanics.UsesBmrBossHandling() &&
-                context?.Duty is { DungeonId: 4, Floor: 99 })
-            {
-                _pt99.Tick(context, out status);
-                selectStatus = status;
-                attractStatus = "PT99 - external rotation only";
-                return;
-            }
-            _pt99.Reset(context);
-
-			bool inCombat = Service.Condition[ConditionFlag.InCombat];
-			float engageRange = GetCachedEngageRange(configuration);
-			if (engageRange <= 0f)
-			{
-				status = "Assist: configured attract action has no valid cast range";
-				selectStatus = "Unavailable →invalid attract action range";
-				attractStatus = "Unavailable →invalid attract action range";
-				return;
-			}
-			ulong preferredAggroId = 0;
-			bool hasPreferredAggro = context?.TryGetPreferredAggroTarget(out preferredAggroId) ?? false;
-			bool IsAllowedCombatTarget(IBattleChara target) => context?.IsCombatTargetSuppressed(target.GameObjectId) != true;
-			bool IsAllowedNewTarget(IBattleChara target) => IsAllowedCombatTarget(target) && context?.IsNewCombatTargetAllowed(target) != false;
-			IBattleChara? preferredOocTarget = null;
-			bool preferredOocTargetWithinRange = false;
-			if (!inCombat && hasPreferredAggro)
-			{
-				var candidate = CombatTargetingHelpers.GetBattleCharaByGameObjectId(preferredAggroId);
-				if (candidate is { IsTargetable: true, IsDead: false } &&
-				    IsAllowedNewTarget(candidate))
-				{
-					preferredOocTarget = candidate;
-					var dx = candidate.Position.X - player.Position.X;
-					var dz = candidate.Position.Z - player.Position.Z;
-					preferredOocTargetWithinRange =
-						dx * dx + dz * dz <= engageRange * engageRange;
-				}
-			}
-
-			IBattleChara? TryPickPreferredAggro(float range, out bool withinRange)
-			{
-				if (!hasPreferredAggro)
-				{
-					withinRange = false;
-					return null;
-				}
-
-				var selected = CombatTargetingHelpers.PickAggroedHostile(range, out withinRange, preferredAggroId);
-				if (selected != null && !IsAllowedCombatTarget(selected))
-				{
-					withinRange = false;
-					return null;
-				}
-
-				return selected;
-			}
-
-			IBattleChara? PickMobCombatTarget()
-			{
-				// Keep reachable targets first, but retain a distant aggro target for BMR to approach.
-				// Stationary/ranged enemies do not necessarily follow us into spell range.
-				var target = CombatTargetingHelpers.PickHostileHighestHP(engageRange, onlyInRange: true,
-					mustBeInCombat: true, IsAllowedCombatTarget);
-				if (target != null) return target;
-				var distant = CombatTargetingHelpers.PickAggroedHostile(float.MaxValue, out _, preferredAggroId);
-				return distant != null && IsAllowedCombatTarget(distant) ? distant : null;
-			}
-
-			if (passageOpen)
-			{
-				if (inCombat)
-				{
-					if (configuration.NecromancerBandedAutoSelect)
-					{
-						IBattleChara? target = isBossFloor
-							? PickBossTarget(context, IsAllowedCombatTarget)
-							: PickMobCombatTarget();
-						
-					if (target != null)
-					{
-						try { Service.TargetManager.Target = target; } catch { }
-					}
-
-					string tname = target?.Name?.TextValue ?? "無目標";
-					status = isBossFloor 
-						? "Assist: Passage open - finishing combat (lowest max HP, central)"
-						: "Assist: Passage open - finishing combat (highest HP)";
-						selectStatus = target != null
-							? $"Finishing combat →{tname}"
-							: "Finishing combat →no target";
-						attractStatus = "Disabled →Passage open";
-						
-						_prevInCombat = inCombat;
-						return;
-					}
-					else
-					{
-						status = "Assist: Passage open - in combat (select disabled)";
-						selectStatus = "Disabled →Passage open";
-						attractStatus = "Disabled →Passage open";
-						_prevInCombat = inCombat;
-						return;
-					}
-				}
-				else
-				{
-					var nearestHostile = TryPickPreferredAggro(engageRange * 2.5f, out bool withinRange)
-					                     ?? CombatTargetingHelpers.PickNearestHostile(engageRange * 2f, out withinRange, IsAllowedNewTarget);
-					
-					if (nearestHostile != null && !withinRange)
-					{
-						if (configuration.NecromancerBandedAutoSelect)
-						{
-							try { Service.TargetManager.Target = nearestHostile; } catch { }
-						}
-						
-						string tname = nearestHostile.Name?.TextValue ?? "無名";
-						status = "Assist: Passage open - waiting for navigation to remaining mob";
-						selectStatus = $"Awaiting nav →{tname}";
-						attractStatus = "Disabled →Passage open";
-						_prevInCombat = inCombat;
-						return;
-					}
-					else
-					{
-						status = "Assist: Passage open (idle)";
-						selectStatus = "Disabled →Passage open";
-						attractStatus = "Disabled →Passage open";
-						_prevInCombat = inCombat;
-						return;
-					}
-				}
-			}
-
-			if (_prevInCombat && !inCombat)
-				_nextAttractCastAt = DateTime.MinValue;
-
-			if (configuration.NecromancerBandedAutoSelect)
-				{
-					if (inCombat)
-					{
-						IBattleChara? target = isBossFloor
-							? PickBossTarget(context, IsAllowedCombatTarget)
-							: PickMobCombatTarget();
-					if (target != null)
-					{
-						try { Service.TargetManager.Target = target; } catch { }
-					}
-
-			string tname = target?.Name?.TextValue ?? "無目標";
-			if (isBossFloor)
-				{
-					status = "Assist: In combat (最低血量上限、中央目標)";
-					selectStatus = target != null
-						? $"In combat (lowest max HP, central) →{tname}"
-						: "In combat (lowest max HP, central) →no target";
-				}
-				else
-				{
-					status = "Assist: In combat (最高HP目標)";
-					selectStatus = target != null
-						? $"In combat (highest HP) →{tname}"
-						: "In combat (highest HP) →no target";
-				}
-					}
-					else
-					{
-					bool withinRange;
-					var target = preferredOocTarget;
-					if (target != null)
-					{
-						withinRange = preferredOocTargetWithinRange;
-					}
-					else
-					{
-						target = CombatTargetingHelpers.PickNearestHostile(engageRange, out withinRange, IsAllowedNewTarget);
-					}
-					if (target != null)
-					{
-						try { Service.TargetManager.Target = target; } catch { }
-
-				string tname = target.Name?.TextValue ?? "無名";
-				status = withinRange
-					? "Assist: OOC target selected (in range)"
-					: "Assist: OOC target selected (awaiting navigation)";
-				selectStatus = $"OOC target →{tname} (in range: {withinRange})";
-			}
-				else
-				{
-					status = "Assist: OOC no target in range";
-						if (Service.TargetManager.Target is IBattleChara previous && !IsAllowedNewTarget(previous))
-							Service.TargetManager.Target = null;
-					selectStatus = "No hostile in range";
-				}
-					}
-				}
-
-                if (!inCombat && configuration.NecromancerBandedAutoSelect &&
-                    Service.TargetManager.Target is IBattleChara selected && !selected.IsDead &&
-                    IsAllowedNewTarget(selected) &&
-                    System.Numerics.Vector2.DistanceSquared(new(player.Position.X, player.Position.Z),
-                        new(selected.Position.X, selected.Position.Z)) <= engageRange * engageRange)
-                    context?.PrepareCombat(selected.GameObjectId);
-
-				if (!inCombat && configuration.NecromancerBandedAutoAttract)
-				{
-					uint sid = configuration.NecromancerBandedAttractSkillId;
-					if (sid != 0)
-					{
-						IGameObject? tgt;
-						bool targetOk;
-						if (preferredOocTarget != null)
-						{
-							tgt = preferredOocTarget;
-							targetOk = preferredOocTargetWithinRange;
-						}
-						else
-						{
-							tgt = Service.TargetManager.Target;
-							targetOk = false;
-							if (tgt is IBattleChara tbc && !tbc.IsDead && IsAllowedNewTarget(tbc))
-							{
-								var dx = tgt.Position.X - player.Position.X;
-								var dz = tgt.Position.Z - player.Position.Z;
-								targetOk = (dx * dx + dz * dz) <= (engageRange * engageRange);
-							}
-						}
-						if (!targetOk)
-						{
-							if (preferredOocTarget != null)
-							{
-								tgt = null;
-							}
-							else
-							{
-								var pick = CombatTargetingHelpers.PickNearestHostile(engageRange, out bool withinRange, IsAllowedNewTarget);
-								if (pick != null && withinRange)
-								{
-									try { Service.TargetManager.Target = pick; } catch { }
-									tgt = pick;
-									targetOk = true;
-								}
-								else
-								{
-									tgt = null;
-								}
-							}
-						}
-
-					if (tgt != null && DateTime.Now >= _nextAttractCastAt)
-					{
-                        context?.PrepareCombat(tgt.GameObjectId);
-                        var attempt = DeepDungeon.Fsd.Dalamud.Actions.FsdActionExecutor.CastWithDiagnostics(sid, tgt.GameObjectId);
-                        bool ok = attempt.Accepted;
-                        context?.RecordDiagnostic?.Invoke("combat-pull-attempt", new {
-                            floor = context.Duty.Floor, targetId = tgt.GameObjectId,
-                            currentTargetId = Service.TargetManager.Target?.GameObjectId,
-                            targetPosition = new { tgt.Position.X, tgt.Position.Y, tgt.Position.Z },
-                            playerPosition = new { player.Position.X, player.Position.Y, player.Position.Z }, engageRange,
-                            inCombat, casting = player.IsCasting, attempt,
-                            betweenAreas = Service.Condition[ConditionFlag.BetweenAreas],
-                            betweenAreas51 = Service.Condition[ConditionFlag.BetweenAreas51] });
-						_nextAttractCastAt = DateTime.Now.AddSeconds(2.0);
-						status = $"Assist: Cast {(ok ? "OK" : "FAIL")}";
-						attractStatus = $"Cast {(ok ? "OK" : "FAIL")}";
-					}
-					else
-					{
-						if (tgt == null)
-							status = "Assist: no in-range target";
-						else
-							status = "Assist: waiting GCD";
-						attractStatus = tgt == null ? "No in-range target" : "Waiting GCD";
-					}
-					}
-				}
-
-				_prevInCombat = inCombat;
-			}
-			catch (Exception ex)
-			{
-			status = "Assist: error (CombatAssistPolicy)";
-			context?.RecordDiagnostic?.Invoke("combat-assist-error", new { error = ex.ToString() });
-			try { Service.Log.Error($"[CombatAssistPolicy] Tick error: {ex}"); } catch { }
-			}
-		}
-
-	/// <summary>
-	/// Computes the cast range of the configured attract skill.
-	/// </summary>
-	internal float GetCachedEngageRange(FsdSettings configuration)
-	{
-		uint sid = configuration.NecromancerBandedAttractSkillId;
-		if (sid == _cachedEngageRangeSkillId)
-			return _cachedEngageRange;
-
-		_cachedEngageRangeSkillId = sid;
-		_cachedEngageRange = ResolveEngageRange(sid);
-		return _cachedEngageRange;
-	}
-
-    private ICallGateSubscriber<Vector2>? _arenaCenterIpc;
-    private DateTime _nextArenaCenterReadAt;
-    private int _arenaFloor = -1;
-    private bool _arenaUsesBmr;
-    private Vector2 _arenaCenter;
-    private string _arenaCenterSource = "add-centroid";
-    private ulong _lastBossTargetId;
-
-    private IBattleChara? PickBossTarget(RunContext? context, Func<IBattleChara, bool> predicate)
+    // Cache the navigation decision once per frame. Attack-side sight filtering
+    // must not replace it, so navigation can still approach an obstructed target.
+    private CombatTargetChoice Select(in CombatTargetRequest request)
     {
-        var now = DateTime.UtcNow;
-        int floor = context?.Duty.Floor ?? 0;
-        bool useBmr = context?.Configuration.BossMechanics.UsesBmrBossHandling() == true;
-        if (_arenaFloor != floor || _arenaUsesBmr != useBmr || now >= _nextArenaCenterReadAt)
-        {
-            _arenaFloor = floor;
-            _arenaUsesBmr = useBmr;
-            _nextArenaCenterReadAt = now.AddSeconds(1);
-            bool hasArenaCenter = false;
-            try
-            {
-                if (useBmr && (_arenaCenterIpc ??= Service.PluginInterface.GetIpcSubscriber<Vector2>("BossMod.Hints.ArenaCenter")).HasFunction)
-                {
-                    var center = _arenaCenterIpc.InvokeFunc();
-                    var player = Service.LocalPlayer;
-                    if (player != null && float.IsFinite(center.X) && float.IsFinite(center.Y) &&
-                        Vector2.DistanceSquared(center, new Vector2(player.Position.X, player.Position.Z)) <= 100 * 100)
-                    {
-                        _arenaCenter = center;
-                        _arenaCenterSource = "BMR-arena";
-                        hasArenaCenter = true;
-                    }
-                }
-            }
-            catch { /* Optional IPC: custom movement providers use the add-group centroid. */ }
-            if (!hasArenaCenter)
-            {
-                _arenaCenter = CombatTargetingHelpers.BossTargetFallbackCenter(predicate);
-                _arenaCenterSource = "add-centroid";
-            }
-        }
-        var target = CombatTargetingHelpers.PickBossTarget(_arenaCenter, predicate);
-        ulong id = target?.GameObjectId ?? 0;
-        if (id != _lastBossTargetId)
-        {
-            _lastBossTargetId = id;
-            Service.Log.Info($"[CombatAssist] Boss target floor={floor}, id={id}, hp={target?.CurrentHp}, maxHp={target?.MaxHp}, position={target?.Position}, center={_arenaCenter}, centerSource={_arenaCenterSource}, priority=lowest-max-hp-then-center");
-        }
-        return target;
+        var frame = Service.Framework.LastUpdateUTC;
+        if (_decisionFrame == frame) return _decision;
+        _decisionFrame = frame;
+        _decision = Choose(request);
+        SelectedId = _decision.Target?.GameObjectId ?? 0;
+        return _decision;
     }
 
-	private static float ResolveEngageRange(uint sid)
-	{
-		if (sid == 0)
-			return 0f;
+    private CombatTargetChoice Choose(in CombatTargetRequest request) =>
+        _encounter.TrySelect(request, out var choice) || _default.TrySelect(request, out choice)
+            ? choice
+            : default;
 
-		var info = FsdSkillCatalog.GetOrRegister(sid);
-		return ResolveConfiguredCastRange(info);
-	}
+    // Filter the attack sidecar only. Navigation can still approach its
+    // independently selected target when that target is behind a wall.
+    private CombatTargetChoice SelectAttack(in CombatTargetRequest request, Vector3 position)
+    {
+        if (!request.BossFloor && request.Context?.ClearingTargetId is { } targetId)
+        {
+            var selected = Service.GameObjects.SearchById(targetId) as IBattleChara;
+            if (selected is { IsDead: false, IsTargetable: true, CurrentHp: > 0 } &&
+                CombatPositionNavigation.CheckAttack(position, selected.Position, request.Range).Allowed)
+                return new(selected, "clearing-target");
+            // An obstructed chase target does not own the attack channel.
+            var nearby = Choose(request with { SightOrigin = position });
+            return nearby.Target == null ? nearby with { HoldFire = true } : nearby;
+        }
 
-	internal static float ResolveConfiguredCastRange(in FsdSkillInfo info) =>
-		info.IsValid ? info.Range : 0f;
-}
+        var choice = Select(request);
+        if (choice.Target is not { } target || !CombatTargetRequest.IsSightBlocked(position, target.Position))
+            return choice;
+        choice = Choose(request with { SightOrigin = position });
+        return choice.Target == null ? choice with { HoldFire = true } : choice;
+    }
+
+    private static void Apply(in CombatTargetChoice decision)
+    {
+        if (decision.Target is { IsDead: false, IsTargetable: true } target)
+        {
+            if (Service.TargetManager.Target?.GameObjectId != target.GameObjectId)
+                Service.TargetManager.Target = target;
+        }
+        else if (decision.HoldFire && Service.TargetManager.Target is IBattleNpc)
+            Service.TargetManager.Target = null;
+    }
+
+    internal (Vector3 Position, float Radius)? SelectForNavigation(RunContext ctx, EncounterPlanningSnapshot snapshot)
+    {
+        var choice = Select(new(ctx, true, Service.Condition[ConditionFlag.InCombat], ctx.Duty.PassageOpen,
+            GetEngageRange(), snapshot));
+        Apply(choice);
+        return choice.Target is { } target ? (target.Position, target.HitboxRadius) : null;
+    }
+
+    private uint _rangeJob;
+    private float _engageRange;
+    private DateTime _nextDiagnosticAt;
+    private string _lastDiagnosticStatus = string.Empty;
+    private ulong _lastDiagnosticTarget;
+
+    public void Tick(RunContext context, bool isBossFloor, bool passageOpen, out string status)
+    {
+        status = "Select: idle";
+        try
+        {
+            var player = Service.LocalPlayer;
+            if (player == null || player.IsDead) return;
+            bool inCombat = Service.Condition[ConditionFlag.InCombat];
+            float range = GetEngageRange();
+            var choice = SelectAttack(new(context, isBossFloor, inCombat, passageOpen, range,
+                context.Encounters.Read().Encounter), player.Position);
+            var target = choice.Target;
+            SelectedId = target?.GameObjectId ?? 0;
+            Apply(choice);
+            if (target == null)
+            {
+                if (!inCombat && !passageOpen && Service.TargetManager.Target is IBattleChara previous &&
+                    (!context.IsNewCombatTargetAllowed(previous) || context.IsCombatTargetSuppressed(previous.GameObjectId)))
+                    Service.TargetManager.Target = null;
+                status = $"{choice.Source}: {(choice.HoldFire ? "hold fire" : "no target")}";
+            }
+            else
+            {
+                status = $"{choice.Source} →{target.Name.TextValue}";
+                if (!inCombat && !passageOpen && Vector2.DistanceSquared(new(player.Position.X, player.Position.Z),
+                    new(target.Position.X, target.Position.Z)) <= range * range)
+                    context.PrepareCombat(target.GameObjectId);
+            }
+            var now = DateTime.UtcNow;
+            if (now < _nextDiagnosticAt && status == _lastDiagnosticStatus && SelectedId == _lastDiagnosticTarget) return;
+            _nextDiagnosticAt = now.AddSeconds(5);
+            _lastDiagnosticStatus = status;
+            _lastDiagnosticTarget = SelectedId;
+            context.RecordDiagnostic?.Invoke("combat-assist-state", new {
+                floor = context.Duty.Floor, status, autoSelect = true,
+                inCombat, passageOpen, engageRange = range,
+                currentTargetId = Service.TargetManager.Target?.GameObjectId,
+                selectedTargetId = SelectedId, targetHp = target?.CurrentHp,
+                clearingTargetId = context.ClearingTargetId
+            });
+        }
+        catch (Exception ex)
+        {
+            status = "Select: error";
+            context.RecordDiagnostic?.Invoke("combat-assist-error", new { error = ex.ToString() });
+            Service.Log.Error($"[CombatAssistPolicy] Tick error: {ex}");
+        }
+    }
+
+    internal float GetEngageRange()
+    {
+        var job = Service.LocalPlayer?.ClassJob;
+        uint id = job?.RowId ?? 0;
+        if (id != _rangeJob || _engageRange == 0)
+        {
+            _rangeJob = id;
+            _engageRange = job?.Value.Role is 3 or 4 or 5 ? 25f : 3f;
+        }
+        return _engageRange;
+    }
 }

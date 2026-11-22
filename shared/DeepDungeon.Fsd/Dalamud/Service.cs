@@ -17,6 +17,7 @@ internal sealed class Service
 
     [PluginService] internal static ISigScanner Scanner { get; private set; } = null!;
     [PluginService] internal static IClientState ClientState { get; private set; } = null!;
+    [PluginService] internal static IPlayerState PlayerState { get; private set; } = null!;
     [PluginService] internal static IObjectTable GameObjects { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
     [PluginService] internal static IChatGui Chat { get; private set; } = null!;

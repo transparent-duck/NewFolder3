@@ -25,7 +25,8 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
 		public bool IsBossFloor { get; private set; }
 		public bool IsTransporting { get; private set; }
 		public bool IsTransitioning { get; private set; }
-		public bool StateReadFailed { get; private set; }
+		public bool StateReadFailed => LastStateReadError.Length != 0;
+		internal bool StateReadIncompatible { get; private set; }
 		public string LastStateReadError { get; private set; } = string.Empty;
 
 		// Floor type (enum form of IsBossFloor, with stabilization)
@@ -50,13 +51,26 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
 
 				if (dd == null)
 				{
-					ResetDutyFields(isTransporting: true, isTransitioning: true);
-					ClearStateReadFailure();
-					return true;
+					MarkStateReadFailure("暫未取得深宮副本控制器。");
+					return false;
 				}
 
 				uint dungeonId = dd->DeepDungeonId;
 				byte floor = dd->Floor;
+				if (!isTransporting && dungeonId == 0)
+				{
+					MarkStateReadFailure("深宮副本控制器尚未提供地宮編號。");
+					return false;
+				}
+				if (!isTransporting &&
+				    (DeepDungeonFloorClassifier.Classify(dungeonId, floor) == DeepDungeonFloorKind.Unknown ||
+				     DungeonCatalog.TryGetByTerritoryId(Service.ClientState.TerritoryType, out var dungeon) &&
+				     dungeon.DutyDungeonId != dungeonId))
+				{
+					MarkStateReadFailure($"副本控制器資料與目前區域不相容（區域 {Service.ClientState.TerritoryType}、地宮 {dungeonId}、樓層 {floor}）。",
+						incompatible: true);
+					return false;
+				}
 				int hoardCount = (int)dd->HoardCount;
 				bool passageOpen = DeepDungeonHelper.IsPassageOpen(dd);
 				bool isBossFloor = DeepDungeonHelper.IsBossFloor(dungeonId, floor);
@@ -89,28 +103,27 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
 			}
 			catch (Exception ex)
 			{
-				MarkStateReadFailure(ex);
+				MarkStateReadFailure(ex.Message, ex is MissingMethodException or TypeLoadException or EntryPointNotFoundException);
+				if ((DateTime.UtcNow - _lastStateReadFailureLogAt).TotalSeconds >= 2)
+				{
+					_lastStateReadFailureLogAt = DateTime.UtcNow;
+					Service.Log.Error($"[DutyState] Deep dungeon state read failed: {ex}");
+				}
 				return false;
 			}
 		}
 
 		private void ClearStateReadFailure()
 		{
-			StateReadFailed = false;
+			StateReadIncompatible = false;
 			LastStateReadError = string.Empty;
 		}
 
-		private void MarkStateReadFailure(Exception ex)
+		private void MarkStateReadFailure(string reason, bool incompatible = false)
 		{
-			StateReadFailed = true;
-			LastStateReadError = ex.Message;
+			StateReadIncompatible = incompatible;
+			LastStateReadError = reason;
 			ResetDutyFields(isTransporting: true, isTransitioning: true);
-
-			if ((DateTime.UtcNow - _lastStateReadFailureLogAt).TotalSeconds >= 2)
-			{
-				_lastStateReadFailureLogAt = DateTime.UtcNow;
-				Service.Log.Error($"[DutyState] Deep dungeon state read failed: {ex}");
-			}
 		}
 
 		private void UpdateFloorType(uint dungeonId, byte floor, bool isBoss)
@@ -167,12 +180,18 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
 
 		public void MarkOutsideDuty()
 		{
-			ResetDutyFields(isTransporting: false, isTransitioning: false);
+			bool transitioning = IsClientTransitioning;
+			ResetDutyFields(isTransporting: transitioning, isTransitioning: transitioning);
 			_lastKnownFloor = 0;
 			_lastKnownDungeonId = 0;
 			_lastFloorChangeAt = DateTime.MinValue;
 			ClearStateReadFailure();
 		}
+
+		// Read live conditions: the duty object can disappear before zoning finishes.
+		public static bool IsClientTransitioning => Service.LocalPlayer == null ||
+			Service.Condition[ConditionFlag.BetweenAreas] ||
+			Service.Condition[ConditionFlag.BetweenAreas51];
 
 		public double GetStabilizationTimeRemaining()
 		{

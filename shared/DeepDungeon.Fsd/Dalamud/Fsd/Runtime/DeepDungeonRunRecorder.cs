@@ -43,9 +43,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 			return Path.Combine(baseDir, "DeepDungeonRuns");
 		}
 
-		internal static void RetainApplicableRunLogFiles(string logDirectory, string activeFilePath)
+		internal static void RetainApplicableRunLogFiles(string logDirectory, string activeFilePath,
+			string searchPattern = "*.jsonl")
 		{
-			string[] paths = Directory.GetFiles(logDirectory, "*.jsonl");
+			string[] paths = Directory.GetFiles(logDirectory, searchPattern);
 			if (paths.Length <= MaxRetainedRunLogFiles)
 				return;
 

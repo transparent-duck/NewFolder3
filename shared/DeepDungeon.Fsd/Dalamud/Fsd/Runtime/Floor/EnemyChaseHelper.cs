@@ -11,55 +11,48 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 	internal sealed class EnemyChaseHelper
 	{
 		private ulong _currentTargetId;
+		private EnemyChaseTarget? _lastTarget;
 		public Func<IBattleChara, bool>? CanSelectNewTarget;
 		public Func<ulong, bool>? IsTargetBlocked;
 		private readonly HashSet<uint> _reportedAvoidedNames = new();
-		private Vector3 _legEndpoint;
-		private bool _hasLegEndpoint;
 		private int _lastTopologyPlayerRoomIndex = -1;
-		private readonly Dictionary<ulong, DateTime> _deprioritizedTargets = new();
-
-		public const float NavigationArrivalTolerance = 3f;
-		public const float LiveTargetHoldRange = 3f;
-		private static readonly TimeSpan DeprioritizeDuration = TimeSpan.FromSeconds(20);
 
 		/// <summary>
 		/// Returns a clearing target: aggroed enemy preferred, then a live sticky target,
 		/// then the hostile in the topologically nearest room. A live sticky target is
 		/// re-ranked when the player enters another room, but is replaced only by a
 		/// hostile in a strictly closer room-hop tier.
-		/// Target identity remains sticky while each navigation leg uses an immutable
-		/// endpoint. The caller explicitly completes a leg before the live position is
-		/// sampled for the next one.
 		/// Returns null with an explicit acquisition failure when a new target cannot
 		/// be ranked from the stable floor topology.
 		/// </summary>
 		public unsafe EnemyChaseTarget? GetClearingTarget(
+			RunContext? context,
 			InstanceContentDeepDungeon* dd,
 			NormalFloorGraphSnapshot? normalGraph,
 			int playerRoomIndex,
 			Vector3 playerPosition,
             out EnemyChaseAcquisitionFailure acquisitionFailure,
-            bool allowNewTargets = true)
+            bool allowNewTargets = true,
+            Func<IBattleChara, bool>? canEngage = null)
 		{
 			acquisitionFailure = EnemyChaseAcquisitionFailure.None;
-			PruneDeprioritizedTargets();
 
 			// 1. Prefer aggroed hostile (from hate list)
-			var aggroed = PickAggroedHostileAnyRange(playerPosition);
+			var aggroed = CombatTargetingHelpers.PickExcludedAggroTarget(context, canEngage ?? (static _ => true))
+				?? PickAggroedHostileAnyRange(playerPosition, canEngage);
+            if (aggroed == null && canEngage != null)
+                aggroed = CombatTargetingHelpers.PickExcludedAggroTarget(context, static _ => true)
+                    ?? PickAggroedHostileAnyRange(playerPosition, null);
 			if (aggroed != null)
 			{
-				return TrackAndReturn(
-					aggroed.GameObjectId,
-					aggroed.Position,
-					aggroed.HitboxRadius,
-					EnemyChaseTargetReason.Aggro);
+				return TrackAndReturn(aggroed);
 			}
 
 			if (!allowNewTargets)
 			{
+                acquisitionFailure = EnemyChaseAcquisitionFailure.NoObservedHostile;
 				_currentTargetId = 0;
-				_hasLegEndpoint = false;
+				_lastTarget = null;
 				return null;
 			}
 
@@ -75,7 +68,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 						    normalGraph,
 						    playerRoomIndex,
 						    existing.Position,
-						    out _,
 						    out int currentTargetHops))
 					{
 						var revalidatedNearest = PickTopologyNearestHostileAnyRange(
@@ -83,7 +75,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 							normalGraph,
 							playerRoomIndex,
 							playerPosition,
-							out int revalidatedTargetRoomIndex,
 							out int revalidatedGraphHops,
 							out _);
 						if (revalidatedNearest != null)
@@ -94,32 +85,16 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 								    currentTargetHops,
 								    revalidatedGraphHops))
 							{
-								_currentTargetId = revalidatedNearest.GameObjectId;
-								_legEndpoint = revalidatedNearest.Position;
-								_hasLegEndpoint = true;
-								return new EnemyChaseTarget(
-									_legEndpoint,
-									revalidatedNearest.Position,
-									revalidatedNearest.HitboxRadius,
-									revalidatedNearest.GameObjectId,
-									EnemyChaseTargetReason.CloserAfterRoomChange,
-									playerRoomIndex,
-									revalidatedTargetRoomIndex,
-									revalidatedGraphHops);
+								return TrackAndReturn(revalidatedNearest, playerRoomIndex);
 							}
 						}
 					}
 
-					return TrackAndReturn(
-						existing.GameObjectId,
-						existing.Position,
-						existing.HitboxRadius,
-						EnemyChaseTargetReason.Sticky);
+					return TrackAndReturn(existing);
 				}
 
 				_currentTargetId = 0;
-				_legEndpoint = Vector3.Zero;
-				_hasLegEndpoint = false;
+				_lastTarget = null;
 				_lastTopologyPlayerRoomIndex = -1;
 			}
 
@@ -129,61 +104,37 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				normalGraph,
 				playerRoomIndex,
 				playerPosition,
-				out int targetRoomIndex,
-				out int graphHops,
+				out _,
 				out acquisitionFailure);
-			if (nearest != null)
-			{
-				_currentTargetId = nearest.GameObjectId;
-				_legEndpoint = nearest.Position;
-				_hasLegEndpoint = true;
-				_lastTopologyPlayerRoomIndex = playerRoomIndex;
-				return new EnemyChaseTarget(
-					_legEndpoint,
-					nearest.Position,
-					nearest.HitboxRadius,
-					nearest.GameObjectId,
-					EnemyChaseTargetReason.Nearest,
-					playerRoomIndex,
-					targetRoomIndex,
-					graphHops);
-			}
-
-			return null;
+			if (nearest == null) return null;
+			return TrackAndReturn(nearest, playerRoomIndex);
 		}
 
-		/// <summary>
-		/// Ends the immutable navigation leg without releasing the sticky target.
-		/// The next GetClearingTarget call samples the target's current live position.
-		/// </summary>
-		public void CompleteCurrentLeg()
-		{
-			_hasLegEndpoint = false;
-		}
+		/// <summary>The sticky target as last RETURNED to a caller —
+		/// read-only observation for diagnostics/previews; never acquires
+		/// or re-ranks anything.</summary>
+		public EnemyChaseTarget? LastTarget =>
+			_currentTargetId != 0 ? _lastTarget : null;
 
-		public void DeprioritizeCurrentTarget()
+		public void ReleaseTarget(ulong targetId)
 		{
-			if (_currentTargetId == 0)
+			if (targetId != _currentTargetId)
 				return;
-
-			_deprioritizedTargets[_currentTargetId] = DateTime.UtcNow + DeprioritizeDuration;
 			_currentTargetId = 0;
-			_legEndpoint = Vector3.Zero;
-			_hasLegEndpoint = false;
+			_lastTarget = null;
 			_lastTopologyPlayerRoomIndex = -1;
 		}
 
 		public void Reset()
 		{
 			_currentTargetId = 0;
-			_legEndpoint = Vector3.Zero;
-			_hasLegEndpoint = false;
+			_lastTarget = null;
 			_lastTopologyPlayerRoomIndex = -1;
-			_deprioritizedTargets.Clear();
 			_reportedAvoidedNames.Clear();
 		}
 
-		private IBattleChara? PickAggroedHostileAnyRange(Vector3 playerPosition)
+		private IBattleChara? PickAggroedHostileAnyRange(Vector3 playerPosition,
+            Func<IBattleChara, bool>? canEngage)
 		{
 			IBattleChara? selected = null;
 			float selectedDistSq = float.MaxValue;
@@ -199,10 +150,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 					continue;
 				}
 
-				if (!IsAggroedToPlayer(bnpc.GameObjectId))
-					continue;
-
-				if (IsDeprioritized(bnpc.GameObjectId))
+				if (!IsAggroedToPlayer(bnpc.GameObjectId) || canEngage?.Invoke(bnpc) == false)
 					continue;
 
 				if (_currentTargetId != 0 && bnpc.GameObjectId == _currentTargetId)
@@ -232,11 +180,9 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			NormalFloorGraphSnapshot? normalGraph,
 			int playerRoomIndex,
 			Vector3 playerPosition,
-			out int targetRoomIndex,
 			out int graphHops,
 			out EnemyChaseAcquisitionFailure acquisitionFailure)
 		{
-			targetRoomIndex = -1;
 			graphHops = -1;
 			acquisitionFailure = EnemyChaseAcquisitionFailure.None;
 
@@ -256,6 +202,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			EnemyChaseCandidateRank selectedRank = default;
 			bool foundUnboundHostile = false;
 			bool foundUnreachableHostile = false;
+            bool foundExcludedHostile = false;
 
 			foreach (var obj in Service.GameObjects)
 			{
@@ -272,7 +219,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 					continue;
 
 				if (!IsNewTargetAllowed(bnpc))
-					continue;
+                {
+                    foundExcludedHostile = true;
+                    continue;
+                }
 
 				int candidateRoom = RoomGraph.GetRoomIndexForPosition(
 					dd,
@@ -300,7 +250,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				{
 					selected = bnpc;
 					selectedRank = candidateRank;
-					targetRoomIndex = candidateRoom;
 					graphHops = candidateHops;
 				}
 			}
@@ -311,6 +260,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 					acquisitionFailure = EnemyChaseAcquisitionFailure.TargetRoomUnavailable;
 				else if (foundUnreachableHostile)
 					acquisitionFailure = EnemyChaseAcquisitionFailure.TargetRoomUnreachable;
+                else
+                    acquisitionFailure = foundExcludedHostile ? EnemyChaseAcquisitionFailure.Excluded : EnemyChaseAcquisitionFailure.NoObservedHostile;
 			}
 
 			return selected;
@@ -321,10 +272,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			NormalFloorGraphSnapshot? normalGraph,
 			int playerRoomIndex,
 			Vector3 targetPosition,
-			out int targetRoomIndex,
 			out int graphHops)
 		{
-			targetRoomIndex = -1;
 			graphHops = -1;
 			if (dd == null ||
 			    normalGraph == null ||
@@ -333,7 +282,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				return false;
 			}
 
-			targetRoomIndex = RoomGraph.GetRoomIndexForPosition(
+			int targetRoomIndex = RoomGraph.GetRoomIndexForPosition(
 				dd,
 				targetPosition,
 				normalGraph.ReachableRooms,
@@ -356,14 +305,16 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			return false;
 		}
 
-		public static unsafe bool IsAggroedToPlayer(ulong targetId)
+		public static bool IsAggroedToPlayer(ulong targetId) => ReadAggro(targetId) == true;
+
+		internal static unsafe bool? ReadAggro(ulong targetId)
 		{
 			if (targetId == 0)
-				return false;
+				return null;
 
 			var uiState = FFXIVClientStructs.FFXIV.Client.Game.UI.UIState.Instance();
 			if (uiState == null)
-				return false;
+				return null;
 
 			var hater = &uiState->Hater;
 			var count = Math.Clamp(hater->HaterCount, 0, 32);
@@ -376,56 +327,19 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			return false;
 		}
 
-		private bool IsDeprioritized(ulong targetId)
-		{
-			if (IsTargetBlocked?.Invoke(targetId) == true) return true;
-			return _deprioritizedTargets.TryGetValue(targetId, out var expiresAt) &&
-			       DateTime.UtcNow < expiresAt;
-		}
+		private bool IsDeprioritized(ulong targetId) => IsTargetBlocked?.Invoke(targetId) == true;
 
-		private void PruneDeprioritizedTargets()
+		private EnemyChaseTarget TrackAndReturn(IBattleChara target, int? playerRoom = null)
 		{
-			if (_deprioritizedTargets.Count == 0)
-				return;
-
-			var now = DateTime.UtcNow;
-			Span<ulong> expired = stackalloc ulong[Math.Min(_deprioritizedTargets.Count, 32)];
-			int expiredCount = 0;
-			foreach (var pair in _deprioritizedTargets)
+			if (target.GameObjectId != _currentTargetId)
 			{
-				if (pair.Value > now)
-					continue;
-
-				if (expiredCount >= expired.Length)
-					break;
-
-				expired[expiredCount++] = pair.Key;
+				_currentTargetId = target.GameObjectId;
+				_lastTopologyPlayerRoomIndex = playerRoom ?? -1;
 			}
 
-			for (int i = 0; i < expiredCount; i++)
-				_deprioritizedTargets.Remove(expired[i]);
-		}
-
-		private EnemyChaseTarget TrackAndReturn(
-			ulong id,
-			Vector3 currentPos,
-			float hitboxRadius,
-			EnemyChaseTargetReason reason)
-		{
-			if (id != _currentTargetId)
-			{
-				_currentTargetId = id;
-				_hasLegEndpoint = false;
-				_lastTopologyPlayerRoomIndex = -1;
-			}
-
-			if (!_hasLegEndpoint)
-			{
-				_legEndpoint = currentPos;
-				_hasLegEndpoint = true;
-			}
-
-			return new EnemyChaseTarget(_legEndpoint, currentPos, hitboxRadius, id, reason, -1, -1, -1);
+			var selected = new EnemyChaseTarget(target.GameObjectId, target.Position);
+			_lastTarget = selected;
+			return selected;
 		}
 
 		private static float DistSqXZ(Vector3 a, Vector3 b)
@@ -460,45 +374,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		}
 	}
 
-	internal readonly struct EnemyChaseTarget
-	{
-		public EnemyChaseTarget(
-			Vector3 position,
-			Vector3 livePosition,
-			float hitboxRadius,
-			ulong gameObjectId,
-			EnemyChaseTargetReason reason,
-			int acquisitionPlayerRoomIndex,
-			int acquisitionTargetRoomIndex,
-			int acquisitionGraphHops)
-		{
-			Position = position;
-			LivePosition = livePosition;
-			HitboxRadius = hitboxRadius;
-			GameObjectId = gameObjectId;
-			Reason = reason;
-			AcquisitionPlayerRoomIndex = acquisitionPlayerRoomIndex;
-			AcquisitionTargetRoomIndex = acquisitionTargetRoomIndex;
-			AcquisitionGraphHops = acquisitionGraphHops;
-		}
-
-		public Vector3 Position { get; }
-		public Vector3 LivePosition { get; }
-		public float HitboxRadius { get; }
-		public ulong GameObjectId { get; }
-		public EnemyChaseTargetReason Reason { get; }
-		public int AcquisitionPlayerRoomIndex { get; }
-		public int AcquisitionTargetRoomIndex { get; }
-		public int AcquisitionGraphHops { get; }
-	}
-
-	internal enum EnemyChaseTargetReason
-	{
-		Aggro,
-		Sticky,
-		Nearest,
-		CloserAfterRoomChange
-	}
+	internal readonly record struct EnemyChaseTarget(ulong GameObjectId, Vector3 LivePosition);
 
 	internal enum EnemyChaseAcquisitionFailure
 	{
@@ -506,6 +382,9 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		TopologyUnavailable,
 		PlayerRoomUnavailable,
 		TargetRoomUnavailable,
-		TargetRoomUnreachable
+		TargetRoomUnreachable,
+        Excluded,
+        NoObservedHostile,
+        AttackableWithoutRoomIndex
 	}
 }

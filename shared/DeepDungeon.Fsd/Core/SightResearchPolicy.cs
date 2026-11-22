@@ -70,7 +70,7 @@ public static class SightResearchPolicy
 
         // A visible, targetable Banded coffer is an authoritative terminal hoard
         // observation even when Intuition was not used (or its chat result was
-        // not observed).  PalacePal matching is performed by the caller before
+        // not observed).  Palantir matching is performed by the caller before
         // this bit is supplied; this policy must not create a new hoard-position
         // collection path.
         if (snapshot.IntuitionResolution != IntuitionFloorResolution.Positive &&
@@ -99,5 +99,28 @@ public static class SightResearchPolicy
             return new SightResearchDecision(SightResearchDecisionKind.UseMazeroot, "unknown-incoming-edge");
 
         return new SightResearchDecision(SightResearchDecisionKind.Ineligible, "reveal-resource-unavailable");
+    }
+
+    public static float GetProvenTrapLoadSafeRadius(float maximumFirstAppearanceDistance) =>
+        MathF.Max(0f, maximumFirstAppearanceDistance - 1f);
+
+    public static bool AreAllCandidatesCovered(
+        in RawWorldPosition playerPosition,
+        IReadOnlyList<RawWorldPosition> candidates,
+        float safeRadius)
+    {
+        if (candidates.Count == 0 || safeRadius <= 0f)
+            return false;
+
+        float safeRadiusSquared = safeRadius * safeRadius;
+        for (int i = 0; i < candidates.Count; i++)
+        {
+            float dx = playerPosition.X - candidates[i].X;
+            float dz = playerPosition.Z - candidates[i].Z;
+            if (dx * dx + dz * dz > safeRadiusSquared)
+                return false;
+        }
+
+        return true;
     }
 }

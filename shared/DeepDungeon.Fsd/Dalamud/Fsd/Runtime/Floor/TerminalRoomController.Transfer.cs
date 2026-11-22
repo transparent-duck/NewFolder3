@@ -16,7 +16,7 @@ internal sealed partial class TerminalRoomController
     public unsafe bool TryUpdatePt99ResultTransfer(InstanceContentDeepDungeon* dd)
     {
         if (!Pt99TransitionPolicy.CanApproach(dd->DeepDungeonId, dd->Floor,
-            Service.Condition[ConditionFlag.InCombat], _ctx?.Duty.PassageOpen == true)) return false;
+            Service.Condition[ConditionFlag.InCombat], _ctx.Duty.PassageOpen)) return false;
         var now = DateTime.UtcNow;
         if (now < _terminalTransferNextTick) return _terminalTransferStarted != default;
         _terminalTransferNextTick = now.AddMilliseconds(500);
@@ -29,11 +29,13 @@ internal sealed partial class TerminalRoomController
             else if (obj.ObjectKind == ObjectKind.EventObj && obj.BaseId == Pt99TransitionPolicy.PassageBaseId)
                 passage = obj;
         }
-        if (portal == null) return false;
+        if (portal == null && _terminalTransferStarted == default) return false;
         var player = Service.LocalPlayer;
-        if (player == null || _ctx == null) return false;
+        if (player == null) return false;
         if (_terminalTransferStarted == default)
         {
+            if (portal == null) return false;
+            DestroyFloorRuntime(dd->Floor, "pt99-result-transfer");
             _terminalTransferStarted = now;
             Service.Log.Info($"[PT99.Transfer] Post-boss portal observed: id={portal.GameObjectId}, baseId={portal.BaseId}, position={portal.Position}; awaiting native floor100 after interaction.");
             RecordReplayEvent("pt99-result-portal-observed", new
@@ -51,16 +53,17 @@ internal sealed partial class TerminalRoomController
             Service.Condition[ConditionFlag.OccupiedInEvent] || Service.Condition[ConditionFlag.Jumping] ||
             Service.Condition[ConditionFlag.Jumping61])
         {
-            _navHelper?.Cancel();
+            _navHelper.Cancel();
             return true;
         }
-        if (passage != null && Pt99TransitionPolicy.OnPassageSide(
-            Vector3.Distance(player.Position, portal.Position), Vector3.Distance(player.Position, passage.Position)))
+        if (passage != null && (_terminalTransferLandingObserved || Pt99TransitionPolicy.OnPassageSide(
+            portal == null ? float.PositiveInfinity : Vector3.Distance(player.Position, portal.Position),
+            Vector3.Distance(player.Position, passage.Position))))
         {
             if (!_terminalTransferLandingObserved)
             {
                 _terminalTransferLandingObserved = true;
-                _navHelper?.Cancel();
+                _navHelper.Cancel();
                 Service.Log.Info($"[PT99.Transfer] Jump landing observed at {player.Position}; approaching passage {passage.GameObjectId} at {passage.Position}.");
                 RecordReplayEvent("pt99-result-jump-landing", new
                 {
@@ -69,13 +72,14 @@ internal sealed partial class TerminalRoomController
                     passage = new { passage.Position.X, passage.Position.Y, passage.Position.Z }
                 });
             }
-            var passageNavigation = _navHelper!.Navigate(ResolvePassageWalkingPosition(passage.Position), player.Position, 0.5f);
+            var passageNavigation = _navHelper.Navigate(ResolvePassageWalkingPosition(passage.Position), player.Position, 0.5f);
             Status = _ctx.StatusLine = "99層已通關：跨越峽谷後前往傳送裝置，等待100層";
             if (passageNavigation is NavigationState.Failed or NavigationState.StuckGiveUp)
                 StopResultReview("99層跨越峽谷後的傳送裝置導航失敗；已保留副本。", now);
             return true;
         }
-        var navigation = _navHelper!.Navigate(portal.Position, player.Position, 2.5f);
+        if (portal == null || _terminalTransferLandingObserved) return true;
+        var navigation = _navHelper.Navigate(portal.Position, player.Position, 2.5f);
         Status = _ctx.StatusLine = "99層已通關：前往終局房間傳送物件";
         if (navigation is NavigationState.Failed or NavigationState.StuckGiveUp)
         {
@@ -83,7 +87,7 @@ internal sealed partial class TerminalRoomController
             return true;
         }
         if (navigation != NavigationState.Arrived || now < _terminalTransferNextInteract) return true;
-        _terminalTransferNextInteract = now.AddSeconds(3);
+        _terminalTransferNextInteract = now.Add(InteractionTiming.GetRetryInterval());
         GameInteraction.InteractWith(portal, 3f, false, out var failure, out bool dispatched);
         if (dispatched) _navHelper.Cancel();
         Service.Log.Info($"[PT99.Transfer] Portal interaction: id={portal.GameObjectId}, dispatched={dispatched}, reason={failure}; waiting for native result floor.");

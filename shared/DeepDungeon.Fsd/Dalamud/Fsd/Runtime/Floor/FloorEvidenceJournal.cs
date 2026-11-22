@@ -18,9 +18,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor;
 internal sealed class FloorEvidenceJournal : IDisposable
 {
     private const string JournalDirectoryName = "DeepDungeonResearch";
-    private const string JournalFileName = "floor-evidence-v3.jsonl";
-    private readonly Channel<PendingWrite> _pending =
-        Channel.CreateUnbounded<PendingWrite>(new UnboundedChannelOptions
+    private readonly Channel<FloorEvidenceBundle> _pending =
+        Channel.CreateUnbounded<FloorEvidenceBundle>(new UnboundedChannelOptions
         {
             SingleReader = true,
             SingleWriter = true,
@@ -31,11 +30,16 @@ internal sealed class FloorEvidenceJournal : IDisposable
     private bool _disposed;
 
     public FloorEvidenceJournal(IFloorEvidenceObserver? observer = null)
+        : this(Service.PluginInterface.GetPluginConfigDirectory(), observer)
+    {
+    }
+
+    internal FloorEvidenceJournal(string configDirectory, IFloorEvidenceObserver? observer = null)
     {
         _observer = observer;
-        string baseDirectory = Service.PluginInterface.GetPluginConfigDirectory();
-        string journalDirectory = Path.Combine(baseDirectory, JournalDirectoryName);
-        string journalPath = Path.Combine(journalDirectory, JournalFileName);
+        string journalDirectory = Path.Combine(configDirectory, JournalDirectoryName);
+        string journalPath = Path.Combine(journalDirectory,
+            $"floor-evidence-v3-{DateTime.UtcNow:yyyyMMdd-HHmmssfffffff}-{Guid.NewGuid():N}.jsonl");
         _writerTask = Task.Run(() => WriteLoopAsync(journalDirectory, journalPath));
         FilePath = journalPath;
     }
@@ -50,19 +54,8 @@ internal sealed class FloorEvidenceJournal : IDisposable
             return;
         }
 
-        if (!_pending.Writer.TryWrite(new PendingWrite(bundle, null)))
+        if (!_pending.Writer.TryWrite(bundle))
             Service.Log.Error($"[FloorEvidenceJournal] Failed to queue finalized floor {bundle.FloorInstanceId}.");
-    }
-
-    public bool EnqueueAndWait(FloorEvidenceBundle bundle, TimeSpan timeout)
-    {
-        if (_disposed)
-            return false;
-
-        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!_pending.Writer.TryWrite(new PendingWrite(bundle, completion)))
-            return false;
-        return completion.Task.Wait(timeout) && completion.Task.Result;
     }
 
     public void Dispose()
@@ -95,26 +88,27 @@ internal sealed class FloorEvidenceJournal : IDisposable
             };
             await using var stream = new FileStream(
                 journalPath,
-                FileMode.Append,
+                FileMode.CreateNew,
                 FileAccess.Write,
                 FileShare.Read,
                 16 * 1024,
                 FileOptions.Asynchronous);
             await using var writer = new StreamWriter(stream, new UTF8Encoding(false));
-            await foreach (var pending in _pending.Reader.ReadAllAsync())
+            // One journal per run, with the same ten-run retention as runtime logs.
+            // The old combined journal counts as one historical file until retired.
+            DeepDungeonRunRecorder.RetainApplicableRunLogFiles(journalDirectory, journalPath, "floor-evidence-v*.jsonl");
+            await foreach (var bundle in _pending.Reader.ReadAllAsync())
             {
                 try
                 {
-                    string json = JsonSerializer.Serialize(pending.Bundle, options);
+                    string json = JsonSerializer.Serialize(bundle, options);
                     await writer.WriteLineAsync(json);
                     await writer.FlushAsync();
-                    NotifyObserver(pending.Bundle);
-                    pending.Completion?.TrySetResult(true);
+                    NotifyObserver(bundle);
                 }
                 catch (Exception ex)
                 {
-                    pending.Completion?.TrySetResult(false);
-                    Service.Log.Error($"[FloorEvidenceJournal] Failed to append floor {pending.Bundle.FloorInstanceId}: {ex}");
+                    Service.Log.Error($"[FloorEvidenceJournal] Failed to append floor {bundle.FloorInstanceId}: {ex}");
                 }
             }
         }
@@ -141,9 +135,6 @@ internal sealed class FloorEvidenceJournal : IDisposable
         }
     }
 
-    private readonly record struct PendingWrite(
-        FloorEvidenceBundle Bundle,
-        TaskCompletionSource<bool>? Completion);
 }
 
 internal sealed class FloorEvidenceSession
@@ -166,7 +157,6 @@ internal sealed class FloorEvidenceSession
     private int _firstObjectEvidenceRelativeMilliseconds = -1;
     private int _lastObjectEvidenceRelativeMilliseconds;
     private bool _objectEvidenceUnavailable;
-    private int? _authoritativeRevealRelativeMilliseconds;
     private bool _finalized;
 
     public FloorEvidenceSession(
@@ -194,52 +184,6 @@ internal sealed class FloorEvidenceSession
     }
 
     public FloorEvidenceBundle Bundle { get; }
-
-    public void ConfigureControlledSurvey(
-        ControlledSurveyFloorRole floorRole,
-        IReadOnlyList<byte> scheduledTargets)
-    {
-        if (_finalized)
-            return;
-        Bundle.ControlledSurvey.FloorRole = floorRole;
-        Bundle.ControlledSurvey.ScheduledTargetFloors = scheduledTargets.ToArray();
-        if (floorRole == ControlledSurveyFloorRole.SelectedTarget)
-            Bundle.ControlledSurvey.Outcome = ControlledPtSurveyTargetOutcome.Pending;
-    }
-
-    public void ObserveControlledOutcome(ControlledPtSurveyTargetOutcome outcome)
-    {
-        if (!_finalized)
-            Bundle.ControlledSurvey.Outcome = outcome;
-    }
-
-    public void ObserveControlledCaptureItem(ControlledPtSurveyItemAction item)
-    {
-        if (!_finalized)
-            Bundle.ControlledSurvey.CaptureItem = item;
-    }
-
-    public void ObserveAuthoritativeRevealConfirmed()
-    {
-        if (_finalized || _authoritativeRevealRelativeMilliseconds.HasValue)
-            return;
-
-        _authoritativeRevealRelativeMilliseconds = RelativeMilliseconds();
-        Bundle.ControlledSurvey.AuthoritativeRevealRelativeMilliseconds =
-            _authoritativeRevealRelativeMilliseconds;
-    }
-
-    public void ObserveControlledIntuitionResolution(
-        ControlledPtIntuitionResolutionSource source,
-        int elapsedMilliseconds,
-        int windowMilliseconds)
-    {
-        if (_finalized)
-            return;
-        Bundle.ControlledSurvey.IntuitionResolutionSource = source;
-        Bundle.ControlledSurvey.IntuitionResolutionElapsedMilliseconds = Math.Max(0, elapsedMilliseconds);
-        Bundle.ControlledSurvey.IntuitionResolutionWindowMilliseconds = Math.Max(0, windowMilliseconds);
-    }
 
     public void ObserveInheritedIntuitionResolution(
         InheritedIntuitionResolutionSource source,
@@ -672,10 +616,7 @@ internal sealed class FloorEvidenceSession
             DistanceXz = MathF.Sqrt(dx * dx + dz * dz),
             Distance3d = MathF.Sqrt(dx * dx + dy * dy + dz * dz),
             RelativeMilliseconds = relativeMilliseconds,
-            LastSeenRelativeMilliseconds = lastSeenRelativeMilliseconds,
-            MillisecondsSinceAuthoritativeReveal = _authoritativeRevealRelativeMilliseconds.HasValue
-                ? Math.Max(0, relativeMilliseconds - _authoritativeRevealRelativeMilliseconds.Value)
-                : null
+            LastSeenRelativeMilliseconds = lastSeenRelativeMilliseconds
         };
     }
 

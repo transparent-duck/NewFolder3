@@ -74,6 +74,14 @@ internal unsafe class BgCollisionDebugOverlay
 				if (!IsAnalytic(type) || !MatchesMaterial(collider))
 					continue;
 
+				AABB bb;
+				collider->GetWorldBB(&bb);
+				var center = (bb.Min + bb.Max) * 0.5f;
+				WorldDrawHelper.DrawWorldLabel(
+					ImGui.GetBackgroundDrawList(), center,
+					$"{type} 0x{collider->ObjectMaterialValue:X} v{collider->VisibilityFlags} l{collider->LayerMask:X}",
+					0xFFFFFFFF, 0xC0000000);
+
 				switch (type)
 				{
 					case ColliderType.Box:

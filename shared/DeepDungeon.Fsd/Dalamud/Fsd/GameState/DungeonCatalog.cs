@@ -11,8 +11,8 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
 			DungeonId = 1,
 			Name = "Palace of the Dead",
 			DutyDungeonId = 1,
-			NpcDataId = 0,
-			FloorsetNeedleByStartFloor = new Dictionary<int, string>(),
+			NpcDataId = 1017323,
+			FloorsetNeedleByStartFloor = new Dictionary<int, string>() { { 1, "1" }, { 51, "51" } },
 			RecoveryPotionItemId = Service.Item_SustainingPotion,
 			RecoveryPotionName = "Sustaining Potion",
 			PotsherdItemId = DeepDungeonItems.PotdPotsherd,
@@ -32,17 +32,17 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
 			DungeonId = 2,
 			Name = "Heaven-on-High",
 			DutyDungeonId = 2,
-			NpcDataId = 0,
-			FloorsetNeedleByStartFloor = new Dictionary<int, string>(),
+			NpcDataId = 1025846,
+			FloorsetNeedleByStartFloor = new Dictionary<int, string>() { { 1, "1" }, { 21, "21" } },
 			RecoveryPotionItemId = Service.Item_EmpyreanPotion,
 			RecoveryPotionName = "Empyrean Potion",
 			PotsherdItemId = DeepDungeonItems.HohPotsherd,
 			HoardItemIds = DeepDungeonItems.HohHoards,
 			TerritoryFloorRanges = new Dictionary<uint, (int, int)>
 			{
-				{ 770, (21, 30) }, { 771, (31, 40) }, { 772, (41, 50) }, { 773, (51, 60) },
-				{ 774, (61, 70) }, { 775, (71, 80) }, { 782, (81, 90) }, { 783, (91, 100) },
-				{ 784, (101, 110) }, { 785, (111, 120) }
+				{ 770, (1, 10) }, { 771, (11, 20) }, { 772, (21, 30) }, { 782, (31, 40) },
+				{ 773, (41, 50) }, { 783, (51, 60) }, { 774, (61, 70) }, { 784, (71, 80) },
+				{ 775, (81, 90) }, { 785, (91, 100) }
 			}
 		};
 
@@ -51,7 +51,7 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
 			DungeonId = 3,
 			Name = "Eureka Orthos",
 			DutyDungeonId = 3,
-			NpcDataId = 0,
+			NpcDataId = 1044504,
 			FloorsetNeedleByStartFloor = new Dictionary<int, string>(),
 			RecoveryPotionItemId = Service.Item_OrthosPotion,
 			RecoveryPotionName = "Orthodox Recovery Potion",

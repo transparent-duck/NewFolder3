@@ -35,7 +35,7 @@ namespace DeepDungeon.Fsd.Dalamud
 			public required string Source { get; init; }
 		}
 
-		private readonly PalacePalProvider _roomPresentationPalacePalProvider = new();
+		private readonly PalantirProvider _roomPresentationPalantirProvider = new();
 		private RoomPresentationScope? _roomPresentationScope;
 		private int _selectedRoomIndex = -1;
 		private bool _deepDungeonLandmarkSpritesInitialized;
@@ -92,7 +92,7 @@ namespace DeepDungeon.Fsd.Dalamud
 				return DetailedMapRoomGraphPresentationState.NoPositions;
 			}
 
-			return _roomPresentationPalacePalProvider
+			return _roomPresentationPalantirProvider
 				.GetCandidatePositionsForRoom(deepDungeon, roomIndex).Count > 0
 				? DetailedMapRoomGraphPresentationState.Candidate
 				: DetailedMapRoomGraphPresentationState.NoPositions;
@@ -411,9 +411,9 @@ namespace DeepDungeon.Fsd.Dalamud
 			}
 			else
 			{
-				palaceCandidates = _roomPresentationPalacePalProvider
+				palaceCandidates = _roomPresentationPalantirProvider
 					.GetCandidatePositionsForRoom(deepDungeon, roomIndex);
-				source = "PalacePal 候選位置";
+				source = "Palantir 候選位置";
 			}
 
 			int candidateCount = detailedMapRoom?.Candidates.Length ?? palaceCandidates?.Count ?? 0;

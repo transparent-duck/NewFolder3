@@ -21,6 +21,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 		public void Initialize(RunContext context)
 		{
+			_leaveFlow?.Dispose();
 			_ctx = context;
 			_leaveFlow = null;
 			_startTime = DateTime.Now;
@@ -31,6 +32,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		{
 			if (_ctx == null || _leaveFlow != null || !_ctx.Duty.IsInDuty) return;
 			if (_ctx.Duty.IsTransitioning) return;
+            if (_ctx.FarmingPlan != null && !_ctx.DutyFailureObserved && Service.LocalPlayer is { IsDead: true }) return;
+			if (_ctx.FarmingPlan?.HoldAfterClear == true && _ctx.DutyCompletionObserved && !_ctx.DutyFailureObserved) return;
 			switch (_ctx.RunOptions.Current.LeaveMode)
 			{
 				case LeaveMode.Immediate:
@@ -83,6 +86,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 		public void Dispose()
 		{
+			_leaveFlow?.Dispose();
 			_leaveFlow = null;
 			_ctx = null;
 			_startTime = DateTime.MinValue;

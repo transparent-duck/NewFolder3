@@ -10,7 +10,8 @@ namespace DeepDungeon.Fsd.Core
         ActivatePassage,
         OpenPlannedChest,
         FinishCombatBeforePassage,
-        EnterPassage
+        EnterPassage,
+        FindPassage
     }
 
     public enum CommandChannelPermission

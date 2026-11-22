@@ -7,7 +7,7 @@ namespace DeepDungeon.Fsd.Dalamud.GameState;
 
 internal enum DetailedMapRuntimePolicy
 {
-    PalacePalOnly,
+    PalantirOnly,
     DetailedMap
 }
 
@@ -59,7 +59,7 @@ internal sealed class DetailedMapRunSnapshot
     internal string? ReleaseId => Catalog?.ReleaseId;
     internal string Status => Policy == DetailedMapRuntimePolicy.DetailedMap
         ? $"detailed map {Catalog!.ReleaseId}"
-        : "PalacePal only";
+        : "Palantir only";
 
     internal bool TryGetPresentation(
         int layoutIndex,
@@ -129,6 +129,7 @@ internal sealed class DetailedMapCatalogManager : IDisposable
         DetailedMapHostOptions hostOptions,
         HttpMessageHandler? httpMessageHandler = null)
     {
+        Active = this;
         ArgumentException.ThrowIfNullOrWhiteSpace(pluginConfigDirectory);
         ArgumentNullException.ThrowIfNull(hostOptions);
 
@@ -195,6 +196,11 @@ internal sealed class DetailedMapCatalogManager : IDisposable
         SelectPresentationCatalog(_activeRun, _currentCatalog);
     internal string? ActiveRunReleaseId => _activeRun?.ReleaseId;
     internal DetailedMapRunSnapshot? ActiveRunSnapshot => _activeRun;
+
+    /// <summary>The live instance — the catalog is terrain-level data,
+    /// always current, readable with or without a run. Mid-run release
+    /// swaps are deliberately allowed (daily update cadence).</summary>
+    internal static DetailedMapCatalogManager? Active { get; private set; }
 
     internal static DetailedMapCatalog? SelectPresentationCatalog(
         DetailedMapRunSnapshot? activeRun,
@@ -293,7 +299,7 @@ internal sealed class DetailedMapCatalogManager : IDisposable
         if (!useDetailedMap || !IsSupportedScenario(scenarioKey))
         {
             snapshot = new DetailedMapRunSnapshot(
-                DetailedMapRuntimePolicy.PalacePalOnly,
+                DetailedMapRuntimePolicy.PalantirOnly,
                 scenarioKey,
                 null);
             _activeRun = snapshot;
@@ -767,6 +773,7 @@ internal sealed class DetailedMapCatalogManager : IDisposable
         WriteAtomic(
             Path.Combine(_catalogRoot, InstalledPointerFileName),
             DetailedMapCatalogContract.SerializeLatest(latest));
+        RetainInstalledRelease(releaseDirectory);
     }
 
     private void ReloadInstalledCatalog()
@@ -834,6 +841,7 @@ internal sealed class DetailedMapCatalogManager : IDisposable
 
             _currentCatalog = catalog;
             _installedPointer = latest;
+            RetainInstalledRelease(releaseDirectory);
             Service.Log.Info(
                 $"[DetailedMapCatalog] Loaded release {catalog.ReleaseId}; rooms={catalog.Rooms.Length}.");
         }
@@ -944,6 +952,44 @@ internal sealed class DetailedMapCatalogManager : IDisposable
             _catalogRoot,
             "releases",
             $"{latest.ReleaseId}-{latest.CatalogSha256[..12]}");
+
+    // The installed pointer is published only after validation. Keep its
+    // complete release; retired releases are not needed by in-memory run snapshots.
+    private void RetainInstalledRelease(string installedDirectory)
+    {
+        string releases = Path.GetFullPath(Path.Combine(_catalogRoot, "releases"));
+        string installed = Path.GetFullPath(installedDirectory);
+        string parentPrefix = GetValidatedCatalogParent() + Path.DirectorySeparatorChar;
+        if (!releases.StartsWith(parentPrefix, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(Path.GetDirectoryName(installed), releases, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Catalog retention resolved outside its release directory.");
+        }
+        if (!Directory.Exists(installed))
+            return;
+
+        try
+        {
+            foreach (string directory in Directory.EnumerateDirectories(releases))
+            {
+                if (string.Equals(Path.GetFullPath(directory), installed, StringComparison.OrdinalIgnoreCase) ||
+                    (File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
+                    continue;
+                try
+                {
+                    Directory.Delete(directory, recursive: true);
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    Service.Log.Warning($"[DetailedMapCatalog] Retired release could not be removed: {error.Message}");
+                }
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            Service.Log.Warning($"[DetailedMapCatalog] Release retention could not be completed: {error.Message}");
+        }
+    }
 
     private void DeleteDownloadedCatalogs()
     {
@@ -1154,6 +1200,8 @@ internal sealed class DetailedMapCatalogManager : IDisposable
     {
         if (_disposed)
             return;
+        if (Active == this)
+            Active = null;
         _activeRun = null;
         _httpClient?.Dispose();
         _disposed = true;

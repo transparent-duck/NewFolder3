@@ -11,28 +11,21 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 	{
 		public sealed record StateChangedInfo(
 			string Reason,
-			bool IntuitionActive,
 			SightUseState SightState,
 			bool UsedIntuitionThisFloor,
-			bool ChatSaysHoard,
-			bool ChatSaysNoHoard,
-			bool HoardCofferFound,
 			uint? GoldChestOvercapSlotIndex,
-			bool EvidenceAccepted,
-			string EvidenceDisposition,
 			long EvidenceAttemptId,
-			IntuitionEvidenceExpectationKind EvidenceExpectationKind,
-			byte EvidenceSourceFloor,
 			byte EvidenceTargetFloor,
-			uint? SilverChestOvercapDemicloneRowId);
+			uint? SilverChestOvercapRowId,
+			byte? UsedMagiciteTypeId)
+		{
+			public bool EvidenceAccepted => EvidenceAttemptId != 0 && Reason is ("LogMessage7272" or "LogMessage7273");
+		}
 
 		private readonly NativeDeepDungeonLogMessageSource _logMessageSource;
 		private readonly Action<NativeDeepDungeonLogMessage> _logMessageHandler;
 		private long _nextEvidenceAttemptId;
-		private long _expectedEvidenceAttemptId;
-		private IntuitionEvidenceExpectationKind _expectedEvidenceKind;
-		private byte _expectedEvidenceSourceFloor;
-		private byte _expectedEvidenceTargetFloor;
+		private (long Id, byte Floor) _expectedIntuition;
 
 		public ChatWatchers(NativeDeepDungeonLogMessageSource logMessageSource)
 		{
@@ -41,31 +34,19 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 			_logMessageSource.MessageReceived += _logMessageHandler;
 		}
 
-		public bool IntuitionActive { get; private set; }
 		public SightUseState SightState { get; private set; }
 		public bool UsedIntuitionThisFloor { get; private set; }
-		public bool IntuitionUsePendingThisFloor { get; private set; }
-		public bool HasCurrentFloorIntuitionUse =>
-			UsedIntuitionThisFloor || IntuitionUsePendingThisFloor;
-		public bool ChatSaysHoard { get; private set; }
-		public bool ChatSaysNoHoard { get; private set; }
-		public bool HoardCofferFound { get; private set; }
 		public long SightLogSequence { get; private set; }
 		public long MazerootLogSequence { get; private set; }
 		public event Action<StateChangedInfo>? StateChanged;
 
-		public void BeginReadyFloor(bool nativeIntuitionActive)
+		public void BeginReadyFloor()
 		{
 			if (SightState == SightUseState.Attempted)
 				Service.Log.Warning("[ChatWatchers] Sight attempt ended without confirmation before floor reset.");
-			IntuitionActive = nativeIntuitionActive;
 			SightState = SightUseState.None;
 			UsedIntuitionThisFloor = false;
-			IntuitionUsePendingThisFloor = false;
-			ClearExpectedEvidence();
-			ChatSaysHoard = false;
-			ChatSaysNoHoard = false;
-			HoardCofferFound = false;
+			_expectedIntuition = default;
 			SightLogSequence = 0;
 			MazerootLogSequence = 0;
 			NotifyStateChanged("BeginReadyFloor");
@@ -80,86 +61,32 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 
 		public void MarkIntuitionUsedThisFloor()
 		{
-			if (UsedIntuitionThisFloor && !IntuitionUsePendingThisFloor)
+			if (UsedIntuitionThisFloor)
 				return;
 
 			UsedIntuitionThisFloor = true;
-			IntuitionUsePendingThisFloor = false;
 			NotifyStateChanged("MarkIntuitionUsedThisFloor");
 		}
 
-		public void MarkIntuitionUsePendingThisFloor()
+		public long ExpectIntuitionResult(byte floor)
 		{
-			if (UsedIntuitionThisFloor || IntuitionUsePendingThisFloor)
-				return;
-
-			IntuitionUsePendingThisFloor = true;
-			NotifyStateChanged("MarkIntuitionUsePendingThisFloor");
+			long id = ++_nextEvidenceAttemptId;
+			_expectedIntuition = (id, floor);
+			NotifyStateChanged("IntuitionEvidenceExpected", id, floor);
+			return id;
 		}
 
-		public void CancelPendingIntuitionUseThisFloor()
+		public bool CompleteExpectedIntuitionResult(long attemptId)
 		{
-			if (!IntuitionUsePendingThisFloor)
-				return;
-
-			IntuitionUsePendingThisFloor = false;
-			NotifyStateChanged("CancelPendingIntuitionUseThisFloor");
-		}
-
-		public long ExpectIntuitionResult(byte sourceFloor)
-		{
-			return ExpectIntuitionResult(sourceFloor, IntuitionEvidenceExpectationKind.FloorResult);
-		}
-
-		public long ExpectInheritedIntuitionResult(byte floor)
-		{
-			return ExpectIntuitionResult(floor, IntuitionEvidenceExpectationKind.InheritedFloorResult);
-		}
-
-		private long ExpectIntuitionResult(byte sourceFloor, IntuitionEvidenceExpectationKind expectationKind)
-		{
-			_expectedEvidenceAttemptId = ++_nextEvidenceAttemptId;
-			_expectedEvidenceKind = expectationKind;
-			_expectedEvidenceSourceFloor = sourceFloor;
-			_expectedEvidenceTargetFloor = sourceFloor;
-			NotifyStateChanged("IntuitionEvidenceExpected", new EvidenceReceipt(
-				false,
-				"expecting-floor-result",
-				_expectedEvidenceAttemptId,
-				_expectedEvidenceKind,
-				_expectedEvidenceSourceFloor,
-				_expectedEvidenceTargetFloor));
-			return _expectedEvidenceAttemptId;
+			if (attemptId == 0 || _expectedIntuition.Id != attemptId) return false;
+			_expectedIntuition = default;
+			return true;
 		}
 
 		public void CancelExpectedIntuitionResult(long attemptId)
 		{
-			if (attemptId == 0 || attemptId != _expectedEvidenceAttemptId ||
-			    _expectedEvidenceKind == IntuitionEvidenceExpectationKind.BandedOpen)
-			{
-				return;
-			}
-
-			ClearExpectedEvidence();
-			NotifyStateChanged("IntuitionEvidenceExpectationCancelled");
-		}
-
-		public void ExpectHoardCofferFound(byte floor)
-		{
-			_expectedEvidenceAttemptId = ++_nextEvidenceAttemptId;
-			_expectedEvidenceKind = IntuitionEvidenceExpectationKind.BandedOpen;
-			_expectedEvidenceSourceFloor = floor;
-			_expectedEvidenceTargetFloor = floor;
-			NotifyStateChanged("HoardCofferEvidenceExpected");
-		}
-
-		public void CancelExpectedHoardCofferFound()
-		{
-			if (_expectedEvidenceKind != IntuitionEvidenceExpectationKind.BandedOpen)
-				return;
-
-			ClearExpectedEvidence();
-			NotifyStateChanged("HoardCofferEvidenceExpectationCancelled");
+			if (CompleteExpectedIntuitionResult(attemptId))
+				NotifyStateChanged("IntuitionEvidenceExpectationCancelled");
 		}
 
 		public void MarkSightAttemptedThisFloor()
@@ -187,9 +114,20 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 					if (message.ParameterCount > 0 && TryMapGoldChestOvercapSlot(message.Value1, out var slotIndex))
 						NotifyStateChanged("GoldChestOvercapObserved", goldChestOvercapSlotIndex: slotIndex);
 					break;
+				case 9208:
+					if (message.ParameterCount > 0 && message.Value1 is >= 1 and <= 4)
+						NotifyStateChanged("SilverChestOvercapObserved", silverChestOvercapRowId: message.Value1);
+					break;
+				case 9209:
+					if (message.ParameterCount > 1 && message.Value2 is >= 1 and <= 4)
+						NotifyStateChanged("MagiciteUseObserved", usedMagiciteTypeId: (byte)message.Value2);
+					break;
+				case 9217:
+					NotifyStateChanged("FalsePassageObserved");
+					break;
 				case 10287:
 					if (message.ParameterCount > 0 && message.Value1 is 4 or 5)
-						NotifyStateChanged("SilverChestOvercapObserved", silverChestOvercapDemicloneRowId: message.Value1);
+						NotifyStateChanged("SilverChestOvercapObserved", silverChestOvercapRowId: message.Value1);
 					break;
 				case 7256:
 					SightLogSequence++;
@@ -204,98 +142,28 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 					NotifyStateChanged("LogMessage11251Mazeroot");
 					break;
 				case 7272:
-					if (!TryAcceptEvidence(IntuitionEvidenceMessageKind.HoardPresent, "LogMessage7272", out var positiveEvidence))
-						break;
-					IntuitionActive = true;
-					ChatSaysHoard = true;
-					ChatSaysNoHoard = false;
-					HoardCofferFound = false;
-					NotifyStateChanged("LogMessage7272", positiveEvidence);
+					NotifyStateChanged("LogMessage7272", _expectedIntuition.Id, _expectedIntuition.Floor);
 					break;
 				case 7273:
-					if (!TryAcceptEvidence(IntuitionEvidenceMessageKind.NoHoard, "LogMessage7273", out var negativeEvidence))
-						break;
-					IntuitionActive = true;
-					if (negativeEvidence.ExpectationKind != IntuitionEvidenceExpectationKind.InheritedFloorResult)
-					{
-						ChatSaysNoHoard = true;
-						ChatSaysHoard = false;
-					}
-					HoardCofferFound = false;
-					NotifyStateChanged("LogMessage7273", negativeEvidence);
+					NotifyStateChanged("LogMessage7273", _expectedIntuition.Id, _expectedIntuition.Floor);
 					break;
 				case 7274:
-					if (!TryAcceptEvidence(IntuitionEvidenceMessageKind.HoardCofferFound, "LogMessage7274", out var cofferEvidence))
-						break;
-					HoardCofferFound = true;
-					IntuitionActive = false;
-					NotifyStateChanged("LogMessage7274", cofferEvidence);
+					NotifyStateChanged("LogMessage7274Observed");
 					break;
 			}
 		}
-
-		private bool TryAcceptEvidence(IntuitionEvidenceMessageKind messageKind, string reason, out EvidenceReceipt evidence)
-		{
-			var decision = IntuitionEvidenceAcceptancePlanner.Decide(new IntuitionEvidenceAcceptanceSnapshot(
-				_expectedEvidenceKind,
-				_expectedEvidenceAttemptId,
-				messageKind));
-			evidence = new EvidenceReceipt(
-				decision.Accepted,
-				decision.Reason,
-				_expectedEvidenceAttemptId,
-				_expectedEvidenceKind,
-				_expectedEvidenceSourceFloor,
-				_expectedEvidenceTargetFloor);
-			if (!decision.Accepted)
-			{
-				Service.Log.Warning($"[ChatWatchers] Rejected {reason}: {decision.Reason}");
-				NotifyStateChanged($"{reason}Rejected", evidence);
-				return false;
-			}
-
-			ClearExpectedEvidence();
-			return true;
-		}
-
-		private void ClearExpectedEvidence()
-		{
-			_expectedEvidenceAttemptId = 0;
-			_expectedEvidenceKind = IntuitionEvidenceExpectationKind.None;
-			_expectedEvidenceSourceFloor = 0;
-			_expectedEvidenceTargetFloor = 0;
-		}
-
-		private readonly record struct EvidenceReceipt(
-			bool Accepted,
-			string Disposition,
-			long AttemptId,
-			IntuitionEvidenceExpectationKind ExpectationKind,
-			byte SourceFloor,
-			byte TargetFloor);
 
 		private void NotifyStateChanged(
 			string reason,
-			EvidenceReceipt evidence = default,
+			long attemptId = 0,
+			byte expectedFloor = 0,
 			uint? goldChestOvercapSlotIndex = null,
-			uint? silverChestOvercapDemicloneRowId = null)
+			uint? silverChestOvercapRowId = null,
+			byte? usedMagiciteTypeId = null)
 		{
 			StateChanged?.Invoke(new StateChangedInfo(
-				reason,
-				IntuitionActive,
-				SightState,
-				UsedIntuitionThisFloor,
-				ChatSaysHoard,
-				ChatSaysNoHoard,
-				HoardCofferFound,
-				goldChestOvercapSlotIndex,
-				evidence.Accepted,
-				evidence.Disposition ?? string.Empty,
-				evidence.AttemptId,
-				evidence.ExpectationKind,
-				evidence.SourceFloor,
-				evidence.TargetFloor,
-				silverChestOvercapDemicloneRowId));
+				reason, SightState, UsedIntuitionThisFloor, goldChestOvercapSlotIndex,
+				attemptId, expectedFloor, silverChestOvercapRowId, usedMagiciteTypeId));
 		}
 
 		private static unsafe bool TryMapGoldChestOvercapSlot(uint rawPomanderId, out uint slotIndex)

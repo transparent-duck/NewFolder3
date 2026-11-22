@@ -9,7 +9,11 @@ public sealed class MultiLoopDriver
     public string LastStopReason { get; private set; } = string.Empty;
     public bool LastStopWasError => false;
 
-    public MultiLoopDriver(int targetLoops, bool infinite) => SetTargets(targetLoops, infinite);
+    public MultiLoopDriver(int targetLoops, bool infinite, int completedLoops = 0)
+    {
+        SetTargets(targetLoops, infinite);
+        CompletedLoops = completedLoops;
+    }
 
     public void SetTargets(int cycles, bool infinite)
     {

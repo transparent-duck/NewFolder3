@@ -12,14 +12,16 @@ using DeepDungeon.Fsd.Runtime;
 
 namespace DeepDungeon.Fsd.Dalamud
 {
+	internal readonly record struct ChestInteractionTarget(Vector3 Position, FloorChestKind Kind);
+
 	internal sealed class ChestInteractionAttempt
 	{
-		internal ChestInteractionAttempt(RoomWaypoint waypoint)
+		internal ChestInteractionAttempt(ChestInteractionTarget waypoint)
 		{
 			Waypoint = waypoint;
 		}
 
-		internal RoomWaypoint Waypoint { get; }
+		internal ChestInteractionTarget Waypoint { get; }
 		internal uint EntityId;
 		internal DateTime InteractionStartedAtUtc;
 		internal long EvidenceSequenceAtStart;
@@ -29,7 +31,18 @@ namespace DeepDungeon.Fsd.Dalamud
 		internal bool Reapproaching;
 		internal bool AcceptanceRecorded;
 		internal uint? PendingGoldOvercapSlotIndex;
-		internal uint? PendingSilverOvercapDemicloneRowId;
+		internal uint? PendingSilverOvercapStoneRowId;
+		// Bounded dispatch telemetry: every boundary call counts; only the
+		// throttled logs sample the expensive player-state description.
+		internal int InteractionCallCount;
+		internal int NativeDispatchCount;
+		internal ulong? LastNativeReturn;
+		internal DateTime NextWaitDiagnosticAt;
+		internal string? LastWaitDiagnosticReason;
+		// Exact reason of the most recent rejection — cleared on each
+		// TryInteract invocation, set BEFORE the logging throttle so an
+		// always-throttled rejection still surfaces.
+		internal string? LastRejectionReason;
 	}
 
 	internal readonly record struct ChestLifecycleSnapshot(
@@ -45,7 +58,6 @@ namespace DeepDungeon.Fsd.Dalamud
     {
 		private readonly FsdSettings _configuration;
 		private readonly IRunOptionsProvider _runOptionsProvider;
-		private const double ChestInteractionRetrySeconds = 1.0;
 		private const float NormalChestOpenTimeoutSeconds = 30.0f;
 		private const float AggressiveChestOpenTimeoutSeconds = 10.0f;
 		private const float BandedChestOpenTimeoutSeconds = 120.0f;
@@ -69,24 +81,68 @@ namespace DeepDungeon.Fsd.Dalamud
             1881, 1882, 1883, 1884, 1885, 1886, 1887, 1888, 1889, 1890, 1891, 1892, 1893, 1906, 1907, 1908
         };
 
-        public FsdChestInteraction(FsdSettings configuration, IRunOptionsProvider runOptionsProvider)
+        // Test seam: environment delegates default to the real game. Tests inject
+        // deterministic implementations instead of faking Dalamud objects.
+        internal sealed class Env
+        {
+            internal Func<DateTime> Now = () => DateTime.UtcNow;
+            internal Func<bool> InDeepDungeon = DeepDungeonHelper.IsInDeepDungeon;
+            internal Func<bool> Casting = () => Service.Condition[ConditionFlag.Casting];
+            internal Func<bool> Zoning = () => Service.Condition[ConditionFlag.BetweenAreas]
+                || Service.Condition[ConditionFlag.BetweenAreas51];
+            // (position, dead, hpFraction, present); absent player => present=false.
+            internal Func<(Vector3 pos, bool dead, float hpFrac, bool present)> PlayerState = () =>
+            {
+                var p = Service.LocalPlayer;
+                return p == null ? (default, false, 0f, false)
+                    : (p.Position, p.IsDead, (float)p.CurrentHp / Math.Max(1u, p.MaxHp), true);
+            };
+            // Live target still matches the recorded evidence and is targetable.
+            internal Func<FloorChestEvidence, bool> LiveTargetMatches =
+                e => ResolveCurrentObject(e) is { IsTargetable: true };
+            internal Action<string> Log = m => Service.Log.Info(m);
+            internal Action<string> LogError = m => Service.Log.Error(m);
+            // Throttled diagnostics only — observation, never an
+            // eligibility predicate. Injected in offline probes.
+            internal Func<string> InteractionState = GameInteraction.DescribePlayerInteractionState;
+            internal Func<FloorChestEvidence, bool?> LiveTargetable =
+                e => ResolveCurrentObject(e)?.IsTargetable;
+            // Dispatch against evidence; default resolves the live object and calls GameInteraction.
+            internal GameInteractionTrace LastInteractionTrace;
+            internal Func<FloorChestEvidence, float, bool, (bool interacted, bool dispatched, string failure)> Interact;
+            internal Env()
+            {
+                Interact = (evidence, maxDist, force) =>
+                {
+                    var best = ResolveCurrentObject(evidence);
+                    if (best == null)
+                        return (false, false, "live-target-unavailable");
+                    var interacted = GameInteraction.InteractWith(best, maxDist, force, out var failure, out bool dispatched, out var trace);
+                    LastInteractionTrace = trace;
+                    return (interacted, dispatched, failure);
+                };
+            }
+        }
+        private readonly Env _env;
+
+        public FsdChestInteraction(FsdSettings configuration, IRunOptionsProvider runOptionsProvider, Env? env = null)
         {
             _configuration = configuration;
             _runOptionsProvider = runOptionsProvider;
+            _env = env ?? new Env();
         }
 
 		internal static bool HasInteraction(ChestInteractionAttempt? attempt) => attempt?.EntityId != 0;
 
-		internal bool CanStart(ChestInteractionAttempt? attempt, RoomWaypoint waypoint)
+		internal bool CanStart(ChestInteractionAttempt? attempt, ChestInteractionTarget waypoint)
 		{
 			if (attempt?.Waypoint != waypoint)
 				return false;
-			if (waypoint.Type != RoomObjectiveType.ChestSilver)
+			if (waypoint.Kind != FloorChestKind.Silver)
 				return true;
 
-			var player = Service.LocalPlayer;
-			return player != null &&
-			       (float)player.CurrentHp / Math.Max(1u, player.MaxHp) >= SilverHpThreshold;
+			var player = _env.PlayerState();
+			return player.present && player.hpFrac >= SilverHpThreshold;
 		}
 
 		internal bool IsTargetMissing(ChestInteractionAttempt? attempt, FloorObjectEvidenceSnapshot evidence)
@@ -97,7 +153,7 @@ namespace DeepDungeon.Fsd.Dalamud
 
 		internal bool IsAccepted(
 			ChestInteractionAttempt? attempt,
-			RoomWaypoint waypoint,
+			ChestInteractionTarget waypoint,
 			FloorObjectEvidenceSnapshot? evidence,
 			out ChestLifecycleSnapshot snapshot,
 			out bool newlyAccepted)
@@ -115,6 +171,12 @@ namespace DeepDungeon.Fsd.Dalamud
 			{
 				attempt.AcceptanceRecorded = true;
 				snapshot = snapshot with { AcceptanceRecorded = true };
+				var ev = snapshot.Evidence;
+				_env.Log($"[NecromancerChest] interaction-completed entity={attempt.EntityId}; " +
+					$"calls={attempt.InteractionCallCount}; dispatches={attempt.NativeDispatchCount}; " +
+					$"decision={snapshot.Decision.Status}; completionKind={ev.NativeCompletionKind}; " +
+					$"evidenceSeqAtStart={snapshot.EvidenceSequenceAtStart}; evidenceSeq={snapshot.EvidenceSequence}; " +
+					$"state={ev.State}; flags={ev.Flags}");
 			}
 			return snapshot.Decision.Complete;
 		}
@@ -143,8 +205,8 @@ namespace DeepDungeon.Fsd.Dalamud
 				present,
 				attempt.InteractionStartedAtUtc == DateTime.MinValue
 					? 0
-					: (DateTime.UtcNow - attempt.InteractionStartedAtUtc).TotalSeconds,
-				ChestInteractionRetrySeconds));
+					: (_env.Now() - attempt.InteractionStartedAtUtc).TotalSeconds,
+				InteractionTiming.GetRetryInterval(_configuration.AggressiveChestInteraction).TotalSeconds));
 
 			return new ChestLifecycleSnapshot(
 				attempt.EntityId,
@@ -168,17 +230,17 @@ namespace DeepDungeon.Fsd.Dalamud
 			{
 				if (attempt == null)
 					return false;
+				attempt.LastRejectionReason = null;   // fresh invocation
 				if (attempt.Reapproaching)
-					return false;
+					return WaitForInteraction(attempt, "reapproaching", in snapshot);
 				bool aggressiveInteraction = _configuration.AggressiveChestInteraction;
 				snapshot = Observe(attempt, evidence);
-				if (snapshot.Decision.Complete ||
-				    !aggressiveInteraction && attempt.EntityId != 0 && !snapshot.Decision.RetryInteraction)
-				{
-					return false;
-				}
+				if (snapshot.Decision.Complete)
+					return WaitForInteraction(attempt, "already-complete", in snapshot);
+				if (!aggressiveInteraction && attempt.EntityId != 0 && !snapshot.Decision.RetryInteraction)
+					return WaitForInteraction(attempt, "awaiting-completion-decision", in snapshot);
 				// Only active during auto-farming: require run options provider assigned by engine
-				if (!DeepDungeonHelper.IsInDeepDungeon())
+				if (!_env.InDeepDungeon())
                     return RejectInteraction(attempt, "not-in-deep-dungeon");
 
 				long optionsVersion;
@@ -197,8 +259,8 @@ namespace DeepDungeon.Fsd.Dalamud
 				if (!CanAttemptInteraction(aggressiveInteraction))
 					return RejectInteraction(attempt, "casting-or-zoning");
 
-                var player = Service.LocalPlayer;
-                if (player == null || player.IsDead)
+                var player = _env.PlayerState();
+                if (!player.present || player.dead)
                     return RejectInteraction(attempt, "player-unavailable-or-dead");
 
 				// Resolve only the chest owned by the active waypoint.
@@ -209,36 +271,70 @@ namespace DeepDungeon.Fsd.Dalamud
 					return RejectInteraction(attempt, "waypoint-target-not-targetable");
 				if (!IsAllowedChest(chestEvidence.Kind, opts))
 					return RejectInteraction(attempt, "waypoint-target-disabled");
-				if (!aggressiveInteraction && DateTime.UtcNow < attempt.NextInteractAt)
-					return false;
-				var best = ResolveCurrentObject(chestEvidence);
-				if (best == null || !best.IsTargetable || !IsAllowedChest(best, opts))
+				if (!aggressiveInteraction && _env.Now() < attempt.NextInteractAt)
+					return WaitForInteraction(attempt, "retry-backoff", in snapshot);
+				if (!_env.LiveTargetMatches(chestEvidence) || !IsAllowedChest(chestEvidence.Kind, opts))
 					return RejectInteraction(attempt, "live-target-unavailable-or-disabled");
 
-				var dx = best.Position.X - player.Position.X;
-				var dz = best.Position.Z - player.Position.Z;
-				if (dx * dx + dz * dz > maxDist * maxDist)
-					return RejectInteraction(attempt, "horizontal-range-rejected", best);
+				var dx = chestEvidence.Object.Position.X - player.pos.X;
+				var dz = chestEvidence.Object.Position.Z - player.pos.Z;
+				if (!GetInteractionRange().Contains(player.pos, chestEvidence.Object.Position))
+					return RejectInteraction(attempt, "horizontal-range-rejected", chestEvidence);
+                if (Runtime.Navigation.CombatPositionNavigation.Sight(player.pos, chestEvidence.Object.Position, out _)
+                    == Runtime.Navigation.CombatSight.Blocked)
+                    return RejectInteraction(attempt, "line-of-sight-blocked", chestEvidence);
 
 				// silver explosion safety
 				if (!CanStart(attempt, attempt.Waypoint))
-					return RejectInteraction(attempt, "silver-hp-or-waypoint-guard", best);
+					return RejectInteraction(attempt, "silver-hp-or-waypoint-guard", chestEvidence);
 
 				bool wasRetry = attempt.EntityId != 0;
-				var interactionStartedAtUtc = DateTime.UtcNow;
-				attempt.NextInteractAt = interactionStartedAtUtc.AddSeconds(ChestInteractionRetrySeconds);
-				var interacted = GameInteraction.InteractWith(best, maxDist, IsBanded(best), out var failure, out bool dispatched);
-                if (interactionStartedAtUtc >= attempt.NextNativeAttemptDiagnosticAt)
-                {
-                    attempt.NextNativeAttemptDiagnosticAt = interactionStartedAtUtc.AddSeconds(3);
-                    Service.Log.Info($"[NecromancerChest] native-attempt entity={best.EntityId}; kind={best.ObjectKind}; " +
-                        $"dispatched={dispatched}; nonzeroReturn={interacted}; reason={failure}; targetableAfter={best.IsTargetable}; " +
-                        $"distanceXZ={MathF.Sqrt(dx * dx + dz * dz):F2}; evidenceSequence={evidence.RefreshSequence}");
-                }
+				var interactionStartedAtUtc = _env.Now();
+				attempt.NextInteractAt = interactionStartedAtUtc.Add(InteractionTiming.GetRetryInterval(aggressiveInteraction));
+				var force = chestEvidence.Kind == FloorChestKind.Banded;
+				attempt.InteractionCallCount++;
+				// One-second sampled logging only — interaction timing is
+				// unchanged; unsampled calls never touch the state delegates.
+				var diagnosticDue = interactionStartedAtUtc >= attempt.NextNativeAttemptDiagnosticAt;
+				if (diagnosticDue)
+				{
+					attempt.NextNativeAttemptDiagnosticAt = interactionStartedAtUtc.AddSeconds(1);
+					var sev = snapshot.Evidence;
+					_env.Log($"[NecromancerChest] interaction-call n={attempt.InteractionCallCount}; " +
+						$"entity={chestEvidence.Object.EntityId}; gameObjectId={chestEvidence.Object.GameObjectId}; " +
+						$"baseId={chestEvidence.Object.BaseId}; objectIndex={chestEvidence.Object.ObjectIndex}; " +
+						$"kind={chestEvidence.Kind}; force={force}; " +
+						$"distanceXZ={MathF.Sqrt(dx * dx + dz * dz):F2}; " +
+						$"deltaY={chestEvidence.Object.Position.Y - player.pos.Y:F2}; maxDistance={maxDist:F2}; " +
+						$"evidenceSequence={evidence.RefreshSequence}; " +
+						$"decision={snapshot.Decision.Status}; complete={snapshot.Decision.Complete}; " +
+						$"completionKind={sev.NativeCompletionKind}; evidenceState={sev.State}; evidenceFlags={sev.Flags}; " +
+						$"before={DescribeInteractionState()}");
+				}
+				_env.LastInteractionTrace = default;
+				var (interacted, dispatched, failure) = _env.Interact(chestEvidence, maxDist, force);
+				var trace = _env.LastInteractionTrace;
+				if (dispatched)
+				{
+					attempt.NativeDispatchCount++;
+					attempt.LastNativeReturn = trace.RawReturn;
+				}
+				if (diagnosticDue)
+				{
+					_env.Log($"[NecromancerChest] native-result n={attempt.InteractionCallCount}; " +
+						$"dispatches={attempt.NativeDispatchCount}; callEntered={trace.NativeCallEntered}; " +
+						$"dispatched={dispatched}; nativeKind={(trace.NativeKind?.ToString() ?? "unknown")}; " +
+						$"rangeAllowed={(trace.RangeAllowed?.ToString() ?? "not-checked")}; checkLineOfSightRequested=true; " +
+						$"rawReturn={(trace.RawReturn.HasValue ? "0x" + trace.RawReturn.Value.ToString("X") : "unknown")}; " +
+						$"nonzero={interacted}; reason={failure}; " +
+						$"evidenceTargetable={snapshot.Evidence.Object.IsTargetable}; " +
+						$"liveTargetableAfter={DescribeLiveTargetable(chestEvidence)}; " +
+						$"after={DescribeInteractionState()}");
+				}
 				if (!dispatched)
-					return RejectInteraction(attempt, failure, best);
+					return RejectInteraction(attempt, failure, chestEvidence);
 
-				attempt.EntityId = best.EntityId;
+				attempt.EntityId = chestEvidence.Object.EntityId;
 				attempt.InteractionStartedAtUtc = interactionStartedAtUtc;
 				attempt.EvidenceSequenceAtStart = evidence.RefreshSequence;
 				attempt.AcceptanceRecorded = false;
@@ -248,32 +344,80 @@ namespace DeepDungeon.Fsd.Dalamud
             }
             catch (Exception ex)
             {
-				Service.Log.Error($"[NecromancerChest] Interaction error: {ex}");
+				_env.LogError($"[NecromancerChest] Interaction error: {ex}");
 				return false;
             }
         }
 
-        private bool RejectInteraction(ChestInteractionAttempt attempt, string reason, IGameObject? chest = null)
+        private bool RejectInteraction(ChestInteractionAttempt attempt, string reason, FloorChestEvidence? chest = null)
         {
-            var now = DateTime.UtcNow;
+            attempt.LastRejectionReason = reason;   // before the 3s throttle
+            var now = _env.Now();
             if (now < attempt.NextRejectionDiagnosticAt) return false;
             attempt.NextRejectionDiagnosticAt = now.AddSeconds(3);
-            var player = Service.LocalPlayer;
-            var position = chest?.Position ?? attempt.Waypoint.Position;
-            var delta = player == null ? Vector3.Zero : position - player.Position;
+            var player = _env.PlayerState();
+            var position = chest?.Object.Position ?? attempt.Waypoint.Position;
+            var delta = !player.present ? Vector3.Zero : position - player.pos;
             var options = _runOptionsProvider.Current;
-            Service.Log.Info($"[NecromancerChest] interaction-rejected reason={reason}; type={attempt.Waypoint.Type}; " +
-                $"attemptEntity={attempt.EntityId}; targetEntity={chest?.EntityId}; targetKind={chest?.ObjectKind}; " +
-                $"targetGameObjectId={chest?.GameObjectId}; distanceXZ={MathF.Sqrt(delta.X * delta.X + delta.Z * delta.Z):F2}; " +
+            _env.Log($"[NecromancerChest] interaction-rejected reason={reason}; type={attempt.Waypoint.Kind}; " +
+                $"attemptEntity={attempt.EntityId}; targetEntity={chest?.Object.EntityId}; targetKind={chest?.Kind}; " +
+                $"targetGameObjectId={chest?.Object.GameObjectId}; distanceXZ={MathF.Sqrt(delta.X * delta.X + delta.Z * delta.Z):F2}; " +
                 $"deltaY={delta.Y:F2}; maxDistance={GetInteractionDistance():F2}; " +
-                $"casting={Service.Condition[ConditionFlag.Casting]}; zoning={Service.Condition[ConditionFlag.BetweenAreas] || Service.Condition[ConditionFlag.BetweenAreas51]}; " +
+                $"calls={attempt.InteractionCallCount}; dispatches={attempt.NativeDispatchCount}; " +
+                $"casting={_env.Casting()}; zoning={_env.Zoning()}; " +
+                $"state={DescribeInteractionState()}; " +
                 $"aggressive={_configuration.AggressiveChestInteraction}; gold={options.OpenGold}; silver={options.OpenSilver}; bronze={options.OpenBronze}");
             return false;
         }
 
+		// Managed diagnostic-delegate failures must never suppress or lose a
+		// real interaction — degrade the log field, keep the dispatch alive.
+		private string DescribeInteractionState()
+		{
+			try { return _env.InteractionState(); }
+			catch (Exception ex) { return $"unavailable:{ex.GetType().Name}"; }
+		}
+		private string DescribeLiveTargetable(FloorChestEvidence evidence)
+		{
+			try { return _env.LiveTargetable(evidence)?.ToString() ?? "unknown"; }
+			catch (Exception ex) { return $"unavailable:{ex.GetType().Name}"; }
+		}
+
+		/// <summary>Ordinary wait (no rejection): logs the current lifecycle
+		/// at most once per reason/3s. A default snapshot (reapproach)
+		/// reports snapshot=none rather than pretending known evidence.</summary>
+		private bool WaitForInteraction(ChestInteractionAttempt attempt, string reason, in ChestLifecycleSnapshot snapshot)
+		{
+			var now = _env.Now();
+			if (attempt.LastWaitDiagnosticReason == reason &&
+			    now < attempt.NextWaitDiagnosticAt)
+				return false;
+			attempt.LastWaitDiagnosticReason = reason;
+			attempt.NextWaitDiagnosticAt = now.AddSeconds(3);
+			var hasSnapshot = !snapshot.Equals(default);
+			var ev = snapshot.Evidence;
+			var elapsed = attempt.InteractionStartedAtUtc == DateTime.MinValue
+				? "none"
+				: (now - attempt.InteractionStartedAtUtc).TotalSeconds.ToString("0.0");
+			var wp = attempt.Waypoint.Position;
+			_env.Log($"[NecromancerChest] interaction-wait reason={reason}; " +
+				$"waypoint={attempt.Waypoint.Kind}@({wp.X:F1},{wp.Y:F1},{wp.Z:F1}); " +
+				$"entity={attempt.EntityId}; " +
+				$"calls={attempt.InteractionCallCount}; dispatches={attempt.NativeDispatchCount}; " +
+				(hasSnapshot
+					? $"decision={snapshot.Decision.Status}; complete={snapshot.Decision.Complete}; " +
+					  $"evidenceSeqAtStart={snapshot.EvidenceSequenceAtStart}; evidenceSeq={snapshot.EvidenceSequence}; " +
+					  $"completionKind={ev.NativeCompletionKind}; targetable={ev.Object.IsTargetable}; " +
+					  $"state={ev.State}; flags={ev.Flags}; "
+					: "snapshot=none; ") +
+				$"elapsedSinceInteraction={elapsed}s; " +
+				$"nextRetryIn={(attempt.NextInteractAt - now).TotalSeconds:0.0}s");
+			return false;
+		}
+
 		private static bool TryFindWaypointChestEvidence(
 			FloorObjectEvidenceSnapshot evidence,
-			RoomWaypoint waypoint,
+			ChestInteractionTarget waypoint,
 			uint expectedEntityId,
 			out FloorChestEvidence chest)
 		{
@@ -283,15 +427,7 @@ namespace DeepDungeon.Fsd.Dalamud
 				if (Vector3.Distance(chest.Object.Position, waypoint.Position) >= 0.5f)
 					continue;
 
-				bool typeMatches = waypoint.Type switch
-				{
-					RoomObjectiveType.ChestBanded => chest.Kind == FloorChestKind.Banded,
-					RoomObjectiveType.ChestGold => chest.Kind == FloorChestKind.Gold,
-					RoomObjectiveType.ChestSilver => chest.Kind == FloorChestKind.Silver,
-					RoomObjectiveType.ChestBronze => chest.Kind == FloorChestKind.Bronze,
-					_ => false
-				};
-				if (!typeMatches)
+				if (chest.Kind != waypoint.Kind)
 					continue;
 				if (expectedEntityId == 0 || chest.Object.EntityId == expectedEntityId)
 					return true;
@@ -313,10 +449,7 @@ namespace DeepDungeon.Fsd.Dalamud
 			if (attempt.Reapproaching)
 				return true;
 
-			float maxDist = GetInteractionDistance();
-			float dx = attempt.Waypoint.Position.X - playerPosition.X;
-			float dz = attempt.Waypoint.Position.Z - playerPosition.Z;
-			if (dx * dx + dz * dz <= maxDist * maxDist)
+			if (GetInteractionRange().Contains(playerPosition, attempt.Waypoint.Position))
 				return false;
 
 			attempt.Reapproaching = true;
@@ -330,9 +463,9 @@ namespace DeepDungeon.Fsd.Dalamud
 			attempt.NextInteractAt = DateTime.MinValue;
 		}
 
-		internal float GetOpenTimeoutSeconds(RoomWaypoint waypoint)
+		internal float GetOpenTimeoutSeconds(ChestInteractionTarget waypoint)
 		{
-			if (waypoint.Type == RoomObjectiveType.ChestBanded)
+			if (waypoint.Kind == FloorChestKind.Banded)
 				return BandedChestOpenTimeoutSeconds;
 
 			return _configuration.AggressiveChestInteraction
@@ -340,9 +473,41 @@ namespace DeepDungeon.Fsd.Dalamud
 				: NormalChestOpenTimeoutSeconds;
 		}
 
-		private float GetInteractionDistance()
+		internal NavigationRange GetInteractionRange() => new(GetInteractionDistance());
+
+		internal float GetInteractionDistance()
 		{
-			return Math.Clamp(_configuration.NecromancerChestInteractDistance, 0.5f, 6.0f);
+			return Math.Clamp(_configuration.NecromancerChestInteractDistance, 0.5f, 2.0f);
+		}
+
+		/// <summary>Native-side chest position facts for the claim-only
+		/// recovery path — range/LOS/targetability/player state plus the
+		/// native waiting-for-reply decision; the OP never touches
+		/// Service/BGCollision itself.</summary>
+		internal Coord.ChestPositionObservation ObserveChestPosition(
+			ChestInteractionAttempt attempt, FloorObjectEvidenceSnapshot? evidence)
+		{
+			var player = _env.PlayerState();
+			FloorChestEvidence chest = default;
+			var present = evidence?.Available == true &&
+				TryFindWaypointChestEvidence(evidence, attempt.Waypoint,
+					attempt.EntityId, out chest);
+			var pos = present ? chest.Object.Position : attempt.Waypoint.Position;
+			var range = GetInteractionRange();
+			var inRange = present && player.present && range.Contains(player.pos, chest.Object.Position);
+			var sightBlocked = present && player.present &&
+				Runtime.Navigation.CombatPositionNavigation.Sight(
+					player.pos, chest.Object.Position, out _)
+					== Runtime.Navigation.CombatSight.Blocked;
+			var decision = Observe(attempt, evidence).Decision;
+			var waitingForReply = attempt.EntityId != 0 &&
+				!decision.Complete && !decision.RetryInteraction;
+			return new Coord.ChestPositionObservation(
+				present, waitingForReply, inRange,
+				sightBlocked,
+				// Missing observation has UNKNOWN identity — never fabricate
+			// a full GameObjectId from the cached waypoint attempt.
+			present ? chest.Object.GameObjectId : 0UL, pos, range);
 		}
 
 		private static IGameObject? ResolveCurrentObject(FloorChestEvidence evidence)
@@ -413,13 +578,10 @@ namespace DeepDungeon.Fsd.Dalamud
 			};
 		}
 
-		private static bool CanAttemptInteraction(bool aggressiveInteraction)
+		private bool CanAttemptInteraction(bool aggressiveInteraction)
 		{
-			return (aggressiveInteraction || !Service.Condition[ConditionFlag.Casting]) &&
-			       !Service.Condition[ConditionFlag.BetweenAreas] &&
-			       !Service.Condition[ConditionFlag.BetweenAreas51];
+			return (aggressiveInteraction || !_env.Casting()) && !_env.Zoning();
 		}
     }
 }
-
 

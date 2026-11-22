@@ -6,9 +6,9 @@ public enum FloorItemUseKind { Pomander, Stone }
 
 public enum FloorItemUsePurpose
 {
-    Automatic, GoldChestOvercap, SilverChestOvercap, ControlledStrength,
-    NaturalReveal, ControlledReveal, NaturalPoisonfruit, NaturalPassageMazeroot,
-    ControlledPoisonfruit, BossSerenity
+    Automatic, GoldChestOvercap, SilverChestOvercap,
+    NaturalReveal = 4, NaturalPoisonfruit = 6, NaturalPassageMazeroot,
+    BossSerenity = 9, FloorClear
 }
 
 public readonly record struct FloorItemUseKey(FloorItemUseKind Kind, uint ItemId);
@@ -25,7 +25,6 @@ public sealed class PendingFloorItemUse
     public long SightLogSequenceBeforeDispatch { get; init; }
     public long MazerootLogSequenceBeforeDispatch { get; init; }
     public long IntuitionAttemptId { get; init; }
-    public long IntuitionExpectedAtMilliseconds { get; init; }
     public bool AuthoritativeConfirmationObserved { get; private set; }
     private bool _unconfirmedRecorded;
 
@@ -68,7 +67,7 @@ public sealed class FloorItemUseSession
         FloorItemUseKey key, FloorItemUsePurpose purpose, int countBeforeDispatch,
         DateTime dispatchedAtUtc, string reason, bool blocksFloorSetup,
         long sightLogSequenceBeforeDispatch, long mazerootLogSequenceBeforeDispatch,
-        long intuitionAttemptId, long intuitionExpectedAtMilliseconds)
+        long intuitionAttemptId)
     {
         int attemptNumber = _unconfirmedAttempts.TryGetValue(key, out int previous) ? previous + 1 : 1;
         _unconfirmedAttempts[key] = attemptNumber;
@@ -78,7 +77,7 @@ public sealed class FloorItemUseSession
             AttemptNumber = attemptNumber, DispatchedAtUtc = dispatchedAtUtc, Reason = reason,
             BlocksFloorSetup = blocksFloorSetup, SightLogSequenceBeforeDispatch = sightLogSequenceBeforeDispatch,
             MazerootLogSequenceBeforeDispatch = mazerootLogSequenceBeforeDispatch,
-            IntuitionAttemptId = intuitionAttemptId, IntuitionExpectedAtMilliseconds = intuitionExpectedAtMilliseconds
+            IntuitionAttemptId = intuitionAttemptId
         };
         DispatchedThisUpdate = true;
         NextUseAtUtc = dispatchedAtUtc.AddMilliseconds(FloorItemUseConfirmationPolicy.RetryDelayMilliseconds);

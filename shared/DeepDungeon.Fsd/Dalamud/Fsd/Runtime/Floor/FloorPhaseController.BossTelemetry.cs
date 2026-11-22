@@ -1,7 +1,5 @@
 using System;
 using System.Linq;
-using System.Numerics;
-using global::Dalamud.Plugin.Ipc;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using DeepDungeon.Fsd.Dalamud.Actions;
 using DeepDungeon.Fsd.Dalamud.Runtime.Helpers;
@@ -13,29 +11,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor;
 
 public sealed partial class FloorPhaseController
 {
-    private ICallGateSubscriber<Vector3?>? _bossAiTargetIpc;
-    private ICallGateSubscriber<Vector3, Vector3, bool>? _bossAiPathSafeIpc;
-    private ICallGateSubscriber<int>? _bossForbiddenZonesIpc;
-
-    private object ReadBossMovementDiagnostics(Vector3 playerPosition)
-    {
-        Vector3? target = null;
-        bool? pathSafe = null;
-        int? forbiddenZones = null;
-        try
-        {
-            _bossAiTargetIpc ??= Service.PluginInterface.GetIpcSubscriber<Vector3?>("BossMod.AI.NaviTargetPos");
-            _bossAiPathSafeIpc ??= Service.PluginInterface.GetIpcSubscriber<Vector3, Vector3, bool>("BossMod.Hints.IsDashSafe");
-            _bossForbiddenZonesIpc ??= Service.PluginInterface.GetIpcSubscriber<int>("BossMod.Hints.ForbiddenZonesCount");
-            if (_bossAiTargetIpc.HasFunction) target = _bossAiTargetIpc.InvokeFunc();
-            if (_bossAiPathSafeIpc.HasFunction && target.HasValue)
-                pathSafe = _bossAiPathSafeIpc.InvokeFunc(playerPosition, target.Value);
-            if (_bossForbiddenZonesIpc.HasFunction) forbiddenZones = _bossForbiddenZonesIpc.InvokeFunc();
-        }
-        catch { /* Optional diagnostic IPC must not interrupt a fight. */ }
-        return new { target = target.HasValue ? new { target.Value.X, target.Value.Y, target.Value.Z } : null, pathSafe, forbiddenZones };
-    }
-
     private unsafe void RecordBossCombatSnapshot(byte floor, IPlayerCharacter player)
     {
         var actionManager = ActionManager.Instance();
@@ -50,12 +25,9 @@ public sealed partial class FloorPhaseController
             inCombat = Service.Condition[ConditionFlag.InCombat],
             animationLock = actionManager != null ? (float?)actionManager->AnimationLock : null,
             itemDispatchReady = PomanderManager.CanDispatchItemRequest(),
-            movement = ReadBossMovementDiagnostics(player.Position),
             targetId = Service.TargetManager.Target?.GameObjectId ?? 0,
-            mechanicsActive = _ctx?.Configuration.BossMechanicsActive == true,
-            pt30OrbitActive = _pt30DivineFavorFlashHelper?.IsDivineFavorMovementActive == true,
-            pt50ChaseOutputSuppressed = _pt50ChaseOutputGuard?.IsActive == true,
-            pt99TargetDecision = floor == 99 ? _ctx?.CombatAssist.Pt99Decision : null,
+            targetProvider = _ctx?.CombatAssist.TargetSource,
+            selectedTargetId = _ctx?.CombatAssist.SelectedId,
             pendingItem = _floorRuntime!.ItemUse.Pending?.Key,
             strengthStock = _pomanderManager.GetCount(2), steelStock = _pomanderManager.GetCount(3), hasteStock = _pomanderManager.GetCount(11),
             strengthUsable = _pomanderManager.IsUsable(2), steelUsable = _pomanderManager.IsUsable(3),
@@ -73,15 +45,5 @@ public sealed partial class FloorPhaseController
                 .Select(e => new { id = e.GameObjectId, e.BaseId, e.Rotation,
                     position = new { e.Position.X, e.Position.Y, e.Position.Z } }).ToArray() : null
         });
-    }
-    private int ReadMobForbiddenZoneCount()
-    {
-        try
-        {
-            _bossForbiddenZonesIpc ??= Service.PluginInterface.GetIpcSubscriber<int>("BossMod.Hints.ForbiddenZonesCount");
-            if (_bossForbiddenZonesIpc.HasFunction) return _bossForbiddenZonesIpc.InvokeFunc();
-        }
-        catch { /* Missing optional IPC cannot acquire movement ownership. */ }
-        return 0;
     }
 }

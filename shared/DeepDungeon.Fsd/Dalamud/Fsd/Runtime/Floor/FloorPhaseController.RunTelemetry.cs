@@ -21,7 +21,7 @@ public sealed partial class FloorPhaseController
                 ((runtime.Floor - 1) / 10) * 10 + 1,
                 runtime.Floor,
                 runtime.Generation,
-                _ctx?.ControlledPtSurvey != null,
+                false,
                 reason));
         }
         catch (Exception ex)
@@ -35,6 +35,9 @@ public sealed partial class FloorPhaseController
         if (_runTelemetryObserver == null || runtime.RunTelemetry == null)
             return;
 
+        if (reason == "transitioning" && runtime.PassageAttemptActive)
+            runtime.RunTelemetry.ObservePassageCommit(DateTime.UtcNow);
+
         RunFloorTerminalOutcome outcome = reason switch
         {
             "transitioning" when runtime.RunTelemetry.PassageCommitObserved =>
@@ -44,7 +47,7 @@ public sealed partial class FloorPhaseController
         };
         RunFloorTerminalTelemetry terminal = runtime.RunTelemetry.Finish(
             DateTime.UtcNow,
-            runtime.Executor?.HasOpenedHoardThisFloor == true,
+            runtime.HoardAcquired,
             outcome,
             reason);
         try

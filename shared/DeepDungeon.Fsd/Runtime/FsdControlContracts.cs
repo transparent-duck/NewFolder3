@@ -14,7 +14,10 @@ public sealed record FsdStartRequest(
     int? DiagnosticStartFloor = null,
     int? ResumeSlot = null,
     bool HoldOnFailure = false,
-    FsdStartScenario? Scenario = null);
+    FsdStartScenario? Scenario = null)
+{
+    public bool HoldAfterClear { get; init; }
+}
 
 public sealed record FsdFarmingRequest(
     FarmingMode Mode,
@@ -23,7 +26,8 @@ public sealed record FsdFarmingRequest(
     int Cycles,
     bool Infinite,
     FarmingTargets Targets,
-    FsdStartRequest? Checkpoint = null);
+    FsdStartRequest? Checkpoint = null,
+    uint DungeonId = 4);
 
 /// <summary>Typed control outcome; diagnostic payloads retain their existing bridge schema.</summary>
 public sealed record FsdControlResult(

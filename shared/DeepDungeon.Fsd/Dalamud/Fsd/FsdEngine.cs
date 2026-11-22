@@ -27,9 +27,13 @@ namespace DeepDungeon.Fsd.Dalamud
         private readonly IRunTelemetryObserver? _runTelemetryObserver;
         private readonly FsdStartAuthorizationCallback? _tryAuthorizeFsdStart;
         private readonly Func<string?>? _fsdStartDenialNoticeProvider;
+        private readonly MasterPlayer.MechanicRuntime.IEncounterSource _encounters;
+        private readonly Func<IBossMovementStrategy>? _spinBossMovementFactory;
+        private readonly Action<DeepDungeonStateSnapshot>? _stateObserver;
         private readonly NativeDeepDungeonLogMessageSource _logMessageSource;
-        private readonly FsdBossMechanicsController _bossMechanics = new(DispatchCompanionCommand);
+
         private readonly FsdRotationController _rotationControl;
+        private readonly Runtime.Navigation.FsdCameraController _camera = new();
         
 		private RunHost? _ddHost = null;
         private int _fsfScenarioIndex = 1;
@@ -48,7 +52,6 @@ namespace DeepDungeon.Fsd.Dalamud
             FloorKind: DeepDungeonFloorKind.Unknown,
             IsTransitioning: false,
             Revision: 0);
-        private bool _ddRuntimeInit = false;
         private readonly BgCollisionDebugOverlay _bgCollisionDebug = new();
         private bool _showBgCollisionOverlay;
         private readonly Dictionary<uint, PomanderVisual[]> _pomanderVisualCache = new();
@@ -67,7 +70,7 @@ namespace DeepDungeon.Fsd.Dalamud
         private static readonly TimeSpan BridgeDeleteSaveTimeout = TimeSpan.FromSeconds(45);
         private RunContext? _bridgeLeaveDutyContext;
         private LeaveDutyFlow? _bridgeLeaveDutyFlow;
-        private PilgrimsTraverseRestExitFlow? _bridgeLeaveDutyRestExitFlow;
+        private DungeonExitController? _bridgeLeaveDutyRestExitFlow;
         private DateTime _bridgeLeaveDutyTimeoutAt = DateTime.MinValue;
         private string _bridgeLeaveDutyStatus = string.Empty;
         private bool _bridgeLeaveDutyStatusIsError;
@@ -83,6 +86,7 @@ namespace DeepDungeon.Fsd.Dalamud
 
         internal FsdEngine(
             FsdSettings configuration,
+            MasterPlayer.MechanicRuntime.IEncounterSource encounterSource,
             FsdExecutionLease executionLease,
             string hostIdentity,
             string hostVersion,
@@ -91,9 +95,16 @@ namespace DeepDungeon.Fsd.Dalamud
             IFloorEvidenceObserver? floorEvidenceObserver,
             IRunTelemetryObserver? runTelemetryObserver,
             FsdStartAuthorizationCallback? tryAuthorizeFsdStart = null,
-            Func<string?>? fsdStartDenialNoticeProvider = null)
+            Func<string?>? fsdStartDenialNoticeProvider = null,
+            Func<IBossMovementStrategy>? spinBossMovementFactory = null,
+            Action<DeepDungeonStateSnapshot>? stateObserver = null)
         {
+            _encounters = encounterSource;
             _configuration = configuration;
+            _checkpointPath = Path.Combine(pluginConfigDirectory, "FsdProgressionPause.json");
+            LoadProgressionCheckpoint();
+            Map.FloorMapSource.Live?.Initialize(pluginConfigDirectory);
+            Map.FloorMapSource.Select(_configuration.UseBuiltInFloorMaps);
             _rotationControl = new(ReadRotationState, SetRotationEnabled, RecordRotationControl);
             _executionLease = executionLease;
             _hostIdentity = hostIdentity;
@@ -106,6 +117,8 @@ namespace DeepDungeon.Fsd.Dalamud
             _runTelemetryObserver = runTelemetryObserver;
             _tryAuthorizeFsdStart = tryAuthorizeFsdStart;
             _fsdStartDenialNoticeProvider = fsdStartDenialNoticeProvider;
+            _spinBossMovementFactory = spinBossMovementFactory;
+            _stateObserver = stateObserver;
             _logMessageSource = new NativeDeepDungeonLogMessageSource(Service.GameInteropProvider);
         }
 
@@ -148,15 +161,24 @@ namespace DeepDungeon.Fsd.Dalamud
 
         private int GetEffectiveScenarioIndex()
         {
-            int configuredIndex = _configuration.NecromancerFsdScenarioIndex == 3
-                ? 1
-                : _configuration.NecromancerFsdScenarioIndex;
-            int maximumIndex = _detailedMapHostOptions.SupportsControlledPtSurvey ? 2 : 1;
-            return Math.Clamp(configuredIndex, 0, maximumIndex);
+            if (_configuration.NecromancerFsdScenarioIndex is 4 or 5)
+            {
+                _configuration.Farming.DungeonId = _configuration.NecromancerFsdScenarioIndex == 4 ? 1u : 2u;
+                _configuration.Farming.Mode = FarmingMode.DeepProgression;
+                _configuration.NecromancerFsdScenarioIndex = 1;
+                _configuration.Save();
+            }
+            if (_configuration.Farming.DungeonId is not (1 or 2 or 4))
+                _configuration.Farming.DungeonId = 4;
+            int index = _configuration.Farming.DungeonId == 4
+                ? Math.Clamp(_configuration.NecromancerFsdScenarioIndex, 0, 1)
+                : 1;
+            return index;
         }
 
         private void OnTerritoryChanged(uint territoryId)
         {
+            Map.FloorMap.Reset();
             try
             {
                 CheckDeepDungeonState();
@@ -209,14 +231,16 @@ namespace DeepDungeon.Fsd.Dalamud
 						?? throw new InvalidOperationException("Shared deep-dungeon state was not initialized.");
 					_ddHost = new RunHost(
 						_configuration,
+                        _encounters,
 						dutyState,
 						_logMessageSource,
 						_floorEvidenceObserver,
-						_runTelemetryObserver);
+						_runTelemetryObserver,
+                        _spinBossMovementFactory);
 					Service.Log.Info("[FsdEngine] Run host created.");
 				}
 
-                TryInvokePalacePalFetch();
+                TryInvokePalantirFetch();
             }
             catch (Exception ex)
             {
@@ -230,11 +254,6 @@ namespace DeepDungeon.Fsd.Dalamud
             {
                 ClearPendingPassageFollowup();
                 ResetRoomPresentation();
-                if (_ddRuntimeInit)
-                {
-                    MapPosGeneration.OnExitDeepDungeon();
-                    _ddRuntimeInit = false;
-                }
 
 			bool fsdRunning = _ddHost?.FsdActive == true;
 			if (!fsdRunning)
@@ -258,6 +277,8 @@ namespace DeepDungeon.Fsd.Dalamud
             }
         }
 
+        internal void SuspendBossMovement() => _ddHost?.FloorController.SuspendBossMovement();
+
         public void Update(IFramework framework)
         {
             _fsfScenarioIndex = GetEffectiveScenarioIndex();
@@ -280,19 +301,22 @@ namespace DeepDungeon.Fsd.Dalamud
                     try { _recoveryPotion?.Update(_currentDeepDungeonState); } catch { }
                 }
             }
+            else
+            {
+                _dutyState?.MarkOutsideDuty();
+            }
             RefreshDeepDungeonStateSnapshot();
 
+            if (dutyStateOk && _currentInDeepDungeon && _dutyState?.IsTransitioning == false)
+                Map.FloorMapSource.ActiveLive?.Observe();
+            _stateObserver?.Invoke(_currentDeepDungeonState);
             // Tick the host to allow entry flows outside duty (FSD mode)
             UpdateCompanionControls();
-            _configuration.BossMechanicsActive = _bossMechanics.IsEnabled;
-            if (_ddHost?.Context is { } movementContext)
-            {
-                movementContext.SetBossMovementOverride ??= SetBossMovementOverride;
-                movementContext.SetBossRotationSuppressed ??= suppressed => _bossRotationSuppressed = suppressed;
-            }
             _ddHost?.Update(framework);
+            _camera.Update(_ddHost?.FsdActive == true,
+                _ddHost?.FloorController.CameraChestPosition, DateTime.UtcNow,
+                _ddHost?.FloorController.BossRequestsNorthCamera == true);
             UpdateCompanionControls();
-            _configuration.BossMechanicsActive = _bossMechanics.IsEnabled;
             if (_detailedMapCatalogManager.ActiveRunSnapshot != null &&
                 _ddHost?.FsdActive != true)
             {
@@ -302,6 +326,10 @@ namespace DeepDungeon.Fsd.Dalamud
                 _executionLease.Release();
             UpdateBridgeLeaveDuty(framework);
             UpdateBridgeDeleteSaveSlot(framework);
+            Coord.NavDebug.Tick();
+
+
+
 
             if (!dutyStateOk) return;
 
@@ -310,42 +338,7 @@ namespace DeepDungeon.Fsd.Dalamud
             try
             {
 
-                // Runtime map center sampling & lifecycle (load/save JSON)
-                unsafe
-                {
-                    var efw = EventFramework.Instance();
-                    var dd = efw != null ? efw->GetInstanceContentDeepDungeon() : null;
-                    if (dd != null)
-                    {
-                        if (!_ddRuntimeInit)
-                        {
-                            DeepDungeon.Fsd.Dalamud.Map.MapPosGeneration.OnEnterDeepDungeon(dd);
-                            EnsureDeepDungeonLandmarkSprites();
-                            _ddRuntimeInit = true;
-                        }
-
-                        if (_dutyState is
-                            {
-                                IsInDuty: true,
-                                IsTransitioning: false,
-                                CurrentFloorKind: DeepDungeonFloorKind.Mob
-                            } &&
-                            _dutyState.IsPlayerPositionStable())
-                        {
-                            DeepDungeon.Fsd.Dalamud.Map.MapPosGeneration.EnsureCentersAvailable(dd);
-                        }
-                    }
-                    else
-                    {
-                        if (_ddRuntimeInit)
-                        {
-                            DeepDungeon.Fsd.Dalamud.Map.MapPosGeneration.OnExitDeepDungeon();
-                            _ddRuntimeInit = false;
-                        }
-                    }
-                }
-
-			ProcessPendingPassageFollowup();
+                ProcessPendingPassageFollowup();
 
             }
             catch (Exception ex)
@@ -424,7 +417,6 @@ namespace DeepDungeon.Fsd.Dalamud
         private void StopBridgeDeleteSaveSlotSession()
         {
             try { _bridgeDeleteSaveContext?.Dispose(); } catch { }
-            try { GameState.DeepDungeonUi.CloseDeepDungeonEntryWindows(); } catch { }
             _bridgeDeleteSaveContext = null;
             _bridgeDeleteSaveFlow = null;
             _bridgeDeleteSaveTimeoutAt = DateTime.MinValue;
@@ -467,13 +459,17 @@ namespace DeepDungeon.Fsd.Dalamud
                     _bridgeLeaveDutyStatusIsError = false;
                 }
 
-                _bridgeLeaveDutyRestExitFlow ??= new PilgrimsTraverseRestExitFlow();
+                if (_bridgeLeaveDutyRestExitFlow == null)
+                {
+                    uint npcId = DungeonCatalog.TryGetByDungeonId(_dutyState?.DungeonId ?? 0, out var dd) ? dd.NpcDataId : 0u;
+                    _bridgeLeaveDutyRestExitFlow = new DungeonExitController(returnToEntrance: true, entranceNpcBaseId: npcId);
+                }
                 if (!_bridgeLeaveDutyRestExitFlow.IsPrepared)
                 {
                     _bridgeLeaveDutyRestExitFlow.Prepare(_bridgeLeaveDutyContext);
                 }
 
-                if (!_bridgeLeaveDutyRestExitFlow.Update(framework))
+                if (_bridgeLeaveDutyRestExitFlow.Update() != ExitOutcome.Completed)
                 {
                     _bridgeLeaveDutyStatus = _bridgeLeaveDutyContext.StatusLine;
                     _bridgeLeaveDutyStatusIsError = _bridgeLeaveDutyContext.StatusIsError;
@@ -513,18 +509,13 @@ namespace DeepDungeon.Fsd.Dalamud
 
         public void Dispose()
         {
-            _bossMechanics.Stop();
+            Map.FloorMapSource.Live?.Dispose();
             _rotationControl.Reset();
             Service.ClientState.TerritoryChanged -= OnTerritoryChanged;
             ResetRoomPresentation();
             _detailedMapCatalogManager.ReleaseRunSnapshot();
             _detailedMapCatalogManager.Dispose();
 
-            if (_ddRuntimeInit)
-            {
-                MapPosGeneration.OnExitDeepDungeon();
-                _ddRuntimeInit = false;
-            }
             
             try { _ddHost?.Dispose(); } catch { }
             _ddHost = null;
@@ -552,11 +543,6 @@ namespace DeepDungeon.Fsd.Dalamud
             {
                 if (Service.CommandManager.ProcessCommand(trimmed))
                     return true;
-                if (trimmed is "/bmrai on" or "/bmrai off")
-                {
-                    Service.Log.Warning("[FSD] Bossmod Reborn command is unavailable.");
-                    return false;
-                }
                 OmenTools.OmenService.ChatManager.Instance().SendMessage(trimmed);
                 return true;
             }

@@ -23,6 +23,14 @@ node_modules/
 AGENTS.md
 *.md
 
+# The shared snapshot includes upstream provenance and source-generator inputs.
+!/shared/DeepDungeon.Fsd/Dalamud/Fsd/DeepDungeon-Fsd.md
+!/shared/DeepDungeon.Fsd/GENERATED.md
+!/shared/DeepDungeon.Fsd/MechanicRuntime/PROVENANCE.md
+!/shared/DeepDungeon.Fsd/MechanicRuntime/README.md
+!/shared/DeepDungeon.Fsd/Native/FFXIVClientStructs.Expansion.Generators/AnalyzerReleases.Shipped.md
+!/shared/DeepDungeon.Fsd/Native/FFXIVClientStructs.Expansion.Generators/AnalyzerReleases.Unshipped.md
+
 # Private/generated detailed-map inputs and outputs
 bootstrap-evidence/
 catalog-build/

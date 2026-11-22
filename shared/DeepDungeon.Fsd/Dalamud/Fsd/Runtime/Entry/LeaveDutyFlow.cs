@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using DeepDungeon.Fsd.Core;
 using global::Dalamud.Plugin.Services;
 using DeepDungeon.Fsd.Dalamud.Runtime;
 using DeepDungeon.Fsd.Dalamud.GameState;
@@ -13,9 +14,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 	/// - Else: request leave via ContentsFinderMenu agent event
 	/// Repeats with stability/cooldowns until IsInDuty becomes false.
 	/// </summary>
-	public sealed class LeaveDutyFlow
+	public sealed class LeaveDutyFlow : IDisposable
 	{
 		private readonly bool _requireValidatedAbandonPrompt;
+		private DungeonExitController? _controller;
 		private RunContext? _ctx;
 		private readonly Dictionary<string, DateTime> _cooldowns = new Dictionary<string, DateTime>();
 		private readonly Dictionary<string, DateTime> _seenSince = new Dictionary<string, DateTime>();
@@ -27,9 +29,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 		private DateTime _lastClear = DateTime.MinValue;
 
 		private static readonly TimeSpan StabilityShort = TimeSpan.FromMilliseconds(150);
-		private static readonly TimeSpan CooldownNormal = TimeSpan.FromMilliseconds(400);
-		private static readonly TimeSpan CooldownShort = TimeSpan.FromMilliseconds(250);
-		private static readonly TimeSpan ClearCooldown = TimeSpan.FromMilliseconds(900);
 
 		public LeaveDutyFlow(bool requireValidatedAbandonPrompt = false)
 		{
@@ -39,6 +38,13 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 		public void Prepare(RunContext context)
 		{
 			_ctx = context;
+			if (_requireValidatedAbandonPrompt)
+			{
+				_controller?.Dispose();
+				_controller = new(returnToEntrance: false);
+				_controller.Prepare(context);
+				return;
+			}
 			_cooldowns.Clear();
 			_seenSince.Clear();
 			_nextTry = DateTime.MinValue;
@@ -52,9 +58,18 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 			}
 		}
 
+		public void Dispose()
+		{
+			_controller?.Dispose();
+			_controller = null;
+			_ctx = null;
+		}
+
 		public unsafe bool Update(IFramework framework)
 		{
+			if (_controller != null) return _controller.Update() == ExitOutcome.Completed;
 			if (_ctx == null) return false;
+			if (DutyState.IsClientTransitioning) return false;
 			if (!_ctx.Duty.IsInDuty) return true;
 			if (DateTime.Now < _nextTry) return false;
 
@@ -78,18 +93,17 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 				if (_requireValidatedAbandonPrompt &&
 				    !DeepDungeonUi.IsAbandonDutyConfirmationPrompt(yesno, out var promptError))
 				{
-					DeepDungeonUi.TryCloseAddon("SelectYesno");
-					_ctx.StatusLine = $"Controlled leave stopped: {promptError}";
-					_ctx.StatusIsError = true;
+					SetStatus($"Leave: waiting for unrelated confirmation ({promptError})");
+					_nextTry = DateTime.Now.AddMilliseconds(300);
 					return false;
 				}
 
 				SetStatus("Leave: confirming abandon");
 				DeepDungeonUi.Fire(yesno, 0);
-				SetCooldown("yesno", CooldownNormal);
+				SetCooldown("yesno", InteractionTiming.GetRetryInterval());
 				_lastProgress = DateTime.Now;
-				_nextTry = DateTime.Now.AddMilliseconds(300);
-				_requestAttempts = 0;
+				_nextTry = DateTime.Now.Add(InteractionTiming.GetRetryInterval());
+				SetCooldown("request", InteractionTiming.GetRetryInterval());
 				return false;
 			}
 
@@ -98,9 +112,9 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 			{
 				SetStatus("Leave: advancing dialog");
 				DeepDungeonUi.Fire(talk, 0);
-				SetCooldown("talk-advance", CooldownShort);
+				SetCooldown("talk-advance", InteractionTiming.GetRetryInterval());
 				_lastProgress = DateTime.Now;
-				_nextTry = DateTime.Now.AddMilliseconds(250);
+				_nextTry = DateTime.Now.Add(InteractionTiming.GetRetryInterval());
 				return false;
 			}
 
@@ -109,14 +123,14 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 			{
 				SetStatus("Leave: clearing SelectString");
 				DeepDungeonUi.Fire(sel, 0);
-				SetCooldown("select-advance", CooldownShort);
+				SetCooldown("select-advance", InteractionTiming.GetRetryInterval());
 				_lastProgress = DateTime.Now;
-				_nextTry = DateTime.Now.AddMilliseconds(250);
+				_nextTry = DateTime.Now.Add(InteractionTiming.GetRetryInterval());
 				return false;
 			}
 
 			// 4) After several attempts, do a mild window clear and retry
-			if (_requestAttempts >= 3 && DateTime.Now - _lastClear >= ClearCooldown)
+			if (_requestAttempts >= 3 && DateTime.Now - _lastClear >= InteractionTiming.GetRetryInterval())
 			{
 				SetStatus("Leave: clearing stray windows");
 				try
@@ -127,7 +141,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 				}
 				catch { }
 				_lastClear = DateTime.Now;
-				_nextTry = DateTime.Now.AddMilliseconds(300);
+				// Observe pending leave requests before the next window-clear retry.
+				_nextTry = DateTime.Now.AddMilliseconds(150);
 				return false;
 			}
 
@@ -140,10 +155,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 					_lastProgress = DateTime.Now;
 				}
 				_requestAttempts++;
-				// exponential backoff on request
-				var backoff = Math.Min(1200, 400 + (_requestAttempts - 1) * 200);
-				SetCooldown("request", TimeSpan.FromMilliseconds(backoff));
-				_nextTry = DateTime.Now.AddMilliseconds(250);
+				SetCooldown("request", InteractionTiming.GetRetryInterval());
+				_nextTry = DateTime.Now.Add(InteractionTiming.GetRetryInterval());
 				return false;
 			}
 

@@ -8,21 +8,10 @@ internal partial class FsdEngine
     private static ICallGateSubscriber<bool>? _wrathRotationState, _rsrRotationState, _promeRotationState, _promeRotationStop, _promeRotationStart;
     private static ICallGateSubscriber<string, object>? _rsrRotationMode;
     private static readonly DateTime[] RotationErrorRetryAt = new DateTime[Enum.GetValues<FsdRotationProvider>().Length + 1];
-    private bool _bossRotationSuppressed;
-
-    private bool SetBossMovementOverride(bool active)
-    {
-        if (active && !_configuration.BossMechanics.UsesBmrBossHandling()) return false;
-        bool accepted = _bossMechanics.SetInternalMovementOverride(active);
-        _configuration.BossMechanicsActive = _bossMechanics.IsEnabled;
-        return accepted;
-    }
 
     private void UpdateCompanionControls()
     {
-        if (!IsRunActive || !_configuration.BossMechanics.UsesBmrBossHandling()) _bossRotationSuppressed = false;
         var mode = _ddHost?.Context?.FarmingPlan?.Mode;
-        _bossMechanics.Update(IsRunActive, _currentDeepDungeonState, _configuration.BossMechanics, mode);
         if (IsRunActive && !_configuration.Rotation.TryValidate(out var error))
         {
             StopForRotationError(error);
@@ -30,8 +19,17 @@ internal partial class FsdEngine
         }
         bool inCombat = Service.Condition[ConditionFlag.InCombat];
         _ddHost?.Context?.ObserveCombatState(inCombat);
+        var hintSuppression = MasterPlayer.MechanicRuntime.MechanicExecutionState.ActionsBlocked;
+        if (IsRunActive && _encounters.Read().Encounter is { Hints: { } hints } snapshot
+            && snapshot.Territory == (ushort)Service.ClientState.TerritoryType
+            && DateTime.UtcNow - snapshot.CapturedAt <= TimeSpan.FromMilliseconds(500))
+        {
+            hintSuppression |= !snapshot.BossDead && hints.HoldFire;
+            if (_ddHost?.FloorController.UsesEncounterCoordination == true)
+                hintSuppression |= hints.ForceCancelCast || hints.Mode == BossMod.AIHints.SpecialMode.Pyretic && hints.ModeActive(DateTime.UtcNow);
+        }
         _rotationControl.Update(IsRunActive, mode, _currentDeepDungeonState,
-            inCombat, _configuration.Rotation, _bossRotationSuppressed,
+            inCombat, _configuration.Rotation, hintSuppression,
             _ddHost?.Context?.CombatPreparationSequence ?? 0,
             Service.LocalPlayer is { IsDead: false } &&
             !Service.Condition[ConditionFlag.BetweenAreas] && !Service.Condition[ConditionFlag.BetweenAreas51]);

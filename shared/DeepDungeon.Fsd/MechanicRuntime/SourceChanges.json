@@ -1,0 +1,142 @@
+{
+  "BossModule/BossModuleManager.cs": {
+    "reason": "移除明确排除的斗兽棋 OID 映射和分组模块特例。 释放某个模块失败时继续清理其他模块及共享配置订阅，汇总报告异常。",
+    "originalSha256": "5656ab1c63f8b01327d8f32966748083254858bd6dff510eab7eb1f58dab05d9",
+    "importedSha256": "96da0ec6207685f272e4d249a1aaf4040705ea14a2fe378bea17abb483714786"
+  },
+  "BossModule/BossModule.cs": {
+    "reason": "优先按实际模块类型选择状态机，避免 OID 冲突把另一模块的 States 传给构造器。 状态退出失败时仍清理组件、世界事件和障碍资源。 新增 DrawArenaCaptured 捕获驱动（逐环节异常隔离），DrawSigns 在捕获汇下转发世界坐标标记且 Service.Texture 为空时不取贴图。 AI 执行器移除后 CalculateAIHints 门控删除恒 null 的 AIManager/NormalMovement 静态判定，真值表与上游一致。",
+    "originalSha256": "4e26de1a1119b7c6364924aeac2c883046d5652d87a8a171fb31dc42a99cc4c5",
+    "importedSha256": "f29e286d8722bb88228fb4108fd7cc55c90af4f4c4c8a474724b4ef3e4e66322"
+  },
+  "BossModule/AIHints.cs": {
+    "reason": "寻路引擎与 AI 执行器已移除：删除 InitPathfindMap 及 AIConfig 静态引用；Teleporter 结构体自 Pathfinding/ThetaStar.cs 迁入本文件（BossMod 命名空间，字段原样），Teleporters 列表与 PathfindMapObstacles 数据面保留。保留宿主的单次结算、击退、追逐及分摊资料，另提供仅供规划消费的后续结算预报。",
+    "originalSha256": "fb0937a1c69e43acc54eac99fae844e52839e54d222b626bb6ea0a6f4ba1cce7",
+    "importedSha256": "c2559d60f2c7383f7b5c6eea3a72f568999d5b3df38f56ae20a8d428828068e6"
+  },
+  "BossModule/ArenaBounds.cs": {
+    "reason": "寻路引擎已移除：删除 PathfindMap 抽象方法与 Circle/ABRect/Custom 三处实现及各自 BuildMap/_cachedMap；allowObstacleMap 构造参数与字段保留，模块构造签名不变。",
+    "originalSha256": "30fcba48cead81468eca9b29cbb47eb0c6e80b47f99252181d957275e836ac7e",
+    "importedSha256": "2b5c74fe1fc03c2b0d5492ca294716be76d956e49670db05cc44cf41ec2a5439"
+  },
+  "QuestBattle/QuestBattle.cs": {
+    "reason": "AI 执行器已移除：CalculateAIHints 门控改为 HostAiExecutionAvailable 常量属性（原 AIManager/NormalMovement 在宿主环境恒 null，原条件恒成立），真值表与上游一致；属性非常量以避免不可达代码警告。",
+    "originalSha256": "22e8bb5df6d71609a4cf24ac7bf8c3b5c8edaec782c27c614555f2f725443bed",
+    "importedSha256": "129113616439abe903c1d5fe3b0373faaa08f972e918342780d454fa8cc58c48"
+  },
+  "QuestBattle/UnmanagedRotation.cs": {
+    "reason": "AI 执行器已移除：Execute 门控删除恒 null 的 AIManager/NormalMovement 静态判定，仅保留 EnableQuestBattles，真值表与上游一致。",
+    "originalSha256": "228ca866926294ff5e7000ca0b170945c895b41510291881c13405e99a01f632",
+    "importedSha256": "c957f38a45196e5c73dd6fa4ede10b27df6b377c7a18754cfc404ce8aa90c1b4"
+  },
+  "Modules/Shadowbringers/Dungeon/D09GrandCosmos/D092LeannanSith.cs": {
+    "reason": "AI 执行器已移除：自动放种子分支的 AI 门控常量化为 false（原 AIManager/NormalMovement 恒 null，分支恒不触发），分支保留供源对照。",
+    "originalSha256": "1d4b8b766215781c09746d85103f39d722f50fdb626a615dc2d1a776de3a57a5",
+    "importedSha256": "fceec7ae27d67937a3d45c41a21164c551d8fd4f3df3ee6b668d0ad936f22965"
+  },
+  "ActionTweaks/SmartRotationTweak.cs": {
+    "reason": "AI 执行器已移除：GetSafeRotation 的 aiEnabled 常量化（原 AIManager.Instance?.Beh 恒 null），真值表与上游一致。",
+    "originalSha256": "27d92c5687c0e4d59390854e9860ef585d494cbea2b30ff302ac763ba43ef692",
+    "importedSha256": "c82c5aec2456a200b10225279543091333b6ff5454d46076b97f6f665440359f"
+  },
+  "Modules/Dawntrail/Savage/M08SHowlingBlade/ArenaChanges.cs": {
+    "reason": "Teleporter 结构体已迁入 BossMod 命名空间（AIHints.cs）：字段声明去 Pathfinding 限定；传送圈绘制与状态逻辑不变。",
+    "originalSha256": "8c4b3d6a002f5105b05d92db69ebdf79fa52a2918e16e7689748ad9479010865",
+    "importedSha256": "964b4156846c7df390796f9b1b7a743ae772f757b495bc00de7880dd3dbf959d"
+  },
+  "Modules/Dawntrail/DeepDungeon/PilgrimsTraverse/DD70ForgivenZeal.cs": {
+    "reason": "光轮标记为单次结算，按光球自身读条校正结算时间。元件将后续光轮另行提供给规划器，保留当前光轮的提示和绘制范围。",
+    "originalSha256": "70b949968c53eef120c4b8d81b9982321c2e590a1c36625a065570e0cf8b501c",
+    "importedSha256": "b35b19685cb1ec4af5a0a1a11ccc3530e180182d95d03b240bc7947518701d48"
+  },
+  "Modules/RealmReborn/Extreme/Ex3Titan/Ex3TitanAI.cs": {
+    "reason": "删除 AIRotationModule 子类 Ex3TitanAIRotation（寻路与 AI 执行器已移除）；保留同名 BossComponent（Ex3TitanStates 以 ActivateOnEnter/ExecOnExit 使用），组件逻辑不变。",
+    "originalSha256": "c4f3d28f32221dfc85752bc11e8cc730bddc49b255826bd1d60dcd7f43f1e635",
+    "importedSha256": "ac7c522dbb7eff7cb2452591bfb61a07755551524bc4ea2d9edbee80857a2987"
+  },
+  "Replay/Visualization/ReplayDetailsWindow.cs": {
+    "reason": "寻路可视化与自动循环窗口已移除：删除 AIHintsVisualizer 字段与绘制、UIRotationWindow.DrawRotationSelector 调用；ResetPF 保留为空操作（本窗口无构造者）。",
+    "originalSha256": "433dc3e0926f0732651958c6a5dcc4292f765ae42f56b7ce548f7d30c90b8dad",
+    "importedSha256": "d72430495e00e63a3784586cf5f7d2cc4aefca3bf6480bde9c2e74f5ca58f184"
+  },
+  "BossModule/MiniArena.cs": {
+    "reason": "全部绘制方法在世界坐标层转发到可选的 BmrDrawSink 捕获汇（形状参数层，含 Zone 三角化兜底与 Path 折线）；Begin/End 在捕获时只保留纯数学字段更新，跳过 ImGui 窗口调用与背景盘填充。无捕获汇时行为与原文一致。",
+    "originalSha256": "2c468610327988c680761944a4838ad1307e4ffc499ed0adc50873e92d43d8fd",
+    "importedSha256": "ecf859a6d8be6197563d3210d7610fec1cf5ec12d161cb6bf968edf70c171d42"
+  },
+  "Components/Gaze.cs": {
+    "reason": "视线眼睛指示在捕获汇下转发世界坐标 Eye 命令，不再计算屏幕位置；玩家安全弧仍经 Path API 自然捕获。",
+    "originalSha256": "aba5f0c9daa92ab8f37195879e7e97b1d77dd45db59b97565b83f3a57f9dbebb",
+    "importedSha256": "c287a08c62abd366b5e6b8b52c931a4c372b26a9172258f1ca0864904a06efad"
+  },
+  "Data/ClientState.cs": {
+    "reason": "增加每个世界独立的 LegacyMovement 输入，供宿主或回放提供。",
+    "originalSha256": "0fcc797f3b2b890ddba4f8c3124a36d5d82ab5dfabf1e18a4d0717646700d8e2",
+    "importedSha256": "456b56267ff6af61c61ea5c595b890559451268228d8c3533cf1031ebedccc02"
+  },
+  "Components/ThinIce.cs": {
+    "reason": "从世界读取镜头和移动模式，避免触发原生 MovementOverride 静态扫描。",
+    "originalSha256": "c672d3dd403b855df37f4138b1741d61f5a194dd01b46337dadde3835a6a3a85",
+    "importedSha256": "d12626dc489c43382044aa5c95a466f4a9a6b8629efc26c4f48a63464488d597"
+  },
+  "Framework/Service.cs": {
+    "reason": "提供显式数据及日志绑定入口，不依赖 Dalamud 插件入口自动注入。",
+    "originalSha256": "9a2db123d330c90c4204aa63ab263a143a9f6e0df8bbd6679c71f51f23d4b30a",
+    "importedSha256": "064c75215bd9b7392307a6cc215429b946c7adf4b288f48b8b59b239e5f7fc0e"
+  },
+  "Replay/ReplayManager.cs": {
+    "reason": "将两处 Plugin.GarbageCollection 改为同样的 GC 调用，移除对原插件入口类型的依赖。",
+    "originalSha256": "50672c4905e98f9c7549349520b3a5287f35b66c9667d25caf551677bfb2592e",
+    "importedSha256": "617a21ed983e2121491bfcd2c8fb7bb53ca476c0cd2e04cb4fb011ba1362cd4f"
+  },
+  "Modules/Dawntrail/Extreme/Ex8Enuo/AddsPhase.cs": {
+    "reason": "将塔禁入名单从静态字段改为组件实例字段，避免新战斗及回放继承旧名单。",
+    "originalSha256": "4cd2d0737ce56c48afbcf2dcb67504f0ed22f1343da1fce75e603591f155a82d",
+    "importedSha256": "2a88c6fdce0247c28454bf9e938929b66152c2daf11846f525bfad1fe1f3a4c6"
+  },
+  "Modules/Dawntrail/Foray/ForkedTowerMagic/Extreme/FTME1TwoHeadedAevis/FTME1TwoHeadedAevis.cs": {
+    "reason": "补上源码 OID 枚举中的真实主 OID，保留 WIP 成熟度。",
+    "originalSha256": "f706b251db84f6fc8f726723587c506e422709de14a4005f37002c79024a6d5e",
+    "importedSha256": "e131cb9fee023fb02d27be03d3c7b93b0cc4f056afa2e180670cbd3635cb559a"
+  },
+  "Modules/Dawntrail/Foray/ForkedTowerMagic/Extreme/FTME2SwordDancer/FTME2SwordDancer.cs": {
+    "reason": "补上源码 OID 枚举中的真实主 OID，保留 WIP 成熟度。",
+    "originalSha256": "98337d66a6792262cec1d762d4c2671541e50907ef3a6a2e8854b860265f035b",
+    "importedSha256": "3c058d8e747a228a89975cf66c894524fdf79cfbba5fceee94f49ba3d4c32303"
+  },
+  "Modules/Dawntrail/Foray/ForkedTowerMagic/Extreme/FTME3Necrophobia/FTME3Necrophobia.cs": {
+    "reason": "补上源码 OID 枚举中的真实主 OID，保留 WIP 成熟度。",
+    "originalSha256": "c8eb1e116c0ec1f92b95ddedc28b2a3beefedf64d511f0d193148c8cc8424493",
+    "importedSha256": "874fca5e16f63d3e0a3d2dd0c85fb158f0b8cffe21a1e88404d4bcc86622d439"
+  },
+  "Modules/Dawntrail/Foray/ForkedTowerMagic/Extreme/FTME4Index/FTME4Index.cs": {
+    "reason": "补上源码 OID 枚举中的真实主 OID，保留 WIP 成熟度。",
+    "originalSha256": "c6b72f1c9d45618f7a84866a4b0e7f314417e1caec94780eac85239698fe720e",
+    "importedSha256": "d461ae634c4193b34ae6a67de61c49374738d2834e55a67d407cd260c7113d9c"
+  },
+  "Modules/Heavensward/Dungeon/D11Antitower/D113Calcabrina.cs": {
+    "reason": "按当前对象解析合体首领；缺失或销毁时不索引空列表，也不拿小人偶替代视线来源。 来源或目标死亡、销毁时清除引导扇形，迟到图标不复活已死来源。视线使用引导的实际来源，避免旧尸体抢占原点；每帧补清玩家目标销毁。",
+    "originalSha256": "df1b98e4c8e1ee92138b35dc33c33f7d0d80781b792c1cd50ee7d78fb53a5c29",
+    "importedSha256": "93a71c086f1b7cd3b1637cc2ebf062af908569629b0532609bde1e46624fc9c7"
+  },
+  "Modules/Shadowbringers/Foray/CastrumLacusLitore/CLL1Brionac4thLegionHelldiver/CLL1Brionac4thLegionHelldiver.cs": {
+    "reason": "第二个首领缺失时显示未知；出现后从动态敌人列表读取其真实 HP。",
+    "originalSha256": "36457b5f3b5fed47ee543de5f1cd404ebc1962b5cfb911c24ff8116570ee8ad9",
+    "importedSha256": "6a14eb0ed0950ef97de2df2051878df34adf7fa285a8dea222e267550fd43b7c"
+  },
+  "Modules/Shadowbringers/Foray/CastrumLacusLitore/CLL1Brionac4thLegionHelldiver/InfraredBlast.cs": {
+    "reason": "动态解析穿山甲，缺失时不构造虚假的连线接取位置。",
+    "originalSha256": "98c04d8161d04797dd557faa4056855cfbda4c33ffb7610547aead29d106f2eb",
+    "importedSha256": "55933f1518be13becc3d25d14c667ffcf98f3afd7f41c76c3a75a539f89ad7a9"
+  },
+  "Components/Knockback.cs": {
+    "reason": "发布原始击退资料，并标记该元件在起跳时刻提供的单次限制。时间轴和效果资料由宿主解析。",
+    "originalSha256": "18eec2fdb4836cf16b2060a68f29a04fc625a95a1db33c064e7fd7703d842075",
+    "importedSha256": "9ba6bba8a870882a94319dd85be0c541687e4240eb161dd6b39696df5b4be341"
+  },
+  "Util/ShapeDistance/KnockbackInSquare.cs": {
+    "reason": "提供相同位移和平面落点范围的判定，使宿主可直接验证投影落点，保留原始禁区行为与边距。",
+    "originalSha256": "599b2b76edf898c331e8d36b16ed90352f9183db4b3e7d33a58cd6128d77c40d",
+    "importedSha256": "8c714fed5995c756eade5627c87aaef5e2de068dd3847da9a36bdcc726003671"
+  }
+}

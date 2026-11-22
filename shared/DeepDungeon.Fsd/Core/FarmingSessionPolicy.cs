@@ -8,9 +8,6 @@ public readonly record struct FarmingSessionDecision(bool CountCycle, int NextFl
 
 public static class FarmingSessionPolicy
 {
-    public static int NearestCheckpoint(int floor) =>
-        floor >= 71 ? 71 : floor >= 51 ? 51 : floor >= 31 ? 31 : floor >= 21 ? 21 : 1;
-
     public static bool ReachedStopBoundary(FarmingPlan plan, in FarmingAttemptResult result) =>
         plan.Mode == FarmingMode.DeepProgression && plan.StopAfterFloor is { } limit &&
         result.DutyCompleted && !result.DutyFailed && !result.Aborted && result.EntryFloor + 9 >= limit;
@@ -24,20 +21,20 @@ public static class FarmingSessionPolicy
             return new(false, plan.StartFloor, ownsSave, false, "本次入本已中止，未計完成次數。");
         if (result.DutyFailed)
             return plan.Mode == FarmingMode.DeepProgression
-                ? new(false, plan.UsesDiagnosticCheckpoints ? NearestCheckpoint(result.EntryFloor) : 1,
-                    true, true, string.Empty)
+                ? new(false, plan.StartFloor, true, true, string.Empty)
                 : new(false, plan.StartFloor, ownsSave, false, "本次攻略失敗，未計完成次數。");
         if (plan.ReusesSave)
             return new(result.HarvestCompleted, 0, false, false,
                 result.HarvestCompleted ? string.Empty : "採集未正常收尾，未計完成次數。");
         if (!result.DutyCompleted)
-            return new(false, plan.StartFloor, ownsSave, false, "本次未通關，未計完成次數。");
+            return new(false, result.EntryFloor, false, false, "未觀測到通關或敗北；保留存檔，停止接續。");
         if (plan.Mode == FarmingMode.DeepProgression)
         {
-            if (result.EntryFloor is < 1 or > 91 || result.EntryFloor % 10 != 1)
+            int terminalEntry = plan.DungeonId == 1 ? 191 : 91;
+            if (result.EntryFloor < 1 || result.EntryFloor > terminalEntry || result.EntryFloor % 10 != 1)
                 return new(false, result.EntryFloor, false, false, "攻略起點無效，停止接續。");
-            return result.EntryFloor == 91
-                ? new(true, 1, true, false, string.Empty)
+            return result.EntryFloor >= terminalEntry
+                ? new(true, plan.StartFloor, true, false, string.Empty)
                 : new(false, result.EntryFloor + 10, false, false, string.Empty);
         }
         return new(true, plan.StartFloor, ownsSave, false, string.Empty);

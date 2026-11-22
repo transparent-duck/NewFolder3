@@ -3,6 +3,7 @@ using System.Linq;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using DeepDungeon.Fsd.Core;
+using DeepDungeon.Fsd.Dalamud.Runtime.Entry;
 
 using global::Dalamud.Utility;
 using FFXIVClientStructs.FFXIV.Component.GUI;
@@ -20,6 +21,22 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
 		private const uint DeleteSavePromptAddonRowId = 10412;
 		private const uint AbandonDutyPromptAddonRowId = 2545;
 
+		public static bool PromptTextEquals(string expected, string actual) =>
+			!string.IsNullOrWhiteSpace(expected) && string.Equals(
+				string.Concat(expected.Where(c => !char.IsWhiteSpace(c))),
+				string.Concat(actual.Where(c => !char.IsWhiteSpace(c))), StringComparison.Ordinal);
+
+		public static unsafe bool IsSaveListForDeletion(AtkUnitBase* addon)
+		{
+			// Live PT: AtkValue 10 is the list purpose, independent of the slot rows.
+			if (addon == null || addon->AtkValuesCount <= 10) return false;
+			var value = addon->AtkValues[10];
+			if (value.Type is not (AtkValueType.String or AtkValueType.ManagedString or AtkValueType.ConstString)) return false;
+			var expected = Service.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Addon>()?
+				.GetRow(10464).Text.ExtractText() ?? string.Empty;
+			return PromptTextEquals(expected, value.String.ExtractText());
+		}
+
 		#region Agent-Based Menu Actions (Robust - not affected by menu order changes)
 		
 		/// <summary>
@@ -30,9 +47,7 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
 		{
 			try
 			{
-				// EventType=0, Param=0: Enter DeepDungeon (opens save data)
-				AgentId.DeepDungeonMenu.SendEvent(0, 0);
-				return true;
+				return TryChooseEntryMenu("START_MENU_ENTER");
 			}
 			catch { return false; }
 		}
@@ -45,11 +60,17 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
 		{
 			try
 			{
-				// EventType=0, Param=3: Delete Save (opens save data for deletion)
-				AgentId.DeepDungeonMenu.SendEvent(0, 3);
-				return true;
+				return TryChooseEntryMenu("START_MENU_RESET");
 			}
 			catch { return false; }
+		}
+
+		private static unsafe bool TryChooseEntryMenu(string textKey)
+		{
+			if (!TryGetAddon("DeepDungeonMenu", out var menu)) return false;
+			int? dungeonId = EntryUiReader.IntAt(menu, 3);
+			if (dungeonId is not > 0 || !PtEntryText.TryForDungeon((uint)dungeonId.Value, out var text)) return false;
+			return EntryUiReader.ActivateChoice(menu, text[textKey]);
 		}
 		
 		/// <summary>
@@ -131,11 +152,34 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
 			return false;
 		}
 
+		public static unsafe bool TryGetVisibleAddon(string name, out AtkUnitBase* addon)
+		{
+			addon = null;
+			try
+			{
+				if (AddonHelper.TryGetByName<AtkUnitBase>(name, out var a) && a->IsVisible)
+				{
+					addon = a;
+					return true;
+				}
+			}
+			catch { }
+			return false;
+		}
+
 		public static bool IsAddonOpen(string name)
 		{
 			unsafe
 			{
 				return TryGetAddon(name, out _);
+			}
+		}
+
+		public static bool IsAddonVisible(string name)
+		{
+			unsafe
+			{
+				return TryGetVisibleAddon(name, out _);
 			}
 		}
 
@@ -303,6 +347,47 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
 			}
 		}
 
+		private static bool HasVisibleEntryModal() =>
+			IsAddonVisible("SelectString") || IsAddonVisible("SelectYesno") ||
+			IsAddonVisible("Talk") || IsAddonVisible("EventTalk") ||
+			IsAddonVisible("ContentsFinderConfirm");
+
+		/// <summary>
+		/// 無確認對話框時依序關閉子視窗與主選單，僅在兩者皆已不可見時回傳 true。
+		/// </summary>
+		public static bool CloseSaveAndMenuIfNoModal()
+		{
+			if (HasVisibleEntryModal())
+				return false;
+			if (IsAddonVisible("DeepDungeonSaveData"))
+			{
+				TryCloseAddon("DeepDungeonSaveData");
+				return false;
+			}
+			if (IsAddonVisible("DeepDungeonMenu"))
+			{
+				TryCloseAddon("DeepDungeonMenu");
+				return false;
+			}
+			return true;
+		}
+
+		/// <summary>
+		/// 進本後持續關閉殘留入口存檔／選單視窗，並確認兩者連續不可見達指定時間。
+		/// </summary>
+		public static bool WaitAndCloseSaveAndMenuAfterEntry(ref long absentSinceMs, int requiredAbsentMs = 1000)
+		{
+			if (!CloseSaveAndMenuIfNoModal())
+			{
+				absentSinceMs = 0;
+				return false;
+			}
+			long now = Environment.TickCount64;
+			if (absentSinceMs == 0)
+				absentSinceMs = now;
+			return now - absentSinceMs >= requiredAbsentMs;
+		}
+
 		public static bool CloseDeepDungeonEntryWindows()
 		{
             // A pending modal can callback into its entry agent when it closes.
@@ -378,6 +463,7 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
                     var text = textNode->GetAsAtkTextNode();
                     if (text == null) return ReportSaveReadFailure(save, $"progress-{i}-not-text", out error);
                     var identity = new List<string>();
+                    var row = new System.Text.StringBuilder();
                     bool entryBlocked = false;
                     for (int nodeIndex = 0; nodeIndex < renderer->UldManager.NodeListCount; nodeIndex++)
                     {
@@ -386,6 +472,8 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
                         var identityNode = node->GetAsAtkTextNode();
                         if (identityNode == null) continue;
                         string label = identityNode->NodeText.ExtractText().Trim();
+                        if (label.Length > 0)
+                            row.Append(node->NodeId).Append(':').Append(label.Length).Append(':').Append(label);
                         if (SaveSlotUiPolicy.IsBlockingMessage(label, failedLabel, completedLabel))
                         {
                             entryBlocked = true;
@@ -396,7 +484,11 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
                     if (!SaveSlotUiPolicy.TryParse(i, text->NodeText.ExtractText(), emptyLabel,
                         string.Join("|", identity), !list->GetItemDisabledState(i) && !entryBlocked, out var slot, out var parseError))
                         return ReportSaveReadFailure(save, parseError, out error);
-                    result.Add(slot);
+                    result.Add(slot.Empty || row.Length == 0 ? slot : slot with
+                    {
+                        RowFingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                            System.Text.Encoding.UTF8.GetBytes(row.ToString())))
+                    });
                 }
                 slots = result;
                 error = string.Empty;

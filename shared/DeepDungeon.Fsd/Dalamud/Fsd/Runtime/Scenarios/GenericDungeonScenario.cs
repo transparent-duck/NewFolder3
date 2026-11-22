@@ -18,12 +18,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Scenarios
 
 		private int _slotIndex = -1;
 		private RunContext? _ctx;
-		private GenericEntryFlow? _entry;
+		private DungeonEntryController? _entry;
 		private bool _complete;
 		private bool _wasEverInDuty;
 		private GenericDeleteSaveFlow? _deleter;
 		private int _createdSlotIndex = -1;
-		private PilgrimsTraverseRestExitFlow? _ptRestExitFlow;
+		private DungeonExitController? _ptRestExitFlow;
 		private bool _ptRestExitComplete;
 
 		public bool IsComplete => _complete;
@@ -51,7 +51,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Scenarios
 			if (_dungeon.NpcDataId != 0)
 			{
 				_slotIndex = 0;
-				_entry = new GenericEntryFlow(_dungeon, _desiredStartFloor, _slotIndex);
+				_entry = new DungeonEntryController(_dungeon, _desiredStartFloor, _slotIndex);
 				_entry.Prepare(context);
 			}
 			else
@@ -63,6 +63,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Scenarios
 		public void Update(IFramework framework)
 		{
 			if (_ctx == null) return;
+			if (_entry != null && !_ctx.EntryReadyForDuty)
+			{
+				_entry.Update();
+				if (_ctx.StatusIsError) { _complete = true; return; }
+				if (!_ctx.EntryReadyForDuty) return;
+			}
 
 			var inTargetDuty =
 				_ctx.Duty.IsInDuty &&
@@ -87,7 +93,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Scenarios
 				case ScenarioPostDutyAction.ContinueEntry:
 					if (_entry != null)
 					{
-						_entry.Update(framework);
+						_entry.Update();
 						return;
 					}
 
@@ -109,18 +115,15 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Scenarios
 				return;
 			}
 
-			if (_entry != null && !_entry.CleanupAfterDutyEntry())
-				return;
-
 			if (_createdSlotIndex < 0)
 			{
-				_createdSlotIndex = _ctx.SaveSlots.LastUsedSlotIndex;
+				_createdSlotIndex = _entry?.SourceSlot ?? -1;
 			}
 		}
 
 		public void Dispose()
 		{
-			try { _entry?.Reset(); } catch { }
+			try { _entry?.Dispose(); } catch { }
 			try { _ptRestExitFlow?.Dispose(); } catch { }
 		}
 
@@ -139,12 +142,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Scenarios
 		{
 			if (_dungeon.DungeonId == DungeonCatalog.PilgrimsTraverse.DungeonId && !_ptRestExitComplete)
 			{
-				_ptRestExitFlow ??= new PilgrimsTraverseRestExitFlow();
+				_ptRestExitFlow ??= new DungeonExitController(returnToEntrance: true);
 				if (!_ptRestExitFlow.IsPrepared)
 				{
 					_ptRestExitFlow.Prepare(ctx);
 				}
-				if (!_ptRestExitFlow.Update(framework))
+				if (_ptRestExitFlow.Update() != ExitOutcome.Completed)
 				{
 					return;
 				}

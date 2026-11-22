@@ -8,16 +8,13 @@ namespace DeepDungeon.Fsd.Dalamud;
 internal partial class FsdEngine
 {
     private DateTime _nextCompanionCheck;
-    private bool _vnavInstalled;
-    private bool _palacePalInstalled;
-    private bool _bmrInstalled;
+    private bool _palantirInstalled;
     private bool _wrathInstalled, _rsrInstalled, _promeInstalled, _inh3Installed;
     // Display order is independent of persisted provider values (Custom remains 4).
     private static readonly FsdRotationProvider[] RotationProviderOptions =
         [FsdRotationProvider.RotationSolverReborn, FsdRotationProvider.WrathCombo,
          FsdRotationProvider.PromeRotation, FsdRotationProvider.InsertNameHere3, FsdRotationProvider.Custom];
     private static readonly string[] RotationProviderLabels = ["Rotation Solver Reborn", "Wrath Combo", "Prome Rotation", "InsertNameHere3", "自訂"];
-    private static readonly string[] BossMechanicsProviderLabels = ["Bossmod Reborn", "自訂"];
     private readonly string[] _recoveryPotionNames = new string[DungeonCatalog.All.Length];
     private readonly int?[] _recoveryPotionCounts = new int?[DungeonCatalog.All.Length];
 
@@ -26,13 +23,11 @@ internal partial class FsdEngine
         if (DateTime.UtcNow >= _nextCompanionCheck)
         {
             _nextCompanionCheck = DateTime.UtcNow.AddSeconds(1);
-            _vnavInstalled = _palacePalInstalled = _bmrInstalled = false;
+            _palantirInstalled = false;
             _wrathInstalled = _rsrInstalled = _promeInstalled = _inh3Installed = false;
             foreach (var plugin in Service.PluginInterface.InstalledPlugins)
             {
-                _vnavInstalled |= Matches(plugin.InternalName, "vnavmesh");
-                _palacePalInstalled |= Matches(plugin.InternalName, "PalacePal");
-                _bmrInstalled |= Matches(plugin.InternalName, "BossModReborn");
+                _palantirInstalled |= Matches(plugin.InternalName, "Palantir");
                 _wrathInstalled |= Matches(plugin.InternalName, "WrathCombo");
                 _rsrInstalled |= Matches(plugin.InternalName, "RotationSolver") || Matches(plugin.InternalName, "RotationSolverReborn");
                 _promeInstalled |= Matches(plugin.InternalName, "PromeRotation");
@@ -48,16 +43,13 @@ internal partial class FsdEngine
                     ? count : null;
             }
         }
-        var settings = _configuration.BossMechanics;
-        bool bmr = settings.Provider == FsdBossMechanicsProvider.Bmr;
         ImGui.Text("探索配套");
         if (ImGui.BeginTable("##FsdCompanions", 3, ImGuiTableFlags.BordersInnerH | ImGuiTableFlags.SizingStretchProp))
         {
             ImGui.TableSetupColumn("##Name", ImGuiTableColumnFlags.WidthStretch, 1);
             ImGui.TableSetupColumn("##Provider", ImGuiTableColumnFlags.WidthStretch, 1.4f);
-            ImGui.TableSetupColumn("##Status", ImGuiTableColumnFlags.WidthFixed, ImGui.CalcTextSize("循此苦旅 以抵繁星").X);
-            DrawCompanionRow("vnavmesh", "", _vnavInstalled);
-            DrawCompanionRow("PalacePal", "", _palacePalInstalled);
+            ImGui.TableSetupColumn("##Status", ImGuiTableColumnFlags.WidthFixed, ImGui.CalcTextSize("未安裝").X);
+            DrawCompanionRow("Palantir", "", _palantirInstalled);
             DrawCompanionRow("自動輸出", GetRotationProviderLabel(_configuration.Rotation.Provider), _configuration.Rotation.Provider switch
             {
                 FsdRotationProvider.RotationSolverReborn => _rsrInstalled,
@@ -66,43 +58,15 @@ internal partial class FsdEngine
                 FsdRotationProvider.InsertNameHere3 => _inh3Installed,
                 _ => (bool?)null
             });
-            ImGui.TableNextRow();
-            ImGui.TableSetColumnIndex(0);
-            ImGui.TextUnformatted("I-Ching");
-            ImGui.TableSetColumnIndex(2);
-            ImGui.TextUnformatted("循此苦旅 以抵繁星");
-            DrawCompanionRow("機制走位", bmr ? "Bossmod Reborn" : "自訂", bmr ? _bmrInstalled : null);
             ImGui.EndTable();
         }
 
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
-        ImGui.Text("機制與走位");
-        int mechanicsProvider = (int)settings.Provider;
-        ImGui.SetNextItemWidth(ImGui.GetFontSize() * 18);
-        if (ImGui.Combo("##FsdBossProvider", ref mechanicsProvider, BossMechanicsProviderLabels, BossMechanicsProviderLabels.Length))
-        {
-            settings.Provider = (FsdBossMechanicsProvider)mechanicsProvider;
-            _configuration.Save();
-        }
-        bmr = settings.Provider == FsdBossMechanicsProvider.Bmr;
-        if (!bmr)
-        {
-            string on = settings.CustomEnableCommand ?? string.Empty;
-            string off = settings.CustomDisableCommand ?? string.Empty;
-            if (DrawCustomCompanionCommands("FsdBoss", ref on, ref off))
-            {
-                settings.CustomEnableCommand = on;
-                settings.CustomDisableCommand = off;
-                _configuration.Save();
-            }
-        }
-
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.Spacing();
+        ImGui.BeginDisabled(ProgressionPauseLocked);
         DrawRotationSettings();
+        ImGui.EndDisabled();
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();

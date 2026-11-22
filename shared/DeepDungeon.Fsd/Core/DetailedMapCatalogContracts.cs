@@ -577,7 +577,7 @@ public readonly record struct DetailedMapRoomCandidate(
 public readonly record struct DetailedMapRoomCandidatePlan(
     IReadOnlyList<DetailedMapRoomCandidate> DirectCandidates,
     IReadOnlyList<DetailedMapRoomCandidate> OrdinaryCandidates,
-    bool UsePalacePalFallback);
+    bool UsePalantirFallback);
 
 public static class DetailedMapRoomCandidatePlanner
 {
@@ -585,7 +585,8 @@ public static class DetailedMapRoomCandidatePlanner
         DetailedMapCatalog catalog,
         DetailedMapCatalogRoom? room,
         byte floor,
-        IReadOnlyList<RawWorldPosition> observedSightTraps)
+        IReadOnlyList<RawWorldPosition> observedSightTraps,
+        int? probeDepthOverride = null)
     {
         ArgumentNullException.ThrowIfNull(catalog);
         ArgumentNullException.ThrowIfNull(observedSightTraps);
@@ -601,13 +602,13 @@ public static class DetailedMapRoomCandidatePlanner
             return new DetailedMapRoomCandidatePlan(
                 Array.Empty<DetailedMapRoomCandidate>(),
                 Array.Empty<DetailedMapRoomCandidate>(),
-                UsePalacePalFallback: true);
+                UsePalantirFallback: true);
         }
 
-        // A real bootstrap catalog deliberately contains the full PalacePal
+        // A real bootstrap catalog deliberately contains the full Palantir
         // candidate universe with zero observations. Until one of those
         // candidates has learned evidence, keep the runtime on the complete
-        // PalacePal set instead of accidentally treating an empty learned
+        // Palantir set instead of accidentally treating an empty learned
         // ordering as a valid short route.
         if (room.Candidates.All(candidate =>
                 candidate.Successor.State == DetailedMapSuccessorState.Unknown &&
@@ -616,7 +617,7 @@ public static class DetailedMapRoomCandidatePlanner
             return new DetailedMapRoomCandidatePlan(
                 Array.Empty<DetailedMapRoomCandidate>(),
                 Array.Empty<DetailedMapRoomCandidate>(),
-                UsePalacePalFallback: true);
+                UsePalantirFallback: true);
         }
 
         var directIndices = new HashSet<int>();
@@ -663,10 +664,12 @@ public static class DetailedMapRoomCandidatePlanner
             return new DetailedMapRoomCandidatePlan(
                 direct,
                 Array.Empty<DetailedMapRoomCandidate>(),
-                UsePalacePalFallback: false);
+                UsePalantirFallback: false);
         }
 
-        int probeDepth = GetFixedProbeDepth(floor);
+        // int.MaxValue returns the full eligible ordering for dynamic
+        // room-level selection; null keeps the fixed legacy top-K.
+        int probeDepth = probeDepthOverride ?? GetFixedProbeDepth(floor);
         DetailedMapRoomGraphPresentation graph =
             DetailedMapRoomGraphAnalyzer.Analyze(room);
         DetailedMapRoomCandidate[] ordinary;
@@ -694,7 +697,7 @@ public static class DetailedMapRoomCandidatePlanner
                 return new DetailedMapRoomCandidatePlan(
                     Array.Empty<DetailedMapRoomCandidate>(),
                     Array.Empty<DetailedMapRoomCandidate>(),
-                    UsePalacePalFallback: true);
+                    UsePalantirFallback: true);
             }
 
             ordinary = Enumerable
@@ -711,7 +714,7 @@ public static class DetailedMapRoomCandidatePlanner
         return new DetailedMapRoomCandidatePlan(
             Array.Empty<DetailedMapRoomCandidate>(),
             ordinary,
-            UsePalacePalFallback: false);
+            UsePalantirFallback: false);
     }
 
     public static int GetFixedProbeDepth(byte floor) =>

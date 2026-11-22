@@ -1,3 +1,4 @@
+using DeepDungeon.Fsd.Core;
 using System;
 using System.Numerics;
 
@@ -28,6 +29,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
 		private int _stuckCount = 0;
 		private int _navigationIssueCount;
 		private bool _initialDispatchIssued;
+		private DateTime _pathfindPendingSince = DateTime.MinValue;
+		private const double PathfindPendingTimeoutSeconds = 12.0;
 
 		public NavigationHelper(
 			INavigator navigator,
@@ -62,10 +65,13 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
 		/// </summary>
 		/// <param name="dest">Target destination</param>
 		/// <param name="playerPos">Current player position (for stuck detection)</param>
-		/// <param name="arrivalRadius">Distance threshold to consider "arrived" (default 1.2m)</param>
+		/// <param name="arrivalRadius">Allowed target radius; the shared rule reserves the movement tolerance.</param>
 		/// <returns>NavigationState indicating current status</returns>
-		public NavigationState Navigate(Vector3 dest, Vector3 playerPos, float arrivalRadius = 1.2f, double retryIntervalSeconds = 1.0)
-		{
+		public NavigationState Navigate(Vector3 dest, Vector3 playerPos, float arrivalRadius = NavigationRange.MovementTolerance, double retryIntervalSeconds = 1.0)
+            => Navigate(dest, playerPos, new NavigationRange(arrivalRadius), retryIntervalSeconds);
+
+        public NavigationState Navigate(Vector3 dest, Vector3 playerPos, NavigationRange range, double retryIntervalSeconds = 1.0)
+        {
 			var now = _clock();
 			if (retryIntervalSeconds < 0.1)
 			{
@@ -73,8 +79,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
 			}
 
 			// Check if arrived
-			float distSq = Vector3.DistanceSquared(playerPos, dest);
-			if (distSq <= arrivalRadius * arrivalRadius)
+			if (range.HasArrived(playerPos, dest))
 			{
 				if (_hasTarget)
 				{
@@ -84,9 +89,9 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
 				return NavigationState.Arrived;
 			}
 
-			// Check if target changed significantly (>1m)
+			// A changed endpoint beyond the shared tolerance needs a new path.
 			bool targetChanged = !_hasTarget ||
-								 Vector3.DistanceSquared(_targetDest, dest) > 1.0f;
+								 !NavigationRange.Point.Contains(_targetDest, dest);
 
 			if (targetChanged)
 			{
@@ -108,6 +113,27 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
 				// A real attempted PathfindAndMoveTo that returns false remains Failed.
 				bool pathFollowing = _isPathRunning();
 				bool pathfindPending = _isPathfindInProgress();
+
+				// An orphaned pathfind request can leave PathfindInProgress stuck
+				// true forever (observed live: frozen mid-floor, pathRunning=false,
+				// pathfindPending=true, never recovering). Bound the wait, then
+				// cancel the dead request so the reissue branch can run.
+				if (pathfindPending && !pathFollowing)
+				{
+					if (_pathfindPendingSince == DateTime.MinValue)
+						_pathfindPendingSince = now;
+					else if ((now - _pathfindPendingSince).TotalSeconds > PathfindPendingTimeoutSeconds)
+					{
+						_logWarning($"[NavigationHelper] Pathfind pending >{PathfindPendingTimeoutSeconds:F0}s; cancelling dead request");
+						try { _navigator.CancelAll(); } catch { }
+						_pathfindPendingSince = DateTime.MinValue;
+						pathfindPending = false;
+					}
+				}
+				else
+				{
+					_pathfindPendingSince = DateTime.MinValue;
+				}
 
 				if (!pathFollowing && !pathfindPending)
 				{
@@ -171,6 +197,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
 			_nextNavCheck = DateTime.MinValue;
 			_stuckCount = 0;
 			_lastMoveCheckAt = DateTime.MinValue;
+			_pathfindPendingSince = DateTime.MinValue;
 		}
 
 		/// <summary>

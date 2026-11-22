@@ -24,7 +24,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 
 		public unsafe void Update(in DeepDungeonStateSnapshot state)
 		{
-			if (!_configuration.AutoUseRecoveryPotion) return;
+			if (!_configuration.AutoUseRecoveryPotion ||
+                MasterPlayer.MechanicRuntime.MechanicExecutionState.ActionsBlocked) return;
 
 			var player = Service.LocalPlayer;
 			if (player == null || player.IsDead || player.MaxHp == 0) return;
@@ -37,7 +38,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 
 			var hpPercentage = (float)player.CurrentHp / player.MaxHp * 100f;
             bool maintainDarkRecovery = state is { IsInDuty: true, DungeonId: 4, Floor: 99 } &&
-                _configuration.BossMechanics.UsesBmrBossHandling() &&
                 Service.Condition[ConditionFlag.InCombat] &&
                 HasDarkEcho(player.StatusList);
 			if (!maintainDarkRecovery && hpPercentage >= _configuration.RecoveryPotionHpThresholdPercent) return;
