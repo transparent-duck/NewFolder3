@@ -1316,11 +1316,11 @@
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterEventSearch.cs",
-      "sha256": "e1660a7f81ba908ba98b15a2c6e7d6287d826f068ad5f22bf4dc7b90e8e58e04"
+      "sha256": "e78dcda169f8a8b68a15888e9e3d030286bb8b889e5c12af0a27e76034332373"
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterForwardProblem.cs",
-      "sha256": "b7fe0a45db96ed9fc64311ce796d82e04aacae6f2b29e07c781feca70a623c60"
+      "sha256": "2eb27db8fcacc86d133ba8ebc761120ba791a3922db7a1b84f93fe9c3840e0bd"
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterGeometry.cs",
@@ -1383,6 +1383,10 @@
       "sha256": "552ae26d1c12f13cecaf3650fdc21897e94af3b0a12d2b823d15d1630d260f60"
     },
     {
+      "path": "MechanicRuntime/Hosting/EncounterReachablePaths.cs",
+      "sha256": "952b17adf60b570e8aaa59723cb61f603f96fc7a07fb5072a3981553b44d7187"
+    },
+    {
       "path": "MechanicRuntime/Hosting/EncounterReadiness.cs",
       "sha256": "4f8aa0b35c14e3347a80d5972844ed184e2ab0165acb9ae6f4e18acb42fd3284"
     },
@@ -1400,11 +1404,11 @@
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterScoring.cs",
-      "sha256": "37f52a930a38f614c48054d3eba5e0550e2be8e54b89c96ff3f7aaffad93a8b4"
+      "sha256": "784e52738b17b5d1ebdf094eb28d59b8e6ea64db0b187258a0c5508b16f1b439"
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterSimulation.cs",
-      "sha256": "feea298e350eb43652361ad28011e52791cd102c7d13ccb35c990cfb1d32b3e5"
+      "sha256": "5f432ccbc5c4e14867eaad047fc3552c492470faddc27bcaeb75e30aad22dea5"
     },
     {
       "path": "MechanicRuntime/Hosting/ExecutionRestrictions.cs",
@@ -1460,7 +1464,7 @@
     },
     {
       "path": "MechanicRuntime/Hosting/NavigationPlanner.cs",
-      "sha256": "22143dcf5d7ff31ad437c6b0c1b06075533f28476957179acce2a00c841f7cdb"
+      "sha256": "09248f5ef51bd497f18bde515c5c4e8ae4613da4df2a7bd88aadbc8eba8b4a52"
     },
     {
       "path": "MechanicRuntime/Hosting/NavigationRegionGoal.cs",
@@ -1484,7 +1488,7 @@
     },
     {
       "path": "MechanicRuntime/Hosting/Planning/PlanningProblem.cs",
-      "sha256": "cb5ef0faa40f7e57538a69938c4eded8e90c2c813e6d585b5d7814ed2594ffaf"
+      "sha256": "5cbf0865a1dfcadbb31349b444a98fd7f901238513547a04c4925df3bdba3790"
     },
     {
       "path": "MechanicRuntime/Hosting/Planning/ReusePlanner.cs",

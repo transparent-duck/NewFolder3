@@ -50,7 +50,12 @@ internal static class EncounterScoring
         var soft = s.Soft;
         if (terminal) soft += GoalCost(request, s.P) * request.Speed * 10;
         var score = new PlanScore(s.Failures, soft, s.Travel, s.ImpactMarginShortfall, s.GeometryFailures, s.Exposure)
-        { FirstViolation = s.FirstViolation, HasStackGoal = request.Snapshot.Hints is { StackGoals.Length: > 0 }, StackDistance = s.StackCost };
+        {
+            FirstViolation = s.FirstViolation,
+            HasStackGoal = request.Snapshot.Hints is { StackGoals.Length: > 0 },
+            StackDistance = s.StackCost,
+            MinimumChaseClearance = double.IsFinite(s.MinimumChaseClearance) ? s.MinimumChaseClearance : null
+        };
         return terminal && request.Snapshot.PathMechanic is { } mechanic
             ? mechanic.ScoreTerminal(s.Mechanic, s.Time, score) : score;
     }

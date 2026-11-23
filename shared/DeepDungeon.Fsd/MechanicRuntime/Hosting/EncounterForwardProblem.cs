@@ -7,6 +7,7 @@ namespace MasterPlayer.MechanicRuntime;
 internal sealed class EncounterForwardProblem : PlanningProblem<EncounterForecastState>, IStateSearchGuidance<EncounterForecastState>
 {
     internal readonly EncounterRouteRequest Request;
+    internal readonly CancellationToken Cancellation;
     private readonly EncounterSimulation _simulation;
     private readonly double _start;
     public override double StartTime => _start;
@@ -18,7 +19,7 @@ internal sealed class EncounterForwardProblem : PlanningProblem<EncounterForecas
     internal (WPos Previous, float Step, float Radius)? ChaseAt(EncounterForecastState s, double at) => _simulation.ChaseAt(s, at);
     public ReadOnlySpan<Vector2> ControlTargets => [];
     internal EncounterForwardProblem(EncounterRouteRequest request, double start, double horizon, CancellationToken token)
-    { Request = request; _start = start; _simulation = new(request, start, horizon, token); }
+    { Request = request; Cancellation = token; _start = start; _simulation = new(request, start, horizon, token); }
     public override PlanningProblem<EncounterForecastState> WithResolution(double integrationStep, double layerStep = 0) => this;
     public override EncounterForecastState CreateState() => _simulation.CreateState();
     public override EncounterForecastState Copy(EncounterForecastState source) => _simulation.Copy(source);

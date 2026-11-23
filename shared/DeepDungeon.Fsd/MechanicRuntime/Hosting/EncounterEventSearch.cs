@@ -10,11 +10,16 @@ internal sealed class EncounterEventSearch(int budget) : IResearchPlanner<Encoun
     private const int BeamWidth = 8;
     private const int DestinationsPerBranch = 12;
     private const int Directions = 16;
+    private const int RouteProbesPerSector = 8;
     private static readonly int[] DirectionOrder = [0, 4, 8, 12, 2, 6, 10, 14, 1, 3, 5, 7, 9, 11, 13, 15];
     private sealed record Branch(EncounterForecastState State, Branch? Parent, Vector2 Command,
-        double Depart, double Arrive, PlanScore Score, double Priority);
-    private readonly record struct Destination(Vector2 Position, double Travel, double Depart, double Priority);
+        double Depart, double Arrive, PlanScore Score, double Priority, WalkingControl[]? Turns = null);
+    private readonly record struct WalkingControl(Vector2 Velocity, double Until);
+    private readonly record struct Destination(Vector2 Position, double Travel, double Depart, double Priority,
+        Vector2[]? Turns, int Sector);
 
+    private readonly EncounterReachablePaths _reachable = new();
+    private readonly List<(EncounterReachablePaths.Endpoint Endpoint, double Rank)> _rankedEndpoints = new();
     private ShapeDistance? _region;
     private INavigationGrid? _topology;
     private Vector2[] _resetPoints = [], _contactPoints = [];
@@ -57,12 +62,18 @@ internal sealed class EncounterEventSearch(int budget) : IResearchPlanner<Encoun
                     var depart = target.Depart;
                     var arrival = Math.Min(at, depart + target.Travel);
                     if (depart > state.Time) problem.Advance(state, Vector2.Zero, depart);
-                    if (arrival > state.Time) problem.Advance(state, command, arrival);
+                    WalkingControl[]? turns = null;
+                    if (target.Turns != null)
+                    {
+                        turns = Walk(model, state, target.Turns, at);
+                        if (turns == null) continue;
+                    }
+                    else if (arrival > state.Time) problem.Advance(state, command, arrival);
                     if (at > state.Time) problem.Advance(state, Vector2.Zero, at);
                     if (!problem.CanExpand(state)) continue;
                     var score = problem.Score(state, i + 1 == boundaries.Length);
                     var priority = Priority(model, state, residence);
-                    var branch = new Branch(state, parent, command, depart, arrival, score, priority);
+                    var branch = new Branch(state, parent, command, depart, arrival, score, priority, turns);
                     if (i + 1 == boundaries.Length)
                     {
                         if (score.CompareTo(best.Assessment!.Value) < 0) best = Controls(branch);
@@ -81,6 +92,28 @@ internal sealed class EncounterEventSearch(int budget) : IResearchPlanner<Encoun
             diagnostics.Exit = best.Assessment.Value is { GeometryFailures: 0, Failures: 0, RecoveryPending: false, StackDistance: 0 }
                 ? "event-complete" : "event-no-feasible-route";
         return best;
+    }
+
+    private static WalkingControl[]? Walk(EncounterForwardProblem model, EncounterForecastState state,
+        Vector2[] waypoints, double at)
+    {
+        var speed = model.Speed;
+        var motion = model.Request.Motion;
+        var turns = new WalkingControl[waypoints.Length];
+        var count = 0;
+        foreach (var waypoint in waypoints)
+        {
+            if (state.Time >= at - 1e-8) break;
+            var delta = waypoint - state.P;
+            var distance = delta.Length();
+            if (distance <= 1e-5f) continue;
+            var until = Math.Min(at, state.Time + motion.TravelSeconds(distance, state.Velocity.Length(), speed));
+            var command = delta * (speed / distance);
+            model.Advance(state, command, until);
+            if (!model.CanExpand(state)) return null;
+            turns[count++] = new(command, until);
+        }
+        return count == turns.Length ? turns : turns[..count];
     }
 
     private static double[] Boundaries(EncounterForwardProblem problem)
@@ -103,7 +136,8 @@ internal sealed class EncounterEventSearch(int budget) : IResearchPlanner<Encoun
     {
         var q = model.Request;
         var duration = at - state.Time;
-        var range = q.Speed * (float)duration;
+        var walkingVelocity = state.Velocity;
+        var range = q.Motion.Advance(ref walkingVelocity, new(q.Speed, 0), duration).X;
         var continuous = model.RequiresMovement(state.Time, at);
         var chase = model.ChaseAt(state, at);
         var contact = residence?.ResolutionAt is { } resolution
@@ -113,30 +147,45 @@ internal sealed class EncounterEventSearch(int budget) : IResearchPlanner<Encoun
             && state.Mechanic.WindAt <= state.Time
             && state.Time < state.Mechanic.WindAt + contactSlack;
         var targets = new List<Destination>();
+        var grid = q.Grid!;
+        var terrain = q.Terrain!;
+        var cellSize = Vector3.Distance(grid.GridToWorld(0, 0), grid.GridToWorld(1, 0));
+        bool considerTurns = !continuous && range >= 3 * cellSize &&
+            state.Forced == null && q.Snapshot.Knockbacks.Length == 0 && q.Displacement == null;
+        bool obstructedRay = false;
+
+        double ChasePriority(Vector2 point)
+        {
+            if (chase is not { } c) return 0;
+            var landing = EncounterChaseRules.Landing(c.Previous, new(point.X, point.Y), c.Step);
+            var clearance = Vector2.Distance(point, new(landing.X, landing.Z)) - c.Radius;
+            return Math.Clamp(clearance, -6, 2) * 2;
+        }
+
+        double Rank(Vector2 point, float distance, double bias) =>
+            Math.Round(bias - distance * .015 + ChasePriority(point), 4);
+
         void Add(Vector2 point, double bias, double depart, bool beforeContact = false, bool fullLeg = false)
         {
             if (continuous && !fullLeg) return;
             var distance = Vector2.Distance(state.P, point);
-            if ((!fullLeg && distance > range + 1e-6) || !q.Terrain!.CanStand(new(point.X, 0, point.Y))) return;
+            if ((!fullLeg && distance > range + 1e-6) || !terrain.CanStandXZ(point)) return;
             var travel = fullLeg ? duration : q.Motion.TravelSeconds(distance, depart > state.Time || beforeContact ? 0 : state.Velocity.Length(), q.Speed);
             if (beforeContact)
                 depart = Math.Max(state.Time, at - travel - residence!.ImmunityGrantSeconds - contactSlack);
             if (travel + depart > at + 1e-6) return;
-            var rank = bias - distance * .015;
-            if (chase is { } c)
-            {
-                var landing = EncounterChaseRules.Landing(c.Previous, new(point.X, point.Y), c.Step);
-                var clearance = Vector2.Distance(point, new(landing.X, landing.Z)) - c.Radius;
-                rank += Math.Clamp(clearance, -6, 2) * 2;
-            }
-            targets.Add(new(point, travel, depart, Math.Round(rank, 4)));
+            targets.Add(new(point, travel, depart, Rank(point, distance, bias), null,
+                EncounterReachablePaths.Sector(point - state.P)));
         }
 
         void AddHeading(Vector2 direction, double bias)
         {
             if (!continuous)
             {
-                Add(state.P + direction * (range * .99f), bias, state.Time);
+                var far = state.P + direction * (range * .99f);
+                if (considerTurns && !obstructedRay)
+                    obstructedRay = !terrain.CanStandXZ(far) || !terrain.CanTraverseXZ(state.P, far);
+                Add(far, bias, state.Time);
                 Add(state.P + direction * (range * .55f), bias - .2, state.Time);
                 return;
             }
@@ -168,13 +217,50 @@ internal sealed class EncounterEventSearch(int budget) : IResearchPlanner<Encoun
                 AddHeading(Vector2.Normalize(outward), .1);
         }
 
+        if (considerTurns && obstructedRay)
+        {
+            // Keep distinct approach directions and separated endpoints.
+            // Simulate only the string-pulled routes that survive sampling.
+            var candidates = _reachable.Search(grid, terrain, state.P, range, model.Cancellation);
+            var spacing = Math.Max(cellSize * 2, Math.Min(range * .18f, 2));
+            Span<Vector2> firstEnd = stackalloc Vector2[EncounterReachablePaths.SectorCount];
+            Span<int> chosen = stackalloc int[EncounterReachablePaths.SectorCount];
+            Span<int> probes = stackalloc int[EncounterReachablePaths.SectorCount];
+            chosen.Clear();
+            probes.Clear();
+            _rankedEndpoints.Clear();
+            _rankedEndpoints.EnsureCapacity(candidates.Count);
+            foreach (var candidate in candidates)
+                _rankedEndpoints.Add((candidate, Rank(candidate.Position, candidate.Distance, -.1)));
+            _rankedEndpoints.Sort(static (first, second) => second.Rank.CompareTo(first.Rank));
+            foreach (var (candidate, _) in _rankedEndpoints)
+            {
+                var sector = candidate.Sector;
+                if (chosen[sector] == 2 || probes[sector] == RouteProbesPerSector || (chosen[sector] == 1 &&
+                    Vector2.DistanceSquared(candidate.Position, firstEnd[sector]) < spacing * spacing)) continue;
+                ++probes[sector];
+                if (terrain.CanTraverseXZ(state.P, candidate.Position)) continue;
+                var turns = _reachable.StringPull(candidate.Cell);
+                if (turns.Length == 0) continue;
+                if (chosen[sector]++ == 0) firstEnd[sector] = candidate.Position;
+                var distance = 0f;
+                var from = state.P;
+                foreach (var point in turns)
+                {
+                    distance += Vector2.Distance(from, point);
+                    from = point;
+                }
+                targets.Add(new(candidate.Position, 0, state.Time, Rank(candidate.Position, distance, -.1), turns, sector));
+            }
+        }
+
         // Sample diverse endpoints before spending the simulation budget on
         // neighbouring variants of the same walk.
         var selected = new List<Destination>();
         var separation = Math.Clamp(range * .22f, .5f, 1.35f);
         foreach (var target in targets.OrderByDescending(t => t.Priority))
         {
-            if (selected.Any(t => Math.Abs(t.Depart - target.Depart) < .15
+            if (selected.Any(t => t.Sector == target.Sector && Math.Abs(t.Depart - target.Depart) < .15
                 && Vector2.DistanceSquared(t.Position, target.Position) < separation * separation)) continue;
             selected.Add(target);
             yield return target;
@@ -225,6 +311,7 @@ internal sealed class EncounterEventSearch(int budget) : IResearchPlanner<Encoun
     private static double Priority(EncounterForwardProblem model, EncounterForecastState s, EncounterResidenceHazard? rule)
     {
         var value = -s.ImpactMarginShortfall * 10 - model.Heuristic(s) * .04;
+        if (double.IsFinite(s.MinimumChaseClearance)) value += s.MinimumChaseClearance;
         if (rule != null) value -= rule.MarginShortfall(s.Mechanic.Residence) * 4;
         if (rule != null && s.Mechanic.Residence is { Active: true } r)
             value -= 2 + Math.Max(0, 2 - (r.Deadline - s.Time - rule.SafetyMarginSeconds)) * 2;
@@ -283,7 +370,9 @@ internal sealed class EncounterEventSearch(int budget) : IResearchPlanner<Encoun
         foreach (var leg in chain)
         {
             Add(Vector2.Zero, leg.Depart);
-            Add(leg.Command, leg.Arrive);
+            if (leg.Turns is { } turns)
+                foreach (var turn in turns) Add(turn.Velocity, turn.Until);
+            else Add(leg.Command, leg.Arrive);
             Add(Vector2.Zero, leg.State.Time);
         }
         return new(controls.ToArray(), ends.ToArray(), terminal.Score);

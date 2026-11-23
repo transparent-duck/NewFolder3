@@ -77,6 +77,7 @@ readonly record struct PlanScore(int Failures, double Soft, double Travel, doubl
     public bool HasStackGoal { get; init; }
     public float StackDistance { get; init; }
     public double? CompletionSlack { get; init; }
+    public double? MinimumChaseClearance { get; init; }
     public bool RecoveryPending { get; init; }
     public double ResidenceMarginShortfall { get; init; }
     public double Display => GeometryFailures * 1e12 + Failures * 1e7 + Soft + Travel * .01;
@@ -100,6 +101,12 @@ readonly record struct PlanScore(int Failures, double Soft, double Travel, doubl
         {
             c = ImpactMarginShortfall.CompareTo(other.ImpactMarginShortfall); if (c != 0) return c;
             c = (other.CompletionSlack ?? double.NegativeInfinity).CompareTo(CompletionSlack ?? double.NegativeInfinity);
+            if (c != 0) return c;
+        }
+        if (Failures == 0)
+        {
+            // A plan without a measured chase margin ranks at the safety threshold.
+            c = other.MinimumChaseClearance.GetValueOrDefault().CompareTo(MinimumChaseClearance.GetValueOrDefault());
             if (c != 0) return c;
         }
         c = Soft.CompareTo(other.Soft); return c != 0 ? c : Travel.CompareTo(other.Travel);

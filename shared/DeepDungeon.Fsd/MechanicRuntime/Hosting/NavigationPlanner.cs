@@ -333,6 +333,9 @@ public sealed class NavigationPlanner
 /// <summary>The same directed terrain constraints are queried by all three searchers.</summary>
 internal sealed class MechanicNavigationGrid(INavigationGrid grid, EncounterPlanningSnapshot snapshot) : INavigationGrid
 {
+    internal bool UsesOnlyArenaGeometry { get; } = grid is EncounterTerrainGrid &&
+        snapshot.StaticObstacles.Length == 0 && snapshot.TemporaryObstacles.Length == 0 &&
+        snapshot.Hints is not { ObstacleMap.Bitmap: not null };
     public INavigationGrid Topology => grid.Topology;
     public int Width => grid.Width;
     public int Height => grid.Height;
@@ -341,11 +344,10 @@ internal sealed class MechanicNavigationGrid(INavigationGrid grid, EncounterPlan
     public bool IsFree(int x, int y)
     {
         if (!grid.IsFree(x, y)) return false;
-        var p = grid.GridToWorld(x, y);
-        return CanStand(p);
+        return UsesOnlyArenaGeometry || CanStand(grid.GridToWorld(x, y));
     }
     public bool CanStand(Vector3 position) => grid.CanStand(position) &&
-        EncounterGeometry.GeometryLegal(snapshot, new(position.X, position.Z), new(position.X, position.Z));
+        (UsesOnlyArenaGeometry || EncounterGeometry.GeometryLegal(snapshot, new(position.X, position.Z), new(position.X, position.Z)));
     public bool CanTraverse(Vector3 from, Vector3 to) =>
-        grid.CanTraverse(from, to) && EncounterGeometry.GeometryLegal(snapshot, new(from.X, from.Z), new(to.X, to.Z));
+        grid.CanTraverse(from, to) && (UsesOnlyArenaGeometry || EncounterGeometry.GeometryLegal(snapshot, new(from.X, from.Z), new(to.X, to.Z)));
 }

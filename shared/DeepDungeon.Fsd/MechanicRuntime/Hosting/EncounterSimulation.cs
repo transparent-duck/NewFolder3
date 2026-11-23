@@ -140,6 +140,7 @@ internal sealed class EncounterSimulation
         target.TimingUnresolved = source.TimingUnresolved;
         target.Failures = source.Failures; target.Soft = source.Soft; target.Travel = source.Travel;
         target.ImpactMarginShortfall = source.ImpactMarginShortfall; target.Exposure = source.Exposure;
+        target.MinimumChaseClearance = source.MinimumChaseClearance;
         target.Mechanic = source.Mechanic; target.Outside = source.Outside;
         target.StackCost = source.StackCost;
         target.Stopped = source.Stopped; target.FirstViolation = source.FirstViolation;
@@ -277,6 +278,7 @@ internal sealed class EncounterSimulation
                 var quantized = EncounterChaseRules.Landing(new(previous.X, previous.Y), new(target.X, target.Y), e.Step);
                 var landing = s.Centers[e.Chase] = new Vector2(quantized.X, quantized.Z);
                 clearance = Vector2.Distance(s.P, landing) - EncounterChaseRules.Radius(chase.Radius, Speed);
+                s.MinimumChaseClearance = Math.Min(s.MinimumChaseClearance, clearance);
                 if (ChaseConstraints != null)
                 {
                     var center = chase.TargetId == Request.PlayerId ? previous : landing;
@@ -325,6 +327,7 @@ internal sealed class EncounterForecastState
     public float StackCost;
     public double StartupRemaining;
     public double FirstViolation = double.PositiveInfinity;
+    public double MinimumChaseClearance = double.PositiveInfinity;
     public bool StaleChase, StartsExposed, TimingUnresolved;
     public double Time, Soft, Travel, Exposure, ImpactMarginShortfall;
     public MechanicBranchState Mechanic;
