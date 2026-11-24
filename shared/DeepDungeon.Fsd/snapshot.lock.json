@@ -576,7 +576,7 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/DeepDungeonRunLogExporter.cs",
-      "sha256": "3e03abb867d46a42bbdf43f092cef6326cb92b8bc5739fc14e475012742e2f35"
+      "sha256": "b0a9f6f09a53ac708c5f97b0f6c30585baacf6713553007eb0d8bbc590cd8c39"
     },
     {
       "path": "Dalamud/Fsd/Runtime/DeepDungeonRunRecorder.cs",
