@@ -19,9 +19,8 @@ internal sealed partial class FloorExplorationController
         RecordReplayEvent("magicite-use-observed", new { floor = Floor, typeId });
     }
 
-    internal unsafe bool TryUseHohMagicite(InstanceContentDeepDungeon* dd)
+    private unsafe bool AwaitingFloorClearRelease()
     {
-        if (dd->DeepDungeonId != 2 || Kind != FloorRuntimeKind.Normal) return false;
         if (_magiciteAwaitingRelease)
         {
             var actions = FFXIVClientStructs.FFXIV.Client.Game.ActionManager.Instance();
@@ -29,9 +28,14 @@ internal sealed partial class FloorExplorationController
                 Service.LocalPlayer?.IsCasting == true || actions != null && actions->AnimationLock > 0) return true;
             _magiciteAwaitingRelease = false;
         }
-        if (ItemUse.Pending is { Key.Kind: FloorItemUseKind.Stone,
-                Purpose: FloorItemUsePurpose.FloorClear or FloorItemUsePurpose.SilverChestOvercap })
-            return true;
+        return DungeonId == 2 && ItemUse.Pending is { Key.Kind: FloorItemUseKind.Stone,
+            Purpose: FloorItemUsePurpose.FloorClear or FloorItemUsePurpose.SilverChestOvercap };
+    }
+
+    internal unsafe bool TryUseHohMagicite(InstanceContentDeepDungeon* dd)
+    {
+        if (dd->DeepDungeonId != 2 || Kind != FloorRuntimeKind.Normal || UsesProgressionItemPolicy) return false;
+        if (AwaitingFloorClearRelease()) return true;
         if (dd->Floor <= 90) return false;
         var knowledge = _ctx?.Knowledge.Floor;
         bool used = knowledge != null && (knowledge.WasStoneUseConfirmed(1) || knowledge.WasStoneUseConfirmed(2) ||
@@ -57,8 +61,11 @@ internal sealed partial class FloorExplorationController
     private unsafe byte SelectSilverOvercapStone(InstanceContentDeepDungeon* dd)
     {
         if (dd->DeepDungeonId == 2)
+        {
+            if (UsesProgressionItemPolicy && !CanSpendProgressionCurrentFloorItem()) return 0;
             return HohMagicitePolicy.ShouldUse(dd->Floor, overflow: true, alreadyUsedThisFloor: false)
                 ? FindAvailableHohMagicite(dd) : (byte)0;
+        }
         if (dd->DeepDungeonId != 4) return 0;
 
         var decision = SilverChestOvercapPolicy.Decide(Coord.SiteSearchBoundary.ReadStoneCount(dd),

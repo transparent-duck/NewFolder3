@@ -269,6 +269,13 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				if (activeRuntime.UsesSiteCoordination)
 					activeRuntime.IngestKnowledge(dd);
 
+                if (_ctx.StatusIsError) return;
+                if (activeRuntime.UpdateProgressionItems(dd))
+                {
+                    CancelActiveMovement();
+                    return;
+                }
+
 				// Observation -> work decision -> completion check -> exec:
 				// the site scheduler commits THIS update's selected work
 				// before harvest/objective decisions and the pipeline tick.

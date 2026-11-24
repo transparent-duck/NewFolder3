@@ -607,7 +607,8 @@ internal sealed class FloorSurveyController : IDisposable
     	InstanceContentDeepDungeon* dd,
     	string reason)
     {
-        if (!DungeonCatalog.SupportsNaturalPtStones(dd->DeepDungeonId) ||
+        if (_ctx.FarmingPlan?.Mode == FarmingMode.DeepProgression ||
+            !DungeonCatalog.SupportsNaturalPtStones(dd->DeepDungeonId) ||
     	    !DeepDungeonFloorItemUsePolicy.CanUsePtIncense(
     		    dd->DeepDungeonBanId) ||
     	    !_items.CanAttemptPomanderUse() ||
@@ -630,7 +631,7 @@ internal sealed class FloorSurveyController : IDisposable
     		FloorItemUsePurpose.NaturalReveal);
     }
 
-    private unsafe bool CanDispatchNaturalPassageOpeningStoneSafely(
+    internal unsafe bool CanDispatchNaturalPassageOpeningStoneSafely(
     	InstanceContentDeepDungeon* dd)
     {
     	var player = Service.LocalPlayer;

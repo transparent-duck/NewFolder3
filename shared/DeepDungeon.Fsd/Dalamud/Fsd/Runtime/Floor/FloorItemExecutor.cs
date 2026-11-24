@@ -83,9 +83,12 @@ internal sealed class FloorItemExecutor : IDisposable
     }
 
     internal static unsafe bool CanUsePomanderOnFloor(uint slot, InstanceContentDeepDungeon* dd) =>
-        DeepDungeonFloorItemUsePolicy.CanUsePomanders(dd->DeepDungeonBanId) &&
+        DeepDungeonFloorItemUsePolicy.CanUsePomander(dd->DeepDungeonBanId, slot) &&
         DeepDungeonFloorItemUsePolicy.AllowsNextFloorEffect(slot,
-            !DeepDungeonHelper.IsBossFloor(dd->DeepDungeonId, (byte)(dd->Floor + 1)));
+            NextFloorKind(dd) == DeepDungeonFloorKind.Mob);
+
+    internal static unsafe DeepDungeonFloorKind NextFloorKind(InstanceContentDeepDungeon* dd) =>
+        DeepDungeonFloorClassifier.Classify(dd->DeepDungeonId, dd->Floor + 1);
 
     public unsafe bool TryUsePomander(
         uint slotIndex,

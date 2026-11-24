@@ -865,7 +865,7 @@ bool primaryOwnsOperation = true)
         if (!ShouldRunGeneralTick())
             return;
 
-        if (EntryIncenseWindowOpen() &&
+        if (!UsesProgressionItemPolicy && EntryIncenseWindowOpen() &&
             _ctx!.Duty.PassageOpen != true && !this.Survey.NaturalPoisonfruitAttempted &&
             !this.Survey.NaturalMazerootAttemptedOrAdopted &&
             DeepDungeonFloorItemUsePolicy.CanUsePtIncense(dd->DeepDungeonBanId) &&
@@ -1165,10 +1165,12 @@ bool primaryOwnsOperation = true)
             IntuitionUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.IntuitionPomanderSlotIndex),
             SightUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.SightPomanderSlotIndex),
             AffluenceUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.AffluencePomanderSlotIndex),
-            StrengthUsable = pomandersUsableThisFloor && CombatBuffUsable(FloorInitPlanner.StrengthPomanderSlotIndex),
+            StrengthUsable = !UsesProgressionItemPolicy && pomandersUsableThisFloor && CombatBuffUsable(FloorInitPlanner.StrengthPomanderSlotIndex),
             SteelUsable = pomandersUsableThisFloor && CombatBuffUsable(FloorInitPlanner.SteelPomanderSlotIndex),
             PurityUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.PurityPomanderSlotIndex),
-            SerenityUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.SerenityPomanderSlotIndex),
+            SerenityUsable = !UsesProgressionItemPolicy &&
+                FloorItemExecutor.CanUsePomanderOnFloor(FloorInitPlanner.SerenityPomanderSlotIndex, dd) &&
+                IsPomanderAvailableForFloorUse(FloorInitPlanner.SerenityPomanderSlotIndex),
             RaisingUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.RaisingPomanderSlotIndex),
             AffluenceActive = _pomanderManager.IsActive(FloorInitPlanner.AffluencePomanderSlotIndex),
             RaisingActive = _pomanderManager.IsActive(FloorInitPlanner.RaisingPomanderSlotIndex),
@@ -1176,8 +1178,7 @@ bool primaryOwnsOperation = true)
             HasSteelStatus = HasLocalPlayerStatus(SteelStatusId),
             HasCurseStatus = HasLocalPlayerStatus(DeepDungeonCurseStatusId),
             HasHarmfulFloorEffect = hasHarmfulFloorEffect,
-            NextFloorIsMob = !DeepDungeonHelper.IsBossFloor(dd->DeepDungeonId,
-                (byte)(dd->Floor + 1))
+            NextFloorIsMob = FloorItemExecutor.NextFloorKind(dd) == DeepDungeonFloorKind.Mob
         };
     }
 
@@ -1189,10 +1190,11 @@ bool primaryOwnsOperation = true)
         {
             CanAttemptPomanderUse = CanAttemptPomanderUse(),
             AffluenceUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.AffluencePomanderSlotIndex),
-            StrengthUsable = CombatBuffUsable(FloorInitPlanner.StrengthPomanderSlotIndex, allowStatusOverlap),
+            StrengthUsable = (!UsesProgressionItemPolicy || allowStatusOverlap) &&
+                CombatBuffUsable(FloorInitPlanner.StrengthPomanderSlotIndex, allowStatusOverlap),
             SteelUsable = CombatBuffUsable(FloorInitPlanner.SteelPomanderSlotIndex, allowStatusOverlap),
             PurityUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.PurityPomanderSlotIndex),
-            SerenityUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.SerenityPomanderSlotIndex),
+            SerenityUsable = !UsesProgressionItemPolicy && IsPomanderAvailableForFloorUse(FloorInitPlanner.SerenityPomanderSlotIndex),
             RaisingUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.RaisingPomanderSlotIndex),
             AffluenceActive = _pomanderManager.IsActive(FloorInitPlanner.AffluencePomanderSlotIndex),
             RaisingActive = _pomanderManager.IsActive(FloorInitPlanner.RaisingPomanderSlotIndex),
@@ -1201,13 +1203,16 @@ bool primaryOwnsOperation = true)
             HasCurseStatus = HasLocalPlayerStatus(DeepDungeonCurseStatusId),
             HasHarmfulFloorEffect = hasHarmfulFloorEffect,
             AllowStatusOverlap = allowStatusOverlap,
-            FlightUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.FlightPomanderSlotIndex),
+            FlightUsable = (!UsesProgressionItemPolicy || allowStatusOverlap) &&
+                IsPomanderAvailableForFloorUse(FloorInitPlanner.FlightPomanderSlotIndex),
             FortuneUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.FortunePomanderSlotIndex),
-            HasteUsable = dd != null && dd->DeepDungeonId == 4 && CombatBuffUsable(FloorInitPlanner.HastePomanderSlotIndex, allowStatusOverlap),
-            FlightActive = _pomanderManager.IsActive(FloorInitPlanner.FlightPomanderSlotIndex),
+            HasteUsable = (!UsesProgressionItemPolicy || allowStatusOverlap) &&
+                dd != null && dd->DeepDungeonId == 4 && CombatBuffUsable(FloorInitPlanner.HastePomanderSlotIndex, allowStatusOverlap),
+            FlightActive = _pomanderManager.IsActive(FloorInitPlanner.FlightPomanderSlotIndex) ||
+                UsesProgressionItemPolicy && _ctx.Knowledge.Floor?.WasPomanderUseConfirmed(FloorInitPlanner.FlightPomanderSlotIndex) == true,
             FortuneActive = _pomanderManager.IsActive(FloorInitPlanner.FortunePomanderSlotIndex),
             HasHasteStatus = _pomanderManager.IsActive(FloorInitPlanner.HastePomanderSlotIndex) || HasLocalPlayerStatus(PtHasteStatusId),
-            NextFloorIsMob = dd != null && !DeepDungeonHelper.IsBossFloor(dd->DeepDungeonId, (byte)(dd->Floor + 1))
+            NextFloorIsMob = dd != null && FloorItemExecutor.NextFloorKind(dd) == DeepDungeonFloorKind.Mob
         };
     }
 
@@ -1216,6 +1221,15 @@ bool primaryOwnsOperation = true)
         if (_chatWatchers == null)
         {
             return false;
+        }
+
+        if (UsesProgressionItemPolicy && _scopeDd != null)
+        {
+            if (slotIndex == FloorInitPlanner.SerenityPomanderSlotIndex)
+                return CanSpendProgressionCurrentFloorItem() && ProgressionItemPolicy.Pressure(
+                    _scopeDd->DeepDungeonStatusId, _scopeDd->DeepDungeonBanId, _scopeDd->DeepDungeonDangerId) != ProgressionFloorPressure.None;
+            if (DungeonId == 2 && slotIndex == ProgressionItemPolicy.FrailtySlot)
+                return CanSpendProgressionCurrentFloorItem() && !_pomanderManager.IsActive(slotIndex);
         }
 
         return slotIndex switch
