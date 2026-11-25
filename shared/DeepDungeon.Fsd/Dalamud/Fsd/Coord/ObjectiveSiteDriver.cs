@@ -680,7 +680,8 @@ internal sealed class ObjectiveSiteDriver : IDisposable
         var passage = SelectPassageGoal(dd, evidence, playerPos, dist, out bool searchExhausted);
         _selectedPassage = passage;
         var passageRoom = passage?.Room ?? -1;
-        var passagePos = passage?.Position ?? playerPos;
+        var passagePos = MapPos.TryGetRoomCenter(dd, passageRoom, out var passageAnchor)
+            ? passageAnchor : passage?.Position ?? playerPos;
 
         // ---- required goal work vs optional ordinary chests ----
         // Required: exact reveal work, purpose intel, and the chests the
@@ -1196,8 +1197,7 @@ internal sealed class ObjectiveSiteDriver : IDisposable
                     NativePassageAvailability.IsRemoved(actor.BaseId, actor.SharedTimelineState))
                     _failedWorkKeys.Remove(key);
             }
-            beacons.Add(new(actor.GameObjectId, actor.BaseId, actor.SharedTimelineState,
-                distance.RoomOf(actor.Position), actor.Position));
+            beacons.Add(new(actor.GameObjectId, actor.BaseId, actor.SharedTimelineState, actor.Position));
         }
 
         var points = new List<PassageSearchPoint>();
@@ -1221,6 +1221,9 @@ internal sealed class ObjectiveSiteDriver : IDisposable
             point => distance.Meters(player, point),
             goal => !_failedWorkKeys.ContainsKey(goal.Key) && !_observedPassageWork.Contains(goal.Key),
             committed);
+        if (committed != 0 && selected is { } observed && observed.ActorId == committed &&
+            _selectedPassage is { } previousGoal && previousGoal.ActorId == committed)
+            return observed with { Room = previousGoal.Room };
         if (selected != null || !_activity.PassageOpen || !evidence.Available ||
             evidence.ScannedObjectCount == 0 || mappedPassageRooms == 0) return selected;
 
@@ -1235,7 +1238,7 @@ internal sealed class ObjectiveSiteDriver : IDisposable
             points.All(point => _observedPassageWork.Contains(new PassageGoal(point.Room, point.Position, SearchDoor: point.Door).Key)) &&
             beacons.All(beacon => NativePassageAvailability.IsRemoved(beacon.BaseId, beacon.State) ||
                 NativePassageAvailability.IsAvailable(beacon.BaseId, beacon.State) &&
-                _failedWorkKeys.TryGetValue(new PassageGoal(beacon.Room, beacon.Position, beacon.ActorId).Key, out var failed) &&
+                _failedWorkKeys.TryGetValue($"pass:{beacon.ActorId}", out var failed) &&
                 failed.Failure is FailureKind.PassageNoTransfer or FailureKind.Unreachable);
         return null;
     }

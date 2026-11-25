@@ -35,7 +35,8 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
             var rooms = new List<PassageSearchPoint>();
             var flags = dd->MapData;
             for (int index = 0; index < flags.Length; index++)
-                if (flags[index] != 0 && MapPos.TryGetRoomCenter(dd, index, out var point))
+                if ((flags[index] & InstanceContentDeepDungeon.RoomFlags.Passage) != 0 &&
+                    MapPos.TryGetRoomCenter(dd, index, out var point))
                     rooms.Add(new(index, point));
             var beacons = new List<PassageBeacon>();
             foreach (var actor in Service.GameObjects)
@@ -43,15 +44,12 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
                 if (actor.ObjectKind != global::Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventObj ||
                     !IsPassageBase(actor.BaseId) || actor.Address == IntPtr.Zero)
                     continue;
-                var closest = rooms.Count > 0
-                    ? rooms.MinBy(point => Vector3.DistanceSquared(point.Position, actor.Position)).Room
-                    : -1;
                 beacons.Add(new(actor.GameObjectId, actor.BaseId, ((EventObject*)actor.Address)->SharedTimelineState,
-                    closest, actor.Position));
+                    actor.Position));
             }
 
             var from = Service.LocalPlayer?.Position ?? center;
-            var goal = PassageGoalPolicy.Select(beacons, [new(room, center)],
+            var goal = PassageGoalPolicy.Select(beacons, rooms,
                 position => Vector3.DistanceSquared(from, position), _ => true, requestedRoom: room);
             if (goal is not { } selected)
                 return false;
